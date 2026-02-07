@@ -1,7 +1,38 @@
 {
-  "name": "node-starter",
-  "private": true,
+  "name": "longcelot-sheet-db",
+  "version": "0.1.0",
+  "description": "Google Sheets-backed staging database adapter for Node.js with schema-first design",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "sheet-db": "dist/cli/index.js"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "echo \"Tests not implemented yet\""
+  },
+  "keywords": [
+    "google-sheets",
+    "database",
+    "staging",
+    "adapter",
+    "schema"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "googleapis": "^128.0.0",
+    "inquirer": "^8.2.6",
+    "nanoid": "^3.3.7"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/inquirer": "^8.2.10",
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3"
   }
 }
