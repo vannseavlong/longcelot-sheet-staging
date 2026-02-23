@@ -19,7 +19,7 @@
 ```bash
 npm run build          # Compile TypeScript (tsc)
 npm run dev            # Watch mode (tsc --watch)  
-npm run test           # Tests not implemented yet ❌
+npm run test           # Tests configured (Jest) — 28 tests passing
 npm install            # Install dependencies (not committed)
 ```
 
@@ -69,11 +69,12 @@ longcelot-sheet-db/
 └── .gitignore                        # Git ignore rules
 
 MISSING (should be created):
-├── tests/                            # ❌ No tests exist
-├── examples/                         # ❌ Referenced but doesn't exist
-├── CHANGELOG.md                      # ❌ Version history
-├── CONTRIBUTING.md                   # ❌ Contribution guide
-└── .github/workflows/                # ❌ CI/CD pipeline
+├── tests/unit/                       # ✅ defineTable.test.ts (8 tests passing)
+├── tests/integration/                # ❌ Integration tests not yet created
+├── examples/                         # 📌 Will be hosted as a separate external project
+├── CHANGELOG.md                      # Verify created
+├── CONTRIBUTING.md                   # Verify created
+└── .github/workflows/ci.yml          # ✅ CI pipeline (build + test + lint on Node 18 & 20)
 ```
 
 ## Architecture & Key Concepts
@@ -219,10 +220,13 @@ SUPER_ADMIN_EMAIL      # Email for super admin (used when creating user sheets)
   - Validates all schemas in schemas/
   - Checks for duplicates, invalid actors, missing fields
   - Reports errors with context
-- **sync** ⚠️ - Partially implemented
+- **sync** ✅ - Fully implemented
   - Loads and validates schemas ✅
   - Environment variable checks ✅
-  - Actual sync to sheets ❌ (needs OAuth token flow)
+  - OAuth token file storage/refresh (`readTokens`, `saveTokens`, `resolveTokens`) ✅
+  - Prompts user to authorize via browser if no token stored ✅
+  - Calls `adapter.syncSchema()` for every schema and reports results ✅
+  - Tokens stored in `.sheet-db-tokens.json` (added to `.gitignore`) ✅
 
 #### TypeScript Configuration
 - Target: ES2020, Module: CommonJS
@@ -232,12 +236,7 @@ SUPER_ADMIN_EMAIL      # Email for super admin (used when creating user sheets)
 
 ### ⚠️ PARTIALLY IMPLEMENTED
 
-1. **Sync Command** - Validates but doesn't execute
-   - Location: [src/cli/commands/sync.ts](src/cli/commands/sync.ts)
-   - Issue: Requires OAuth token storage/refresh implementation
-   - Workaround: Use adapter.syncSchema() directly in code
-
-2. **Documentation** - Good but needs examples
+1. **Documentation** - Good but needs examples
    - API docs exist but lack real-world usage patterns
    - Missing troubleshooting guide
    - No migration guide for moving to production
@@ -245,17 +244,17 @@ SUPER_ADMIN_EMAIL      # Email for super admin (used when creating user sheets)
 ### ❌ NOT IMPLEMENTED (Mentioned but Missing)
 
 #### Missing Features (High Priority)
-1. **Tests** - No test framework or test files
-   - npm test is placeholder: `echo "Tests not implemented yet"`
-   - No Jest/Mocha/Vitest configuration
-   - No test fixtures or mocks
-   - **Impact**: Can't verify changes don't break functionality
+1. **Tests** - Framework configured, 28 tests passing
+   - `tests/unit/defineTable.test.ts` — 8 unit tests for schema generation
+   - `test/unit/` — empty, ready for further unit tests
+   - `test/integration/crud.test.ts` — 20 integration tests for CRUDOperations using `MockSheetClient`
+   - `test/fixtures/mockSheetClient.ts` — in-memory mock with full SheetClient API surface
+   - **Still needed**: edge-case tests, auth tests
 
-2. **Uniqueness Enforcement** - Modifier defined but not checked
-   - unique() modifier exists in column builder
-   - Not validated during create() or update()
-   - **Impact**: Duplicate values can be inserted
-   - **Fix needed**: Add check in validateAndApplyDefaults()
+2. **Uniqueness Enforcement** ✅ - Implemented via `checkUniqueness()` in `src/adapter/crud.ts`
+   - Called in `create()` before row append
+   - Called in `update()` per matching row (excludes current row by `_id`)
+   - Throws `Error: Unique constraint violation: column '...' already has value '...'`
 
 3. **Examples Directory** - Referenced in docs but doesn't exist
    - README mentions "See examples/student-app"
@@ -283,9 +282,9 @@ SUPER_ADMIN_EMAIL      # Email for super admin (used when creating user sheets)
    - **Impact**: Manual setup required
 
 #### Missing Infrastructure
-7. **CI/CD Pipeline** - No automated testing/deployment
-8. **Changelog** - No version history tracking
-9. **Contributing Guide** - No contributor documentation
+7. **CI/CD Pipeline** ✅ - `.github/workflows/ci.yml` added — runs build + test + lint on Node 18 & 20 for push/PR to main and develop
+8. **Changelog** - Verify created
+9. **Contributing Guide** - Verify created
 10. **Security Policy** - No vulnerability reporting process
 ## 🚀 RECOMMENDATIONS & IMPROVEMENTS
 
@@ -557,17 +556,16 @@ jobs:
 
 ### Must Do (Next Session)
 1. ✅ Remove `dist/` from git and add to `.gitignore`
-2. ✅ Create `examples/` with at least one basic example
-3. ✅ Setup Jest for testing
-4. ✅ Implement uniqueness validation in CRUD operations
-5. ✅ Create CHANGELOG.md
-
+2. 📌 Examples — hosted externally as a separate project; update README links once published
+3. ✅ Setup Jest for testing — configured + 28 passing tests (8 unit + 20 integration)
+4. ✅ Implement uniqueness validation — `checkUniqueness()` in `src/adapter/crud.ts`
+5. Verify `CHANGELOG.md` and `CONTRIBUTING.md` exist
 ### Should Do (This Week)
-6. Complete sync command with OAuth flow
-7. Add custom error classes
-8. Create 10-15 unit tests
-9. Add CONTRIBUTING.md
-10. Setup basic CI/CD
+ 6. ✅ Complete `sync` command with OAuth token storage/refresh flow
+ 7. Add custom error classes (`src/errors/`)
+ 8. Create unit tests (start with uniqueness and CRUD edge cases)
+ 9. Add `CONTRIBUTING.md`
+ 10. Setup basic CI/CD (GitHub Actions workflow)
 
 ### Nice to Have (This Month)
 11. Implement seed command

@@ -8,10 +8,21 @@
     "sheet-db": "dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
-    "test": "echo \"Tests not implemented yet\""
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\""
   },
+  "files": [
+    "dist",
+    "README.md",
+    "API.md",
+    "CHANGELOG.md"
+  ],
   "keywords": [
     "google-sheets",
     "database",
@@ -21,13 +32,24 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vannseavlong/longcelot-sheet-staging.git"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "chalk": "^4.1.2",
     "commander": "^11.1.0",
     "googleapis": "^128.0.0",
     "inquirer": "^8.2.6",
-    "nanoid": "^3.3.7"
+    "nanoid": "^3.3.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -35,8 +57,15 @@
     "@types/inquirer": "^8.2.10",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.56.0",
+    "@typescript-eslint/parser": "^8.56.0",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
     "jest": "^30.2.0",
     "jsdom": "^28.1.0",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1",
     "ts-jest": "^29.4.6",
     "typescript": "^5.3.3"
   }

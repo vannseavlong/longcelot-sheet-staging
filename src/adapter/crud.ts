@@ -10,9 +10,11 @@ export class CRUDOperations {
   ) {}
 
   async create(data: Record<string, any>): Promise<Record<string, any>> {
-    const validated = this.validateAndApplyDefaults(data, 'create');
+    // Generate _id before validation so the required-_id check always passes
+    const dataWithId = { _id: nanoid(), ...data };
+    const validated = this.validateAndApplyDefaults(dataWithId, 'create');
 
-    validated._id = validated._id || nanoid();
+    await this.checkUniqueness(validated, null);
 
     if (this.schema.timestamps) {
       const now = new Date().toISOString();
@@ -83,6 +85,8 @@ export class CRUDOperations {
 
       if (this.matchesWhere(item, options.where)) {
         const validated = this.validateAndApplyDefaults(options.data, 'update');
+
+        await this.checkUniqueness(validated, item._id as string);
 
         if (this.schema.timestamps) {
           validated._updated_at = new Date().toISOString();
@@ -233,6 +237,21 @@ export class CRUDOperations {
     });
 
     return result;
+  }
+
+  private async checkUniqueness(data: Record<string, any>, excludeId: string | null): Promise<void> {
+    for (const [columnName, column] of Object.entries(this.schema.columns)) {
+      if (!column.unique) continue;
+      const value = data[columnName];
+      if (value === undefined || value === null) continue;
+
+      const existing = await this.findOne({ where: { [columnName]: value } });
+      if (existing && existing._id !== excludeId) {
+        throw new Error(
+          `Unique constraint violation: column '${columnName}' already has value '${value}'`
+        );
+      }
+    }
   }
 
   private matchesWhere(item: Record<string, any>, where: Record<string, any>): boolean {
