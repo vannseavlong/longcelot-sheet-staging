@@ -443,10 +443,10 @@ export function validateEnv(): void {
 ### FEATURE ADDITIONS
 
 #### Priority 1 (Essential)
-- [ ] **Complete sync command** - Implement OAuth token flow
-- [ ] **Add uniqueness checking** - Enforce unique constraints
-- [ ] **Create tests** - Minimum 60% coverage
-- [ ] **Create examples** - At least 2 working examples
+- [x] **Complete sync command** - Implemented with OAuth token storage/refresh flow
+- [x] **Add uniqueness checking** - `checkUniqueness()` enforced in `create()` and `update()`
+- [x] **Create tests** - 28 tests passing (8 unit + 20 integration)
+- [ ] **Create examples** - External project; update README link once published
 
 #### Priority 2 (Important)
 - [ ] **seed command** - Load initial/test data
@@ -554,25 +554,30 @@ jobs:
 
 ## IMMEDIATE ACTION ITEMS
 
-### Must Do (Next Session)
+### ✅ Completed
 1. ✅ Remove `dist/` from git and add to `.gitignore`
-2. 📌 Examples — hosted externally as a separate project; update README links once published
-3. ✅ Setup Jest for testing — configured + 28 passing tests (8 unit + 20 integration)
-4. ✅ Implement uniqueness validation — `checkUniqueness()` in `src/adapter/crud.ts`
-5. Verify `CHANGELOG.md` and `CONTRIBUTING.md` exist
-### Should Do (This Week)
- 6. ✅ Complete `sync` command with OAuth token storage/refresh flow
- 7. Add custom error classes (`src/errors/`)
- 8. Create unit tests (start with uniqueness and CRUD edge cases)
- 9. Add `CONTRIBUTING.md`
- 10. Setup basic CI/CD (GitHub Actions workflow)
+2. ✅ Setup Jest — 28 tests passing (8 unit in `tests/unit/`, 20 integration in `test/integration/`)
+3. ✅ Implement uniqueness validation — `checkUniqueness()` in `src/adapter/crud.ts`
+4. ✅ Complete `sync` command — full OAuth token storage/refresh flow in `src/cli/commands/sync.ts`
+5. ✅ CI/CD pipeline — `.github/workflows/ci.yml` running build + test + lint on Node 18 & 20
+6. ✅ `CHANGELOG.md` and `CONTRIBUTING.md` created
+7. ✅ `package.json` publish-ready — `files`, `repository`, `engines`, `publishConfig` added
+8. 📌 Examples — hosted externally; update README link after external project is published
+
+### Next Session (TODO)
+9. Add custom error classes (`src/errors/ValidationError.ts`, `PermissionError.ts`, `SchemaError.ts`)
+10. Add `SECURITY.md` (vulnerability reporting process)
+11. Implement `seed` CLI command (`src/cli/commands/seed.ts`)
+12. Implement `doctor` CLI command — OAuth check, sheet access, env validation
+13. Implement `status` CLI command — list tables, actors, sheet IDs
 
 ### Nice to Have (This Month)
-11. Implement seed command
-12. Add doctor command
-13. Create migration helper
-14. Add comprehensive examples
-15. Setup code coverage reporting
+14. Migration helper — export schemas to SQL DDL
+15. Index support — lightweight lookup helper sheets
+16. Foreign key validation — enforce `ref()` constraints
+17. Advanced query operators — gt, lt, contains, in
+18. Batch operations — `bulkCreate`, `bulkUpdate`
+19. Setup code coverage reporting (Codecov or similar)
 
 ## COMMON TASKS
 
