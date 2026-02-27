@@ -1,6 +1,8 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
 import { TableSchema, UserContext } from '../schema/types';
+import { PermissionError } from '../errors/PermissionError';
+import { SchemaError } from '../errors/SchemaError';
 
 export interface SheetAdapterConfig {
   adminSheetId: string;
@@ -41,13 +43,13 @@ export class SheetAdapter {
     const schema = this.schemas.get(tableName);
 
     if (!schema) {
-      throw new Error(`Table ${tableName} is not registered`);
+      throw new SchemaError(`Table ${tableName} is not registered`, tableName);
     }
 
     const spreadsheetId = this.resolveSpreadsheetId(schema);
 
     if (!this.hasPermission(schema)) {
-      throw new Error(`User does not have permission to access ${tableName}`);
+      throw new PermissionError(`User does not have permission to access ${tableName}`, this.context?.role);
     }
 
     return new CRUDOperations(this.client, spreadsheetId, schema);
@@ -108,7 +110,7 @@ export class SheetAdapter {
       return this.context.actorSheetId;
     }
 
-    throw new Error('Actor sheet ID not provided in context');
+    throw new PermissionError('Actor sheet ID not provided in context', this.context?.role);
   }
 
   private hasPermission(schema: TableSchema): boolean {

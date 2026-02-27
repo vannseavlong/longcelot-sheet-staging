@@ -21,7 +21,8 @@
     "dist",
     "README.md",
     "API.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "keywords": [
     "google-sheets",
@@ -30,7 +31,7 @@
     "adapter",
     "schema"
   ],
-  "author": "",
+  "author": "Longcelot",
   "license": "MIT",
   "repository": {
     "type": "git",

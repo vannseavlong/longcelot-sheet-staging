@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { SheetClient } from './sheetClient';
-import { TableSchema, ColumnDefinition, FindOptions, UpdateOptions, DeleteOptions } from '../schema/types';
+import { TableSchema, FindOptions, UpdateOptions, DeleteOptions } from '../schema/types';
+import { ValidationError } from '../errors/ValidationError';
 
 export class CRUDOperations {
   constructor(
@@ -151,42 +152,42 @@ export class CRUDOperations {
       const value = result[columnName];
 
       if (column.readonly && mode === 'update' && columnName in data) {
-        throw new Error(`Column ${columnName} is readonly`);
+        throw new ValidationError(`Column ${columnName} is readonly`, columnName);
       }
 
       if (value === undefined || value === null) {
         if (column.default !== undefined) {
           result[columnName] = column.default;
         } else if (column.required && mode === 'create') {
-          throw new Error(`Column ${columnName} is required`);
+          throw new ValidationError(`Column ${columnName} is required`, columnName);
         }
         continue;
       }
 
       if (column.enum && !column.enum.includes(value)) {
-        throw new Error(`Column ${columnName} must be one of: ${column.enum.join(', ')}`);
+        throw new ValidationError(`Column ${columnName} must be one of: ${column.enum.join(', ')}`, columnName);
       }
 
       if (column.min !== undefined) {
         if (typeof value === 'string' && value.length < column.min) {
-          throw new Error(`Column ${columnName} must be at least ${column.min} characters`);
+          throw new ValidationError(`Column ${columnName} must be at least ${column.min} characters`, columnName);
         }
         if (typeof value === 'number' && value < column.min) {
-          throw new Error(`Column ${columnName} must be at least ${column.min}`);
+          throw new ValidationError(`Column ${columnName} must be at least ${column.min}`, columnName);
         }
       }
 
       if (column.max !== undefined) {
         if (typeof value === 'string' && value.length > column.max) {
-          throw new Error(`Column ${columnName} must be at most ${column.max} characters`);
+          throw new ValidationError(`Column ${columnName} must be at most ${column.max} characters`, columnName);
         }
         if (typeof value === 'number' && value > column.max) {
-          throw new Error(`Column ${columnName} must be at most ${column.max}`);
+          throw new ValidationError(`Column ${columnName} must be at most ${column.max}`, columnName);
         }
       }
 
       if (column.pattern && !column.pattern.test(value)) {
-        throw new Error(`Column ${columnName} does not match required pattern`);
+        throw new ValidationError(`Column ${columnName} does not match required pattern`, columnName);
       }
     }
 
@@ -247,8 +248,9 @@ export class CRUDOperations {
 
       const existing = await this.findOne({ where: { [columnName]: value } });
       if (existing && existing._id !== excludeId) {
-        throw new Error(
-          `Unique constraint violation: column '${columnName}' already has value '${value}'`
+        throw new ValidationError(
+          `Unique constraint violation: column '${columnName}' already has value '${value}'`,
+          columnName
         );
       }
     }

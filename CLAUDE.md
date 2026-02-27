@@ -564,12 +564,17 @@ jobs:
 7. ✅ `package.json` publish-ready — `files`, `repository`, `engines`, `publishConfig` added
 8. 📌 Examples — hosted externally; update README link after external project is published
 
-### Next Session (TODO)
-9. Add custom error classes (`src/errors/ValidationError.ts`, `PermissionError.ts`, `SchemaError.ts`)
-10. Add `SECURITY.md` (vulnerability reporting process)
-11. Implement `seed` CLI command (`src/cli/commands/seed.ts`)
-12. Implement `doctor` CLI command — OAuth check, sheet access, env validation
-13. Implement `status` CLI command — list tables, actors, sheet IDs
+### ✅ Completed This Session
+9. ✅ Custom error classes — `src/errors/{ValidationError,PermissionError,SchemaError}.ts` — exported from `src/index.ts`; used in `crud.ts` and `sheetAdapter.ts`
+10. ✅ `SECURITY.md` — vulnerability reporting process
+11. ✅ `seed` CLI command — `src/cli/commands/seed.ts`
+12. ✅ `doctor` CLI command — `src/cli/commands/doctor.ts`
+13. ✅ `status` CLI command — `src/cli/commands/status.ts`
+14. ✅ `LICENSE` file (MIT)
+15. ✅ `package.json` — version bumped to `0.1.0`, author set, LICENSE added to `files`
+16. ✅ Build clean, 28 tests passing — **ready for `npm publish`**
+
+### Next Session (Nice to Have)
 
 ### Nice to Have (This Month)
 14. Migration helper — export schemas to SQL DDL
@@ -609,3 +614,19 @@ npm version patch    # or minor, major
 npm publish
 git push --tags
 ```
+
+## **Essential Pre-Publish Checklist**
+
+- **Verify package metadata**: Confirm `name`, `version`, `description`, `repository`, `author`, `license`, `keywords` present and correct in `package.json`.
+- **Confirm entry points**: Ensure `main`, `types`, and `bin` point to files in `dist` and that those files are produced by the build.
+- **Build artifacts**: Run `npm run build` and verify `dist` contains compiled JS files and `.d.ts` declaration files.
+- **CLI**: Ensure the CLI entry (`dist/cli/.../index.js`) includes the shebang `#!/usr/bin/env node` and is executable; test local usage via `npm pack` and installing the generated `.tgz` into a sandbox project.
+- **Test local npx/global usage**: Validate `npx <local-tgz>` and global install behaviors via a sandbox project.
+- **Tests & CI**: All tests must pass (already verified). Confirm CI runs `build`, `test`, and `lint` on pull requests; optionally add a CI publish step or document a manual publish checklist.
+- **Documentation**: Ensure `README.md`, `API.md`, `CHANGELOG.md`, and `CONTRIBUTING.md` are up-to-date. Add `SECURITY.md` and `CODE_OF_CONDUCT.md` if accepting external contributions. Add a short `Publish.md` describing the release steps.
+- **License & legal**: Ensure a `LICENSE` file is present and matches the `license` field in `package.json`.
+- **Package contents**: Confirm the `files` field in `package.json` is correct and review `.npmignore` (if present) to avoid accidentally excluding needed files.
+- **NPM account & name**: Check package name availability on npm and ensure you have a publisher account (enable 2FA if required). If publishing a scoped package, plan to use `--access public`.
+- **Telemetry & privacy**: Decide and document an opt-in telemetry policy (we recommend opt-in) in `README.md`.
+- **Release**: Update `version` and `CHANGELOG.md`, create a signed Git tag, and run `npm publish` (or CI publish step).
+- **Post-publish monitoring**: Track downloads via npm/GitHub and optionally enable opt-in Sentry/telemetry hooks for consumer apps (telemetry should be opt-in only).

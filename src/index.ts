@@ -1,3 +1,7 @@
+export { ValidationError } from './errors/ValidationError';
+export { PermissionError } from './errors/PermissionError';
+export { SchemaError } from './errors/SchemaError';
+
 export { defineTable } from './schema/defineTable';
 export { string, number, boolean, date, json, ColumnBuilder } from './schema/columnBuilder';
 export { createSheetAdapter, SheetAdapter } from './adapter/sheetAdapter';
