@@ -1,6 +1,6 @@
 {
   "name": "longcelot-sheet-db",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Google Sheets-backed staging database adapter for Node.js with schema-first design",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
