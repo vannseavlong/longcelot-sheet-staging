@@ -17,6 +17,9 @@ importers:
       commander:
         specifier: ^11.1.0
         version: 11.1.0
+      google-auth-library:
+        specifier: ^9.15.1
+        version: 9.15.1
       googleapis:
         specifier: ^128.0.0
         version: 128.0.0
