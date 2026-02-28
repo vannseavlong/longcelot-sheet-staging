@@ -4,3 +4,5 @@ dist/
 *.log
 .DS_Store
 .sheet-db-tokens.json
+.claude/
+.bolt/

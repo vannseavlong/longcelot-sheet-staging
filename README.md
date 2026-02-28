@@ -1,5 +1,9 @@
 # 📦 longcelot-sheet-db
 
+[![CI](https://github.com/vannseavlong/longcelot-sheet-staging/actions/workflows/ci.yml/badge.svg)](https://github.com/vannseavlong/longcelot-sheet-staging/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/longcelot-sheet-db)](https://www.npmjs.com/package/longcelot-sheet-db)
+[![license](https://img.shields.io/npm/l/longcelot-sheet-db)](LICENSE)
+
 **Google Sheets-backed Staging Database for Node.js**
 
 A schema-first, actor-aware database adapter that uses Google Sheets as the storage engine. Perfect for MVPs, prototypes, staging environments, and internal tools where cost and simplicity matter.
@@ -276,12 +280,7 @@ user-sheet-123
 
 ## 🎓 Complete Example
 
-See the [Student Web App](./examples/student-app) for a complete implementation with:
-- 4 actors (admin, student, teacher, parent)
-- 20+ schema definitions
-- Authentication flow
-- Role-based permissions
-- CRUD operations
+Coming Soon!
 
 ## 🔄 Migration Path
 
