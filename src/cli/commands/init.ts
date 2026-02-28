@@ -3,8 +3,31 @@ import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 
+function printBanner(): void {
+  const c = chalk.hex('#05b5fb').bold;
+  const lines = [
+    '█     ██  █  █  ██   ███ ████ █    ██  ████',
+    '█    █  █ ██ █ █    █    █    █    █  █  █  ',
+    '█    █  █ █ ██ █ ██ █   ███  █    █  █  █  ',
+    '█    █  █ █  █ █  █ █   █    █    █  █  █  ',
+    '████  ██  █  █  ███  ███ ████ ████  ██   █  ',
+    '',
+    '     ███  █  █ ████ ████ ████    ███  ███   ',
+    '     █    █  █ █    █     █      █  █ █  █  ',
+    '      ██  ████ ███  ███   █      █  █ ███   ',
+    '        █ █  █ █    █     █      █  █ █  █  ',
+    '     ███  █  █ ████ ████  █      ███  ███   ',
+  ];
+
+  console.log();
+  lines.forEach((line) => console.log('  ' + c(line)));
+  console.log();
+  console.log('  ' + chalk.hex('#05b5fb')('Google Sheets-backed Staging Database Adapter'));
+  console.log();
+}
+
 export async function initCommand() {
-  console.log(chalk.blue.bold('🚀 Initializing longcelot-sheet-db project...\n'));
+  printBanner();
 
   const answers = await inquirer.prompt([
     {
@@ -26,27 +49,6 @@ export async function initCommand() {
       default: 'admin,user',
       filter: (input) => input.split(',').map((s: string) => s.trim()),
     },
-    {
-      type: 'input',
-      name: 'googleClientId',
-      message: 'Google Client ID:',
-    },
-    {
-      type: 'input',
-      name: 'googleClientSecret',
-      message: 'Google Client Secret:',
-    },
-    {
-      type: 'input',
-      name: 'googleRedirectUri',
-      message: 'Google Redirect URI:',
-      default: 'http://localhost:3000/auth/callback',
-    },
-    {
-      type: 'input',
-      name: 'adminSheetId',
-      message: 'Admin Sheet ID (leave empty to create later):',
-    },
   ]);
 
   const configContent = `export default {
@@ -56,10 +58,17 @@ export async function initCommand() {
 };
 `;
 
-  const envContent = `GOOGLE_CLIENT_ID=${answers.googleClientId}
-GOOGLE_CLIENT_SECRET=${answers.googleClientSecret}
-GOOGLE_REDIRECT_URI=${answers.googleRedirectUri}
-ADMIN_SHEET_ID=${answers.adminSheetId}
+  const envContent = `# Google OAuth credentials
+# Get these at: https://console.cloud.google.com/apis/credentials
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
+
+# Your central admin Google Sheet ID
+# Create a blank Google Sheet and paste the ID from its URL here
+ADMIN_SHEET_ID=
+
+# Super admin email (new user sheets will be shared with this account)
 SUPER_ADMIN_EMAIL=${answers.superAdminEmail}
 `;
 
@@ -113,13 +122,18 @@ export default defineTable({
     }
   }
 
-  console.log(chalk.green('✅ Project initialized successfully!\n'));
-  console.log(chalk.yellow('Created files:'));
-  console.log('  - sheet-db.config.ts');
-  console.log('  - .env');
-  console.log('  - schemas/');
+  console.log(chalk.green('\n✅ Project initialized!\n'));
+  console.log(chalk.yellow('Created:'));
+  console.log('  ' + chalk.white('sheet-db.config.ts'));
+  console.log('  ' + chalk.white('.env'));
+  console.log('  ' + chalk.white('schemas/'));
+
   console.log(chalk.cyan('\nNext steps:'));
-  console.log('  1. Run: npm install longcelot-sheet-db');
-  console.log('  2. Generate tables: pnpm sheet-db generate <table-name>');
-  console.log('  3. Sync to sheets: pnpm sheet-db sync\n');
+  console.log('  1. ' + chalk.white('Fill in your .env file:'));
+  console.log('     ' + chalk.gray('GOOGLE_CLIENT_ID=<your-client-id>'));
+  console.log('     ' + chalk.gray('GOOGLE_CLIENT_SECRET=<your-client-secret>'));
+  console.log('     ' + chalk.gray('ADMIN_SHEET_ID=<your-sheet-id>'));
+  console.log('     ' + chalk.dim('→ https://console.cloud.google.com/apis/credentials'));
+  console.log('  2. ' + chalk.white('Generate tables:  sheet-db generate <table-name>'));
+  console.log('  3. ' + chalk.white('Sync to sheets:   sheet-db sync\n'));
 }
