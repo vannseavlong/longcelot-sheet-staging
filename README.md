@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/vannseavlong/longcelot-sheet-staging/actions/workflows/ci.yml/badge.svg)](https://github.com/vannseavlong/longcelot-sheet-staging/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/longcelot-sheet-db)](https://www.npmjs.com/package/longcelot-sheet-db)
+[![npm downloads](https://img.shields.io/npm/dt/longcelot-sheet-db)](https://www.npmjs.com/package/longcelot-sheet-db)
 [![license](https://img.shields.io/npm/l/longcelot-sheet-db)](LICENSE)
 
 **Google Sheets-backed Staging Database for Node.js**
@@ -32,15 +33,33 @@ Instead of running MySQL, PostgreSQL, or MongoDB for staging:
 ### Installation
 
 ```bash
+# npm
 npm install longcelot-sheet-db
-# or
+
+# pnpm
 pnpm add longcelot-sheet-db
+
+# yarn
+yarn add longcelot-sheet-db
+
+# bun
+bun add longcelot-sheet-db
 ```
 
 ### Initialize Project
 
 ```bash
-pnpm sheet-db init
+# npm
+npx sheet-db init
+
+# pnpm
+pnpm dlx sheet-db init
+
+# yarn
+yarn dlx sheet-db init
+
+# bun
+bunx sheet-db init
 ```
 
 This creates:
@@ -189,10 +208,15 @@ Permissions are enforced automatically:
 
 ## 🛠️ CLI Commands
 
+> All commands can be run with `npx`, `pnpm dlx`, `yarn dlx`, or `bunx` — or directly as `sheet-db <command>` if installed globally.
+
 ### Initialize Project
 
 ```bash
-pnpm sheet-db init
+npx sheet-db init
+# pnpm dlx sheet-db init
+# yarn dlx sheet-db init
+# bunx sheet-db init
 ```
 
 Creates project structure and configuration files.
@@ -200,7 +224,10 @@ Creates project structure and configuration files.
 ### Generate Schema
 
 ```bash
-pnpm sheet-db generate bookings
+npx sheet-db generate bookings
+# pnpm dlx sheet-db generate bookings
+# yarn dlx sheet-db generate bookings
+# bunx sheet-db generate bookings
 ```
 
 Interactive schema generator with prompts for columns and types.
@@ -208,7 +235,10 @@ Interactive schema generator with prompts for columns and types.
 ### Sync Schemas
 
 ```bash
-pnpm sheet-db sync
+npx sheet-db sync
+# pnpm dlx sheet-db sync
+# yarn dlx sheet-db sync
+# bunx sheet-db sync
 ```
 
 Creates missing sheets and adds missing columns (never deletes data).
@@ -216,7 +246,10 @@ Creates missing sheets and adds missing columns (never deletes data).
 ### Validate Schemas
 
 ```bash
-pnpm sheet-db validate
+npx sheet-db validate
+# pnpm dlx sheet-db validate
+# yarn dlx sheet-db validate
+# bunx sheet-db validate
 ```
 
 Checks for:
@@ -224,6 +257,39 @@ Checks for:
 - Invalid modifiers
 - Unknown actors
 - Missing required fields
+
+### Seed Data
+
+```bash
+npx sheet-db seed
+# pnpm dlx sheet-db seed
+# yarn dlx sheet-db seed
+# bunx sheet-db seed
+```
+
+Load initial or test data into your sheets.
+
+### Doctor
+
+```bash
+npx sheet-db doctor
+# pnpm dlx sheet-db doctor
+# yarn dlx sheet-db doctor
+# bunx sheet-db doctor
+```
+
+Runs environment and configuration health checks.
+
+### Status
+
+```bash
+npx sheet-db status
+# pnpm dlx sheet-db status
+# yarn dlx sheet-db status
+# bunx sheet-db status
+```
+
+Shows all registered tables, actors, and their sheet IDs.
 
 ## 🔐 Authentication
 
