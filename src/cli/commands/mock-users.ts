@@ -74,7 +74,7 @@ export async function mockUsersCommand(countArg?: string | number) {
       try {
         const schema = require(path.join(actorDir, file)).default;
         adapter.registerSchema(schema);
-      } catch (err) {
+      } catch {
         // ignore failures to require optional schemas
       }
     }

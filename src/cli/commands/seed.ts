@@ -98,7 +98,7 @@ export async function seedCommand(seedFile: string, opts?: any) {
     let users: any[] = [];
     try {
       users = await adapterWithContext.table('users').findMany();
-    } catch (err) {
+    } catch {
       console.error(chalk.red('❌ Could not read admin users table. Make sure `users` schema is registered and admin sheet has been synced.'));
       process.exit(1);
     }
@@ -121,7 +121,7 @@ export async function seedCommand(seedFile: string, opts?: any) {
           try {
             await targetAdapter.table(tableName).create(record);
             totalInsertedActors++;
-          } catch (err) {
+          } catch {
             totalFailedActors++;
           }
         }
