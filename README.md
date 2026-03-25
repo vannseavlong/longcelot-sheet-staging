@@ -67,6 +67,28 @@ This creates:
 - `.env` - Environment variables
 - `schemas/` - Schema directory
 
+### Set Up Google OAuth
+
+This package **requires Google OAuth2** to function — there is no way to skip it. OAuth is used for the backend to communicate with Google Sheets API.
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a project and enable Google Sheets API and Google Drive API
+3. Create OAuth 2.0 credentials (Client ID and Client Secret)
+4. Set redirect URI (e.g., `http://localhost:3000/auth/callback`)
+5. Add your credentials to `.env`:
+
+```env
+GOOGLE_CLIENT_ID=your_client_id
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
+ADMIN_SHEET_ID=your_admin_sheet_id
+```
+
+**What if you have your own authentication?**
+- OAuth is strictly for **backend-to-Google-Sheets** communication
+- Your app's existing authentication (JWT, sessions, etc.) remains untouched
+- You map your user identity to sheet-db context (see "Integrating into an Existing Project" below)
+
 ### Define a Schema
 
 ```typescript
@@ -205,6 +227,61 @@ Permissions are enforced automatically:
 - Users can only access their own sheets
 - Admin can access admin tables
 - Cross-actor access is blocked
+
+### Integrating into an Existing Project
+If you already have a working backend (e.g., Express, NestJS), you can safely inject `longcelot-sheet-db` without ripping out your framework:
+
+```bash
+# 1. Add the package
+pnpm add longcelot-sheet-db
+
+# 2. Initialize project (creates config and schemas directory)
+npx sheet-db init
+
+# 3. Update your .env with Google OAuth credentials
+
+# 4. Define your schemas in schemas/ directory
+
+# 5. Sync schemas to Google Sheets
+npx sheet-db sync
+
+# 6. Use in your backend code
+```
+
+**How it works with your existing auth**:
+- Your app continues to use your existing authentication (JWT, sessions, cookies)
+- When you need to access data, map your authenticated user to sheet-db context:
+
+```typescript
+// Your Express/NestJS route handler
+app.get('/bookings', async (req, res) => {
+  // Your existing auth provides user info
+  const developerUser = req.user; // From your JWT/session
+
+  // Map to sheet-db context
+  const userContext = adapter.withContext({
+    userId: developerUser.id,        // Your app's user ID
+    role: developerUser.role,         // 'student', 'teacher', etc.
+    actorSheetId: developerUser.sheetId, // From sheet-db user registry
+  });
+
+  const bookings = await userContext.table('bookings').findMany();
+  res.json(bookings);
+});
+```
+
+### Why do we need `user_id` if we have `sheet_id`?
+
+The `sheet_id` dictates the **physical storage location** on Google Drive — it exists only in the sheet-db world. When you eventually graduate from Google Sheets to a production SQL database (MySQL, PostgreSQL), the `sheet_id` goes away entirely.
+
+The `user_id` dictates the **logical domain identity** — it persists across all databases. This is your app's true primary key that ties your entire system together.
+
+| Field | Purpose | Persists after migration |
+|-------|---------|--------------------------|
+| `sheet_id` | Physical location in Google Drive | No — Google Sheets only |
+| `user_id` | Logical user identity | Yes — becomes PK in SQL |
+
+**Migration example**: When you export to Prisma, `user_id` becomes your primary key, while `sheet_id` is simply not included in the export.
 
 ## 🛠️ CLI Commands
 
@@ -357,6 +434,18 @@ When you're ready for production:
 3. Update CRUD calls (minimal changes)
 4. No logic trapped in Sheets
 
+We are building this adapter with a strict schema constraint so that graduating to production is effortless. By keeping logic in JS and using standard Data Types, your TS definitions can be directly ported over to a Prisma `schema.prisma` file later.
+
+**Upcoming CLI for migration**:
+
+```bash
+# Export schemas to Prisma (coming soon)
+npx sheet-db export --prisma --output ./prisma
+
+# Export schemas to SQL DDL (coming soon)
+npx sheet-db export --sql --output ./migrations
+```
+
 ```typescript
 // Development (Sheets)
 const adapter = createSheetAdapter({ ... });
@@ -364,6 +453,12 @@ const adapter = createSheetAdapter({ ... });
 // Production (Prisma, Sequelize, etc.)
 const adapter = createSQLAdapter({ ... });
 ```
+
+**Data migration workflow**:
+1. Export your schemas using `sheet-db export` (coming soon)
+2. Fetch all data from Sheets using the adapter: `await adapter.table('x').findMany()`
+3. Insert data into your production database
+4. Swap the adapter in your code
 
 ## ⚡ Performance
 

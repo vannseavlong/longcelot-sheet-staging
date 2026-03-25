@@ -239,11 +239,15 @@ CRM prototype
 Internal dashboards
 
 24. Future Roadmap
-Column encryption
-CLI migration tools
-Audit logs
-Soft deletes
-Row-level permissions
+- Prisma/SQL export CLI (`sheet-db export`)
+- Cross-actor joins (`adapter.join()`)
+- Developer mock user sheets (`sheet-db mock-users`)
+- Bulk schema sync to all users (`sync --all-users`)
+- Column encryption
+- Audit logs
+- Row-level permissions
+- Advanced query operators (gt, lt, contains)
+- Batch operations (bulkCreate, bulkUpdate)
 
 25. Summary
 longcelot-sheet-db gives developers a free, structured, secure staging database powered by Google Sheets, without forcing a specific production database.

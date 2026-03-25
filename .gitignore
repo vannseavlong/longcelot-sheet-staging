@@ -6,3 +6,4 @@ dist/
 .sheet-db-tokens.json
 .claude/
 .bolt/
+thesis/

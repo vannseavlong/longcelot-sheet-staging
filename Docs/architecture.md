@@ -96,6 +96,35 @@ Actors represent roles that determine:
 
 Each actor owns exactly one sheet.
 
+### Role Permissions & Table Joins (Roadmap)
+
+#### Current Permission Model
+Currently, actor sheets are highly isolated:
+- Users can only access their own sheets
+- Admin has access to admin sheet and user registry
+- Cross-actor access is blocked by default
+
+#### Cross-Actor Access Patterns
+For use cases like a teacher viewing student records:
+
+1. **Shared Admin Table** (recommended)
+   - Create shared tables in admin sheet (e.g., `teacher_student_map`)
+   - Teacher queries through admin context
+   - Admin enforces permission rules
+
+2. **Cross-Sheet Join** (future: `adapter.join()`)
+   - Execute parallel queries to multiple actor sheets
+   - Perform in-memory join in JavaScript
+   - Match on `ref()` column constraints
+   - Permission checks at application layer
+
+3. **Google Drive Sharing** (not recommended for MVP)
+   - Student shares their sheet with teacher at Drive level
+   - Complex to manage; better to use admin proxy
+
+#### Planned: `adapter.join()` API
+In future releases, `adapter.join()` will handle executing concurrent client requests to individual sheets and performing JavaScript in-memory joins matching `user_id` relations.
+
 ---
 
 ## 5. Schema System

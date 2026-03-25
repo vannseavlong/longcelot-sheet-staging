@@ -576,13 +576,45 @@ jobs:
 
 ### Next Session (Nice to Have)
 
+### Documentation Updates (Completed 2026-03-24)
+- Updated `README.md` with OAuth requirement clarification, integration workflow, user_id vs sheet_id explanation, and migration path
+- Updated `CHANGELOG.md` with duplicate [Unreleased] section fixed and new planned items
+- Created comprehensive `TODO.md` with Q&A from project planning session:
+  - Q1: OAuth cannot be skipped — required for Sheets API
+  - Q2: Integration workflow for existing projects
+  - Q3: Development workflow for multi-actor testing
+  - Q4: CLI tools for test data seeding (mock-users, seed --all-actors)
+  - Q5: Migration path to Prisma/SQL (export command)
+  - Q6: Role permissions with OAuth (teacher accessing student data)
+  - Q7: Cross-actor joins (adapter.join() API)
+  - Q8: user_id vs sheet_id for migration
+  - Q9: Additional CLI commands needed
+
+### Planned Features (Next Phases)
+
+#### Phase 2: Developer Experience & Integration
+- `sheet-db mock-users` — Generate dummy user sheets for development testing
+- `sheet-db seed --all-actors` — Distribute seed data across all actor types
+- `sheet-db init --integrate` — Merge config into existing projects without overwriting
+- Better OAuth flow documentation for developers
+
+#### Phase 3: Schema Syncing & Migrations
+- `sheet-db export` — Export schemas to Prisma schema, SQL DDL
+- Migration guide documentation
+- `sync --all-users` — Push schema changes to all registered user sheets
+
+#### Phase 4: Role Permissions & Cross-Actor Operations
+- Advanced role permissions — cross-boundary access (teacher → student)
+- `adapter.join()` API — Query across actor sheets
+- Permission matrix configuration
+
 ### Nice to Have (This Month)
-14. Migration helper — export schemas to SQL DDL
-15. Index support — lightweight lookup helper sheets
-16. Foreign key validation — enforce `ref()` constraints
-17. Advanced query operators — gt, lt, contains, in
-18. Batch operations — `bulkCreate`, `bulkUpdate`
-19. Setup code coverage reporting (Codecov or similar)
+15. Migration helper — export schemas to SQL DDL (moved to Phase 3)
+16. Index support — lightweight lookup helper sheets
+17. Foreign key validation — enforce `ref()` constraints
+18. Advanced query operators — gt, lt, contains, in
+19. Batch operations — `bulkCreate`, `bulkUpdate`
+20. Setup code coverage reporting (Codecov or similar)
 
 ## COMMON TASKS
 

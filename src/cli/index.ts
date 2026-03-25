@@ -19,6 +19,7 @@ program
 program
   .command('init')
   .description('Initialize a new longcelot-sheet-db project')
+  .option('--integrate', 'Integrate into an existing project without overwriting configs')
   .action(initCommand);
 
 program
@@ -29,6 +30,7 @@ program
 program
   .command('sync')
   .description('Sync schemas to Google Sheets')
+  .option('--all-users', 'Sync schema changes to all registered user sheets')
   .action(syncCommand);
 
 program

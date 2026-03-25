@@ -20,6 +20,23 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ## [Unreleased]
 
+### Planned (Phase 2 & 3 Roadmap)
+- **Added**: `init --integrate` CLI command to integrate `longcelot-sheet-db` into an existing Node.js project without destroying existing configuration.
+- **Added**: `sync --all-users` CLI command to bulk-update Google Sheets schemas across all initialized user endpoints.
+- **Added**: Developer sandbox CLI tools (`sheet-db mock-users`).
+- **Added**: Prisma/SQL DDL automated migration script (`sheet-db export`).
+- **Changed**: Improved documentation for integrating with existing backends and planning forward migration to SQL.
+- **Removed**: Redundant `Docs/apiReference.md` file layout to consolidate into root `API.md`.
+
+### New Documentation (Q1-Q9)
+- **Added**: Clarified OAuth requirement — cannot be skipped, required for backend-to-Sheets communication.
+- **Added**: Integration workflow for existing projects — mapping user auth to sheet-db context.
+- **Added**: Development workflow documentation — how to test with multiple actor sheets.
+- **Added**: Migration path documentation — `user_id` vs `sheet_id` purpose.
+- **Added**: Cross-actor operations documentation — join APIs and permission models (roadmap).
+- **Added**: Export CLI (`sheet-db export`) for generating Prisma schemas and SQL DDL.
+- **Added**: Sync `--all-users` for pushing schema changes to all registered users.
+
 _Nothing yet — add your in-progress changes here before the next release._
 
 ---

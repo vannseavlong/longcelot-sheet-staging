@@ -67,7 +67,7 @@ async function resolveTokens(
   return tokens;
 }
 
-export async function syncCommand() {
+export async function syncCommand(options: { allUsers?: boolean }) {
   console.log(chalk.blue.bold('🔄 Syncing schemas to Google Sheets...\n'));
 
   require('dotenv').config();
@@ -151,7 +151,12 @@ export async function syncCommand() {
   let synced = 0;
   let failed = 0;
 
-  for (const schema of schemas) {
+  // Sync admin schemas first
+  const adminSchemas = schemas.filter(s => s.actor === 'admin');
+  const userSchemas = schemas.filter(s => s.actor !== 'admin');
+
+  console.log(chalk.bold('\nSyncing Admin Schemas...'));
+  for (const schema of adminSchemas) {
     try {
       await adapter.syncSchema(schema);
       console.log(chalk.green(`  ✓ ${schema.name} (${schema.actor})`));
@@ -160,6 +165,44 @@ export async function syncCommand() {
       console.error(chalk.red(`  ✖ ${schema.name} — ${err}`));
       failed++;
     }
+  }
+
+  if (options.allUsers && userSchemas.length > 0) {
+    console.log(chalk.bold('\nSyncing User Schemas...'));
+    try {
+      // Fetch all users from admin sheet to get their actor_sheet_id
+      const usersTable = adapter.table('users');
+      const allUsers = await usersTable.findMany({});
+      
+      for (const user of allUsers) {
+        if (!user.actor_sheet_id) continue;
+        
+        console.log(chalk.cyan(`\nUser: ${user.email} (${user.role})`));
+        const roleSchemas = userSchemas.filter(s => s.actor === user.role);
+        
+        // inject context for this user to resolve correct sheet ID
+        const userAdapter = adapter.withContext({
+          userId: user.user_id,
+          role: user.role,
+          actorSheetId: user.actor_sheet_id
+        });
+
+        for (const schema of roleSchemas) {
+          try {
+            await userAdapter.syncSchema(schema);
+            console.log(chalk.green(`  ✓ ${schema.name} (${schema.actor})`));
+            synced++;
+          } catch (err) {
+            console.error(chalk.red(`  ✖ ${schema.name} — ${err}`));
+            failed++;
+          }
+        }
+      }
+    } catch (err) {
+      console.log(chalk.yellow(`⚠️ Could not fetch users table for all-users sync. Is it initialized? ${err}`));
+    }
+  } else if (userSchemas.length > 0) {
+    console.log(chalk.yellow('\nℹ Skipping user schemas sync. Use --all-users to sync to all user sheets.'));
   }
 
   console.log();

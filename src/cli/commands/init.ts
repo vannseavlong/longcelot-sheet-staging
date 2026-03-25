@@ -22,15 +22,22 @@ function printBanner(): void {
   console.log();
 }
 
-export async function initCommand() {
+export async function initCommand(options: { integrate?: boolean }) {
   printBanner();
+
+  if (options.integrate) {
+    console.log(chalk.blue('Integrating into an existing project...\n'));
+  }
+
+  const defaultProjectName = path.basename(process.cwd());
 
   const answers = await inquirer.prompt([
     {
       type: 'input',
       name: 'projectName',
       message: 'Project name:',
-      default: 'my-app',
+      default: defaultProjectName,
+      when: !options.integrate,
     },
     {
       type: 'input',
@@ -47,8 +54,10 @@ export async function initCommand() {
     },
   ]);
 
+  const projectName = options.integrate ? defaultProjectName : answers.projectName;
+
   const configContent = `export default {
-  projectName: "${answers.projectName}",
+  projectName: "${projectName}",
   superAdminEmail: "${answers.superAdminEmail}",
   actors: ${JSON.stringify(answers.actors, null, 2)}
 };
@@ -68,8 +77,23 @@ ADMIN_SHEET_ID=
 SUPER_ADMIN_EMAIL=${answers.superAdminEmail}
 `;
 
-  fs.writeFileSync('sheet-db.config.ts', configContent);
-  fs.writeFileSync('.env', envContent);
+  if (!fs.existsSync('sheet-db.config.ts') || !options.integrate) {
+    fs.writeFileSync('sheet-db.config.ts', configContent);
+  } else {
+    console.log(chalk.yellow('ℹ sheet-db.config.ts already exists, skipping creation.'));
+  }
+
+  if (!fs.existsSync('.env') || !options.integrate) {
+    fs.writeFileSync('.env', envContent);
+  } else {
+    console.log(chalk.yellow('ℹ .env already exists, please merge Google OAuth vars manually.'));
+    // Optionally append to .env
+    const currentEnv = fs.readFileSync('.env', 'utf-8');
+    if (!currentEnv.includes('GOOGLE_CLIENT_ID')) {
+      fs.appendFileSync('.env', '\n' + envContent);
+      console.log(chalk.green('✅ Appended Google Sheet DB variables to .env'));
+    }
+  }
 
   if (!fs.existsSync('schemas')) {
     fs.mkdirSync('schemas');
