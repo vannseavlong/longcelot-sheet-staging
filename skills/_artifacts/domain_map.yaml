@@ -1,0 +1,129 @@
+package: longcelot-sheet-db
+version: "0.1.5"
+description: >
+  A schema-first, actor-aware database adapter that uses Google Sheets
+  as the storage engine. Designed for MVPs, prototypes, staging environments,
+  and internal tools where zero infrastructure cost is a priority.
+
+domains:
+  - name: core
+    description: >
+      Package installation, SheetAdapter creation and configuration,
+      OAuth token wiring, schema registration, and integration with
+      existing backends (Express, NestJS, etc.)
+    sources:
+      - README.md
+      - src/adapter/sheetAdapter.ts
+      - CLAUDE.md
+    key_concepts:
+      - createSheetAdapter
+      - SheetAdapterConfig
+      - registerSchema / registerSchemas
+      - withContext
+      - createUserSheet
+      - syncSchema
+      - Environment variables (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, ADMIN_SHEET_ID)
+
+  - name: schema
+    description: >
+      Table definition using defineTable() and the fluent column builder API.
+      Covers column types (string, number, boolean, date, json), modifiers
+      (required, unique, default, enum, pattern, min, max, ref, index, readonly,
+      primary), auto-generated columns, timestamps, soft-delete, and actor routing.
+    sources:
+      - src/schema/defineTable.ts
+      - src/schema/columnBuilder.ts
+      - src/schema/types.ts
+    key_concepts:
+      - defineTable
+      - ColumnBuilder (string, number, boolean, date, json)
+      - Column modifiers
+      - actor field
+      - timestamps option
+      - softDelete option
+      - Auto-generated columns (_id, _created_at, _updated_at, _deleted_at)
+
+  - name: crud
+    description: >
+      Data access operations: create, findMany, findOne, update, delete.
+      Covers the withContext() actor isolation pattern, in-memory filtering and
+      sorting, unique constraint enforcement, soft delete behavior, serialization
+      rules, and performance characteristics.
+    sources:
+      - src/adapter/crud.ts
+      - src/adapter/sheetAdapter.ts
+      - src/adapter/sheetClient.ts
+    key_concepts:
+      - withContext / UserContext
+      - table()
+      - create
+      - findMany / FindOptions
+      - findOne
+      - update / UpdateOptions
+      - delete / DeleteOptions
+      - Soft delete
+      - Serialization (boolean as TRUE/FALSE, json as JSON string)
+      - Permission enforcement via hasPermission()
+      - Sheet routing via resolveSpreadsheetId()
+
+  - name: auth
+    description: >
+      Google OAuth2 flow using OAuthManager, and bcrypt-based password
+      utilities. Covers the full OAuth2 code exchange, token refresh,
+      ID token verification, password hashing, comparison, and strength validation.
+    sources:
+      - src/auth/oauth.ts
+      - src/auth/password.ts
+    key_concepts:
+      - createOAuthManager / OAuthManager
+      - getAuthUrl
+      - getTokens
+      - refreshTokens
+      - verifyToken
+      - hashPassword
+      - comparePassword
+      - validatePasswordStrength
+
+  - name: cli
+    description: >
+      The sheet-db CLI binary. Covers all commands: init (project scaffolding),
+      generate (interactive schema builder), sync (OAuth token management and
+      schema push to Sheets), validate (schema linting), seed (test data loading),
+      doctor (environment diagnostics), and status (project overview).
+    sources:
+      - src/cli/index.ts
+      - src/cli/commands/init.ts
+      - src/cli/commands/generate.ts
+      - src/cli/commands/sync.ts
+      - src/cli/commands/validate.ts
+      - src/cli/commands/seed.ts
+      - src/cli/commands/doctor.ts
+      - src/cli/commands/status.ts
+    key_concepts:
+      - sheet-db init
+      - sheet-db generate
+      - sheet-db sync
+      - sheet-db validate
+      - sheet-db seed
+      - sheet-db doctor
+      - sheet-db status
+      - sheet-db.config.ts
+      - .sheet-db-tokens.json
+
+implicit_knowledge:
+  - OAuth is mandatory — there is no API-key-only mode
+  - CommonJS only — chalk v4, inquirer v8, nanoid v3 (do NOT upgrade to ESM-only versions)
+  - All reads load entire sheet into memory — not suitable for millions of rows
+  - Each actor role owns one Google Spreadsheet; all tables for that actor are tabs within it
+  - Admin actor always uses adminSheetId regardless of actorSheetId in context
+  - dist/ is compiled output — not committed to git
+
+failure_modes:
+  - Missing registerSchema() before table() access
+  - Expired OAuth tokens passed to createSheetAdapter
+  - actor mismatch between withContext role and table's actor field
+  - Duplicate table name within same actor
+  - Manually defining auto-generated columns (_id, _created_at, etc.)
+  - Upgrading chalk/inquirer/nanoid to ESM-only versions
+  - Not running sheet-db sync after schema changes
+  - Committing .sheet-db-tokens.json to version control

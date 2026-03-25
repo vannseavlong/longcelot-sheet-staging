@@ -6,6 +6,7 @@ import { generateCommand } from './commands/generate';
 import { syncCommand } from './commands/sync';
 import { validateCommand } from './commands/validate';
 import { seedCommand } from './commands/seed';
+import { mockUsersCommand } from './commands/mock-users';
 import { doctorCommand } from './commands/doctor';
 import { statusCommand } from './commands/status';
 
@@ -41,7 +42,13 @@ program
 program
   .command('seed <seed-file>')
   .description('Seed initial data into Google Sheets from a JS/TS file')
-  .action(seedCommand);
+  .option('--all-actors', 'Distribute seed data to all actor sheets (per users table)')
+  .action((seedFile, options) => seedCommand(seedFile, options));
+
+program
+  .command('mock-users [count]')
+  .description('Create mock user sheets for development/testing')
+  .action((count) => mockUsersCommand(count));
 
 program
   .command('doctor')

@@ -73,12 +73,12 @@ npx sheet-db sync
 
 ### Q4: CLI for inserting test data to all actor sheets during development
 
-- [ ] **Implement `sheet-db mock-users`**
+- [x] **Implement `sheet-db mock-users`**
   - Generate dummy user/actor Google Sheets for testing
   - Allow developers to inspect what real users see
   - Support generating multiple actors (student, teacher, etc.)
 
-- [ ] **Enhance `sheet-db seed`**
+- [x] **Enhance `sheet-db seed`**
   - Currently seeds data to admin sheet
   - **New**: `--all-actors` flag to distribute seed data across all actor types
   - Support defining seeds per actor type

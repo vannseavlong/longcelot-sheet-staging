@@ -1,0 +1,81 @@
+package: longcelot-sheet-db
+version: "0.1.5"
+
+skill_tree:
+  - name: core
+    path: skills/core/SKILL.md
+    description: >
+      Package setup, SheetAdapter creation, schema registration, environment
+      variables, and integration with existing backends.
+    covers:
+      - createSheetAdapter
+      - registerSchema / registerSchemas
+      - withContext (overview)
+      - createUserSheet
+      - syncSchema
+      - Environment variables
+    depends_on: []
+
+  - name: schema
+    path: skills/schema/SKILL.md
+    description: >
+      Defining tables with defineTable() and fluent column builders.
+      All column types and modifiers.
+    covers:
+      - defineTable
+      - string / number / boolean / date / json builders
+      - All column modifiers
+      - Auto-generated columns
+      - timestamps / softDelete options
+      - actor field
+    depends_on:
+      - core
+
+  - name: crud
+    path: skills/crud/SKILL.md
+    description: >
+      Data access operations: create, findMany, findOne, update, delete.
+      Actor isolation, filtering, pagination, and serialization.
+    covers:
+      - withContext / UserContext
+      - table()
+      - create
+      - findMany / FindOptions
+      - findOne
+      - update / UpdateOptions
+      - delete / DeleteOptions
+      - Soft delete behavior
+      - Serialization rules
+      - Performance characteristics
+    depends_on:
+      - core
+      - schema
+
+  - name: auth
+    path: skills/auth/SKILL.md
+    description: >
+      Google OAuth2 flow (OAuthManager) and bcrypt password utilities.
+    covers:
+      - createOAuthManager / OAuthConfig
+      - getAuthUrl / getTokens / refreshTokens / verifyToken
+      - hashPassword / comparePassword / validatePasswordStrength
+    depends_on:
+      - core
+
+  - name: cli
+    path: skills/cli/SKILL.md
+    description: >
+      The sheet-db CLI: init, generate, sync, validate, seed, doctor, status.
+    covers:
+      - sheet-db init
+      - sheet-db generate
+      - sheet-db sync
+      - sheet-db validate
+      - sheet-db seed
+      - sheet-db doctor
+      - sheet-db status
+      - sheet-db.config.ts
+      - .sheet-db-tokens.json
+    depends_on:
+      - core
+      - schema

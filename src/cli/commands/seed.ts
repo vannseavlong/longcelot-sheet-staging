@@ -3,7 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
 
-export async function seedCommand(seedFile: string) {
+export async function seedCommand(seedFile: string, opts?: any) {
   console.log(chalk.blue.bold('🌱 Seeding data into Google Sheets...\n'));
 
   require('dotenv').config();
@@ -90,6 +90,50 @@ export async function seedCommand(seedFile: string) {
 
   let totalInserted = 0;
   let totalFailed = 0;
+
+  if (opts && opts.allActors) {
+    console.log(chalk.cyan('\nSeeding to all actor sheets (--all-actors)...'));
+
+    // Read users from admin users table
+    let users: any[] = [];
+    try {
+      users = await adapterWithContext.table('users').findMany();
+    } catch (err) {
+      console.error(chalk.red('❌ Could not read admin users table. Make sure `users` schema is registered and admin sheet has been synced.'));
+      process.exit(1);
+    }
+
+    if (!users || users.length === 0) {
+      console.warn(chalk.yellow('No users found in admin users table. Nothing to seed.'));
+      return;
+    }
+
+    let totalInsertedActors = 0;
+    let totalFailedActors = 0;
+
+    for (const user of users) {
+      if (!user.actor_sheet_id) continue;
+      const targetAdapter = adapter.withContext({ userId: 'seed-cli', role: 'admin', actorSheetId: user.actor_sheet_id });
+
+      for (const [tableName, records] of Object.entries(seedData)) {
+        if (!Array.isArray(records)) continue;
+        for (const record of records) {
+          try {
+            await targetAdapter.table(tableName).create(record);
+            totalInsertedActors++;
+          } catch (err) {
+            totalFailedActors++;
+          }
+        }
+      }
+    }
+
+    console.log();
+    console.log(chalk.bold(`Seed complete (all-actors): ${totalInsertedActors} inserted, ${totalFailedActors} failed.`));
+    if (totalFailedActors > 0) process.exit(1);
+
+    return;
+  }
 
   for (const [tableName, records] of Object.entries(seedData)) {
     if (!Array.isArray(records)) {

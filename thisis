@@ -1,0 +1,29 @@
+Phase 2 updates applied:
+
+- Implemented CLI command: `sheet-db mock-users` (creates mock user sheets using adapter.createUserSheet)
+- Enhanced `sheet-db seed` with `--all-actors` option to distribute seed data into users' actor sheets
+- Registered CLI command in `src/cli/index.ts`
+- Updated `TODO.md` to mark Phase 2 items done
+- Removed `CLAUDE.md` as requested
+
+Notes:
+- `mock-users` uses existing OAuth tokens (expects `.sheet-db-tokens.json`) and `SUPER_ADMIN_EMAIL` env
+- `seed --all-actors` reads `users` table in admin sheet and writes seed records into each user's sheet when possible
+
+Next recommended steps:
+- Run `npm ci` and `npm test` locally to verify behavior
+- Create integration tests for `mock-users` and `seed --all-actors`
+- Prepare release: bump package version to `0.1.6`, tag, and push
+
+Commands to try locally:
+
+```bash
+# create mock users (3 by default)
+npx sheet-db mock-users 5
+
+# seed admin only
+npx sheet-db seed ./seeds/admin.seed.js
+
+# seed across all actor sheets
+npx sheet-db seed ./seeds/all.seed.js --all-actors
+```
