@@ -222,3 +222,87 @@ describe('CRUDOperations soft delete', () => {
     expect(record!._deleted_at).not.toBeNull();
   });
 });
+
+// ── primary key behaviour ─────────────────────────────────────────────────────
+
+describe('CRUDOperations primary key (string)', () => {
+  const skuSchema = defineTable({
+    name: 'skus',
+    actor: 'admin',
+    columns: {
+      sku_id: string().primary(),
+      label: string().required(),
+    },
+  });
+
+  function makeCRUD() {
+    const client = new MockSheetClient();
+    return { crud: new CRUDOperations(client as any, 'pk-sheet', skuSchema), client };
+  }
+
+  it('auto-generates a nanoid for the string primary column when not supplied', async () => {
+    const { crud } = makeCRUD();
+    const record = await crud.create({ label: 'Widget' });
+
+    expect(record.sku_id).toBeDefined();
+    expect(typeof record.sku_id).toBe('string');
+    expect(record.sku_id.length).toBeGreaterThan(0);
+  });
+
+  it('uses the supplied value when a string PK is provided', async () => {
+    const { crud } = makeCRUD();
+    const record = await crud.create({ sku_id: 'SKU-001', label: 'Widget' });
+
+    expect(record.sku_id).toBe('SKU-001');
+  });
+
+  it('strips the PK column silently on update() — does not throw', async () => {
+    const { crud } = makeCRUD();
+    await crud.create({ sku_id: 'SKU-001', label: 'Widget' });
+
+    await expect(
+      crud.update({ where: { sku_id: 'SKU-001' }, data: { sku_id: 'CHANGED', label: 'Updated' } })
+    ).resolves.toBe(1);
+
+    const record = await crud.findOne({ where: { sku_id: 'SKU-001' } });
+    expect(record!.sku_id).toBe('SKU-001');
+    expect(record!.label).toBe('Updated');
+  });
+
+  it('PK value remains unchanged after update', async () => {
+    const { crud } = makeCRUD();
+    const created = await crud.create({ label: 'Original' });
+    const originalPk = created.sku_id;
+
+    await crud.update({ where: { sku_id: originalPk }, data: { sku_id: 'HACKED', label: 'Modified' } });
+
+    const record = await crud.findOne({ where: { sku_id: originalPk } });
+    expect(record!.sku_id).toBe(originalPk);
+  });
+});
+
+describe('CRUDOperations primary key (number)', () => {
+  const itemSchema = defineTable({
+    name: 'items',
+    actor: 'admin',
+    columns: {
+      item_id: number().primary(),
+      name: string().required(),
+    },
+  });
+
+  it('throws when number primary column is not supplied on create()', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, 'num-pk-sheet', itemSchema);
+
+    await expect(crud.create({ name: 'Widget' })).rejects.toThrow('item_id');
+  });
+
+  it('accepts a supplied number PK value on create()', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, 'num-pk-sheet', itemSchema);
+
+    const record = await crud.create({ item_id: 42, name: 'Widget' });
+    expect(record.item_id).toBe(42);
+  });
+});

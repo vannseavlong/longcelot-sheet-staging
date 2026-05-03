@@ -1,6 +1,6 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
-import { TableSchema, UserContext } from '../schema/types';
+import { TableSchema, UserContext, FKResolver } from '../schema/types';
 import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
 
@@ -27,6 +27,7 @@ export class SheetAdapter {
 
   registerSchema(schema: TableSchema): void {
     this.schemas.set(schema.name, schema);
+    this.detectCircularRefs();
   }
 
   registerSchemas(schemas: TableSchema[]): void {
@@ -52,7 +53,8 @@ export class SheetAdapter {
       throw new PermissionError(`User does not have permission to access ${tableName}`, this.context?.role);
     }
 
-    return new CRUDOperations(this.client, spreadsheetId, schema);
+    const fkResolver = this.createFKResolver();
+    return new CRUDOperations(this.client, spreadsheetId, schema, fkResolver);
   }
 
   async createUserSheet(userId: string, role: string, email: string): Promise<string> {
@@ -97,6 +99,61 @@ export class SheetAdapter {
       const rows = await this.client.getAllRows(spreadsheetId, schema.name);
       if (rows.length === 0) {
         await this.client.writeHeader(spreadsheetId, schema.name, headers);
+      }
+    }
+  }
+
+  private createFKResolver(): FKResolver {
+    return async (tableName: string, columnName: string, value: unknown): Promise<boolean> => {
+      const refSchema = this.schemas.get(tableName);
+      if (!refSchema) {
+        throw new SchemaError(`Referenced table '${tableName}' is not registered`, tableName);
+      }
+      const refSpreadsheetId = this.resolveSpreadsheetId(refSchema);
+      const refCrud = new CRUDOperations(this.client, refSpreadsheetId, refSchema);
+      const row = await refCrud.findOne({ where: { [columnName]: value } });
+      return row !== null;
+    };
+  }
+
+  private detectCircularRefs(): void {
+    const adj = new Map<string, Set<string>>();
+    for (const [name, schema] of this.schemas) {
+      const deps = new Set<string>();
+      for (const col of Object.values(schema.columns)) {
+        if (col.ref) {
+          const [refTable] = col.ref.split('.');
+          deps.add(refTable);
+        }
+      }
+      adj.set(name, deps);
+    }
+
+    const visited = new Set<string>();
+    const inStack = new Set<string>();
+
+    const dfs = (node: string): boolean => {
+      visited.add(node);
+      inStack.add(node);
+
+      for (const neighbor of adj.get(node) ?? new Set()) {
+        if (!adj.has(neighbor)) continue;
+        if (!visited.has(neighbor)) {
+          if (dfs(neighbor)) return true;
+        } else if (inStack.has(neighbor)) {
+          return true;
+        }
+      }
+
+      inStack.delete(node);
+      return false;
+    };
+
+    for (const name of adj.keys()) {
+      if (!visited.has(name)) {
+        if (dfs(name)) {
+          throw new SchemaError('Circular reference detected in schema definitions');
+        }
       }
     }
   }

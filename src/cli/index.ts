@@ -9,6 +9,7 @@ import { seedCommand } from './commands/seed';
 import { mockUsersCommand } from './commands/mock-users';
 import { doctorCommand } from './commands/doctor';
 import { statusCommand } from './commands/status';
+import { exportCommand } from './commands/export';
 
 const program = new Command();
 
@@ -59,5 +60,13 @@ program
   .command('status')
   .description('Show project status: tables, actors, sheet IDs, and token info')
   .action(statusCommand);
+
+program
+  .command('export')
+  .description('Export schemas to Prisma schema or SQL DDL')
+  .option('--prisma', 'Generate Prisma schema.prisma')
+  .option('--sql', 'Generate SQL DDL (CREATE TABLE statements)')
+  .option('--output <dir>', 'Output directory (default: current directory)')
+  .action((options) => exportCommand(options));
 
 program.parse(process.argv);

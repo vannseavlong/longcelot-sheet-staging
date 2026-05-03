@@ -2,17 +2,52 @@
 
 ---
 
+## Phase 1: Core Correctness (PK & FK Modifiers)
+
+### Q: How should primary() and ref() work at runtime?
+
+**primary() — auto-generation**
+
+- Only one primary() column allowed per table (SchemaError if violated)
+- If column is string(), auto-generate a nanoid value on create() if none supplied
+- If column is number(), developer must supply the value
+- Implicitly required() + unique() — no need to chain them
+- On update(), PK column is readonly — strip it silently from data
+
+**ref('table.column') — FK validation**
+
+- On create() and update(), read the referenced table and check the value exists
+- Throw ValidationError if referenced row does not exist, with message: "FK violation: {table}.{column} '{value}' does not exist"
+- Both the referenced table and column must be registered in the same adapter instance
+- Skip-able per-call via: options: { skipFKValidation: true } (for bulk seed operations)
+- Circular references detected at registerSchema() time — throw SchemaError
+
+Implementation checklist:
+
+- [x] Add pkColumn field to TableSchema after defineTable() validates only one primary() exists
+- [x] Update CRUDOperations.create(): if pkColumn is string, auto-generate nanoid if not supplied
+- [x] Update CRUDOperations.update(): strip pkColumn from data silently (readonly)
+- [x] Add resolveForeignKeys() helper in SheetAdapter
+- [x] Call resolveForeignKeys() at start of create() and update() unless skipFKValidation is set
+- [x] Update export command to emit @id + @relation (Prisma) and PRIMARY KEY + FOREIGN KEY (SQL)
+- [x] Tests: PK auto-gen, PK readonly on update, FK pass, FK fail, skipFKValidation, circular ref
+
+---
+
 ## Phase 2: Developer Experience & Integration
 
 ### Q1: Can Developer Skip OAuth2? (Clarification)
+
 **Answer**: No. OAuth is the **primary and required** authentication method for this package.
 
 **Why OAuth is required**:
+
 - Google Sheets API requires OAuth2 for all read/write operations
 - The package uses OAuth to access and manage user's personal sheets
 - Without OAuth, the adapter cannot function
 
 **What if developers have their own auth?**
+
 - Developers can keep their existing authentication (JWT, sessions, etc.)
 - OAuth is strictly for **backend-to-Google-Sheets communication**
 - The developer maps their user identity to the sheet-db user context
@@ -45,6 +80,7 @@ npx sheet-db sync
 ```
 
 **Integration with existing backend**:
+
 - Keep existing authentication (Express, NestJS, etc.)
 - Add longcelot-sheet-db for data storage
 - Map your app's user to sheet-db context
@@ -53,20 +89,24 @@ npx sheet-db sync
 ### Q3: How does sheet-db sync help developer see tables for all actors?
 
 **Current behavior**:
+
 - `sheet-db sync` only syncs schemas to the **admin sheet**
 - Non-admin actor sheets need to be created at runtime when users register
 
 **Development workflow**:
+
 1. Define schemas for all actors in `schemas/` directory
 2. Run `npx sheet-db sync` — this creates tables in admin sheet
 3. When users register, `adapter.createUserSheet()` creates their personal sheet with all tables
 
 **For development/testing**:
+
 - Use `sheet-db mock-users` (planned) to generate test user sheets
 - Manually create test users via the CLI or register through your app
 - All actor sheets will have the same schema structure
 
 **When schemas change**:
+
 - Developer updates schema definitions
 - Run `npx sheet-db sync` to update admin sheet
 - **Challenge**: How to push changes to all existing user sheets? → **Q4**
@@ -91,6 +131,76 @@ npx sheet-db sync
 
 ---
 
+### Q10: How should the .env file handle multiple actor sheet IDs?
+
+**Answer**: Add one `DEV_*_SHEET_ID` per actor type in `.env` for local development:
+
+```env
+ADMIN_SHEET_ID=1ABC...
+DEV_STUDENT_SHEET_ID=1DEF...
+DEV_TEACHER_SHEET_ID=1GHI...
+```
+
+The `sheet-db.config.ts` actors array should map each role to its env var:
+
+```ts
+actors: [
+  { role: "admin", sheetIdEnv: "ADMIN_SHEET_ID" },
+  { role: "student", sheetIdEnv: "DEV_STUDENT_SHEET_ID" },
+  { role: "teacher", sheetIdEnv: "DEV_TEACHER_SHEET_ID" },
+];
+```
+
+The `init` command must scaffold these env vars automatically.
+The `sync` command must iterate ALL actors (not just admin) and print a per-actor status table showing: Actor | Sheet ID | Tables | Status (✅ synced / ⚠ skipped).
+The admin `users` table must have an `actor_sheet_id` column.
+
+Implementation checklist:
+
+- [ ] Update actors config shape in sheet-db.config.ts DSL
+- [ ] Update init to scaffold DEV\_\*\_SHEET_ID per actor
+- [ ] Update sync to iterate all actors and print per-actor status table
+- [ ] Ensure admin users table schema includes actor_sheet_id column
+
+---
+
+### Q11: How do we ensure all user actor sheets always have the latest schema?
+
+**Answer**: Two-layer guarantee:
+
+**Layer 1 — Schema Version Hash (runtime detection)**
+
+- On every `withContext()` call, compute a hash of the schema definition
+- Compare against the hash stored in the admin `schema_versions` table for that actor sheet
+- Configurable behaviour on mismatch via `onSchemaMismatch` in `sheet-db.config.ts`:
+  - `'warn'` → log warning and continue
+  - `'error'` → throw SchemaMismatchError
+  - `'auto-sync'` → sync the actor sheet before proceeding
+
+**Layer 2 — sync --all-users (bulk fix)**
+
+- Reads all `actor_sheet_id` values from admin `users` table
+- For each user sheet, detects and appends missing columns/tables (additive only — never deletes)
+- Updates `schema_versions` table after each successful sync
+- Supports `--dry-run` to preview without applying
+- Handles Google Sheets API rate limits with exponential backoff
+
+New built-in admin table: **schema_versions**
+Columns: `schema_version_id` (PK), `actor_sheet_id`, `table_name`, `schema_hash`, `synced_at`, `column_count`
+
+Implementation checklist:
+
+- [ ] Schema hash computation utility
+- [ ] schema_versions table scaffolded by init
+- [ ] Mismatch detection in withContext()
+- [ ] onSchemaMismatch config option
+- [ ] sync --all-users command
+- [ ] Exponential backoff for rate limits
+- [ ] --dry-run flag
+- [ ] Tests: mismatch detection, auto-sync trigger, bulk sync
+
+---
+
 ## Phase 3: Schema Syncing & Migrations
 
 ### Q5: Migration path to production database (MySQL, PostgreSQL, Prisma, Sequelize)
@@ -100,6 +210,7 @@ npx sheet-db sync
 **Migration confidence level**: High
 
 **Why migration is straightforward**:
+
 1. Schema DSL is TypeScript-first and declarative
 2. No business logic trapped in Google Sheets
 3. All data is accessible via the adapter
@@ -134,6 +245,7 @@ npx sheet-db export --prisma --output ./prisma
 ```
 
 **Data export consideration**:
+
 - Users need to write a small script to export data
 - Package provides `adapter.table('x').findMany()` to fetch all data
 - Developer writes to their production DB
@@ -145,19 +257,21 @@ npx sheet-db export --prisma --output ./prisma
 ### Q6: How does role permission work with OAuth? How does teacher access student sheet?
 
 **Current implementation**:
+
 - Actor-based isolation: users can only access their own sheet
 - Admin has access to admin sheet and can manage user registry
 - Default: cross-actor access is **blocked**
 
 **Permission model**:
 
-| Actor | Can Access | Why |
-|-------|------------|-----|
-| admin | admin sheet, user registry | Central management |
-| student | their own student sheet | Data isolation |
-| teacher | their own teacher sheet | Data isolation |
+| Actor   | Can Access                 | Why                |
+| ------- | -------------------------- | ------------------ |
+| admin   | admin sheet, user registry | Central management |
+| student | their own student sheet    | Data isolation     |
+| teacher | their own teacher sheet    | Data isolation     |
 
 **How teacher sees student data** (use cases):
+
 1. **Teacher needs to view student grades/records**
    - Use case: A teacher grading students
    - Implementation: NOT through direct sheet access
@@ -213,10 +327,10 @@ export default {
   permissions: {
     teacher: {
       canAccess: ["student"],
-      tables: ["scores", "attendance"],  // Only these tables, omit for all
+      tables: ["scores", "attendance"], // Only these tables, omit for all
     },
     student: {
-      canAccess: [],  // Cannot access other sheets
+      canAccess: [], // Cannot access other sheets
     },
   },
 };
@@ -232,8 +346,8 @@ interface UserContext {
   role: string;
   actorSheetId?: string;
   // NEW: Cross-actor access fields
-  targetRole?: string;      // The actor being accessed (e.g., "student")
-  targetSheetId?: string;  // The sheet ID being accessed (e.g., "student-sheet-123")
+  targetRole?: string; // The actor being accessed (e.g., "student")
+  targetSheetId?: string; // The sheet ID being accessed (e.g., "student-sheet-123")
 }
 ```
 
@@ -401,13 +515,16 @@ const studentScores = await createScoreContext.table("scores").findMany({
 // Teacher reads all scores across all their students
 async function getAllMyStudentScores(teacherId: string) {
   // Get list of students assigned to this teacher
-  const myStudents = await adapter.withContext({
-    userId: teacherId,
-    role: "teacher",
-    actorSheetId: `${teacherId}_sheet`,
-  }).table("teacher_students").findMany({
-    where: { teacher_id: teacherId },
-  });
+  const myStudents = await adapter
+    .withContext({
+      userId: teacherId,
+      role: "teacher",
+      actorSheetId: `${teacherId}_sheet`,
+    })
+    .table("teacher_students")
+    .findMany({
+      where: { teacher_id: teacherId },
+    });
 
   const allScores = [];
   for (const student of myStudents) {
@@ -419,11 +536,13 @@ async function getAllMyStudentScores(teacherId: string) {
       targetSheetId: student.actor_sheet_id,
     });
     const scores = await ctx.table("scores").findMany();
-    allScores.push(...scores.map(s => ({
-      ...s,
-      student_name: student.name,
-      student_email: student.email,
-    })));
+    allScores.push(
+      ...scores.map((s) => ({
+        ...s,
+        student_name: student.name,
+        student_email: student.email,
+      })),
+    );
   }
   return allScores;
 }
@@ -601,16 +720,18 @@ After cross-sheet CRUD is implemented, we can add join:
 
 ```typescript
 // Future: adapter.join() for complex queries
-const results = await adapter.withContext({
-  userId: "teacher_001",
-  role: "teacher",
-  targetSheetId: "student-sheet-id-123",
-}).join({
-  from: "scores",
-  to: "students",
-  on: { from: "student_id", to: "student_id" },
-  select: ["scores.*", "students.name", "students.email"],
-});
+const results = await adapter
+  .withContext({
+    userId: "teacher_001",
+    role: "teacher",
+    targetSheetId: "student-sheet-id-123",
+  })
+  .join({
+    from: "scores",
+    to: "students",
+    on: { from: "student_id", to: "student_id" },
+    select: ["scores.*", "students.name", "students.email"],
+  });
 ```
 
 ### Q7: How to join tables across actor sheets?
@@ -624,19 +745,21 @@ const results = await adapter.withContext({
 ```typescript
 // Conceptual API (not yet implemented)
 const results = await adapter.join({
-  from: { table: 'enrollments', actor: 'student' },
-  to: { table: 'students', actor: 'student', column: 'student_id' },
-  where: { status: 'active' },
+  from: { table: "enrollments", actor: "student" },
+  to: { table: "students", actor: "student", column: "student_id" },
+  where: { status: "active" },
 });
 ```
 
 **Implementation approach**:
+
 1. Execute parallel queries to both actor sheets
 2. Perform in-memory join in JavaScript
 3. Match on `ref()` column constraints
 4. Return merged results
 
 **Use cases**:
+
 - Teacher viewing student enrollments + student details
 - Parent viewing child's grades + class info
 - Admin reporting across all actors
@@ -645,18 +768,20 @@ const results = await adapter.join({
 
 **Answer**: For future migration to production database
 
-| Field | Purpose | Persists after migration |
-|-------|---------|--------------------------|
-| `sheet_id` | Physical storage location (Google Drive) | No — goes away |
-| `user_id` | Logical domain identity | Yes — becomes PK in SQL |
+| Field      | Purpose                                  | Persists after migration |
+| ---------- | ---------------------------------------- | ------------------------ |
+| `sheet_id` | Physical storage location (Google Drive) | No — goes away           |
+| `user_id`  | Logical domain identity                  | Yes — becomes PK in SQL  |
 
 **Why this matters**:
+
 - `sheet_id` is tied to Google Sheets infrastructure
 - When migrating to MySQL/PostgreSQL, `sheet_id` has no meaning
 - `user_id` is your app's user identifier
 - It survives the transition to any database
 
 **Migration example**:
+
 ```sql
 -- In SQL (PostgreSQL/MySQL)
 CREATE TABLE users (
@@ -674,6 +799,7 @@ CREATE TABLE users (
 ### Q9: What other CLI commands are needed?
 
 **Already implemented**:
+
 - [x] `init` — Project scaffolding
 - [x] `generate` — Schema generator
 - [x] `sync` — Schema sync to Sheets
@@ -712,18 +838,42 @@ CREATE TABLE users (
 
 ## Summary of Planned Work
 
+### High Priority (Phase 1) - Core Correctness
+
+- [ ] PK auto-generation for string primary() columns (nanoid)
+- [ ] PK readonly enforcement on update() — strip silently
+- [ ] FK validation via ref() on create() and update()
+- [ ] SchemaError on duplicate primary() or circular ref()
+- [ ] skipFKValidation option for bulk seed operations
+- [ ] Export command: emit @id + @relation (Prisma) and PRIMARY KEY + FOREIGN KEY (SQL)
+- [ ] Tests: PK auto-gen, PK readonly, FK pass/fail, skipFKValidation, circular ref
+
 ### High Priority (Phase 2) - Developer Experience
+
 - [ ] `sheet-db mock-users` CLI - Generate test user sheets for development
 - [ ] Enhance `sheet-db seed` with `--all-actors` - Distribute seed data across actor types
 - [ ] Implement `init --integrate` - Integrate into existing project without overwriting
 - [ ] Better developer documentation for OAuth flow
+- [ ] Multi-actor .env scaffolding - DEV\_\*\_SHEET_ID per actor type
+- [ ] Update actors config shape in sheet-db.config.ts DSL
+- [ ] Update sync to iterate all actors and print per-actor status table
+- [ ] Ensure admin users table schema includes actor_sheet_id column
 
 ### High Priority (Phase 3) - Schema Syncing & Migrations
+
 - [ ] `sheet-db export` - Export schemas to Prisma schema and SQL DDL
 - [ ] Migration guide - Step-by-step guide for moving to production DB
 - [ ] `sync --all-users` - Push schema changes to all registered user sheets
+- [ ] Schema version hash utility for runtime mismatch detection
+- [ ] schema_versions admin table scaffolded by init
+- [ ] onSchemaMismatch config option ('warn' | 'error' | 'auto-sync')
+- [ ] Mismatch detection in withContext()
+- [ ] Exponential backoff for Google Sheets API rate limits in bulk sync
+- [ ] --dry-run flag for sync --all-users
+- [ ] Tests: mismatch detection, auto-sync trigger, bulk sync
 
 ### High Priority (Phase 4) - Cross-Actor CRUD
+
 - [ ] **Permission Matrix Configuration** - Add `permissions` to `SheetAdapterConfig`
 - [ ] **UserContext Enhancement** - Add `targetRole` and `targetSheetId`
 - [ ] **Update `hasPermission()`** - Check permission matrix for cross-actor access
@@ -733,10 +883,12 @@ CREATE TABLE users (
 - [ ] **Documentation** - Update developerGuide.md with cross-actor examples
 
 ### Medium Priority
+
 - [ ] `adapter.join()` - Query across multiple actor sheets
 - [ ] Permission matrix validation and error messages
 
 ### Lower Priority
+
 - [ ] `sheet-db migrate` command
 - [ ] Column encryption
 - [ ] Audit logs
@@ -784,6 +936,7 @@ CREATE TABLE users (
 ## Implementation Notes
 
 ### OAuth Flow
+
 ```
 Developer App → longcelot-sheet-db → Google OAuth → Google Sheets API
                         ↑
@@ -792,17 +945,20 @@ Developer App → longcelot-sheet-db → Google OAuth → Google Sheets API
 ```
 
 ### Context Mapping
+
 When developer has existing auth:
+
 ```typescript
 // Developer maps their user to sheet-db context
 const context = adapter.withContext({
-  userId: developerUser.id,           // From their auth system
-  role: developerUser.role,             // 'student', 'teacher', etc.
+  userId: developerUser.id, // From their auth system
+  role: developerUser.role, // 'student', 'teacher', etc.
   actorSheetId: developerUser.sheetId, // From sheet-db user registry
 });
 ```
 
 ### Migration Path
+
 ```
 longcelot-sheet-db (dev/staging)
     ↓ (export schemas + data)
@@ -811,4 +967,4 @@ MySQL/PostgreSQL + Prisma/Sequelize (production)
 
 ---
 
-_Last updated: 2026-03-24_
+_Last updated: 2026-04-03_

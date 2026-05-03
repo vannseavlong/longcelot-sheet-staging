@@ -21,6 +21,7 @@ export interface TableSchema {
   timestamps?: boolean;
   softDelete?: boolean;
   columns: Record<string, ColumnDefinition>;
+  pkColumn?: string;
 }
 
 export interface SheetDBConfig {
@@ -47,11 +48,18 @@ export interface FindOptions {
   order?: 'asc' | 'desc';
 }
 
+export interface CreateOptions {
+  skipFKValidation?: boolean;
+}
+
 export interface UpdateOptions {
   where: WhereClause;
   data: Record<string, any>;
+  skipFKValidation?: boolean;
 }
 
 export interface DeleteOptions {
   where: WhereClause;
 }
+
+export type FKResolver = (tableName: string, columnName: string, value: unknown) => Promise<boolean>;

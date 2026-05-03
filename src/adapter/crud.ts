@@ -1,19 +1,41 @@
 import { nanoid } from 'nanoid';
 import { SheetClient } from './sheetClient';
-import { TableSchema, FindOptions, UpdateOptions, DeleteOptions } from '../schema/types';
+import {
+  TableSchema,
+  FindOptions,
+  UpdateOptions,
+  DeleteOptions,
+  CreateOptions,
+  FKResolver,
+} from '../schema/types';
 import { ValidationError } from '../errors/ValidationError';
 
 export class CRUDOperations {
   constructor(
     private client: SheetClient,
     private spreadsheetId: string,
-    private schema: TableSchema
+    private schema: TableSchema,
+    private fkResolver?: FKResolver
   ) {}
 
-  async create(data: Record<string, any>): Promise<Record<string, any>> {
+  async create(data: Record<string, any>, options: CreateOptions = {}): Promise<Record<string, any>> {
+    let incoming = { ...data };
+
+    // Auto-generate string PK if not supplied
+    if (this.schema.pkColumn) {
+      const pkDef = this.schema.columns[this.schema.pkColumn];
+      if (pkDef?.type === 'string' && (incoming[this.schema.pkColumn] === undefined || incoming[this.schema.pkColumn] === null)) {
+        incoming[this.schema.pkColumn] = nanoid();
+      }
+    }
+
     // Generate _id before validation so the required-_id check always passes
-    const dataWithId = { _id: nanoid(), ...data };
+    const dataWithId = { _id: nanoid(), ...incoming };
     const validated = this.validateAndApplyDefaults(dataWithId, 'create');
+
+    if (!options.skipFKValidation) {
+      await this.validateForeignKeys(validated);
+    }
 
     await this.checkUniqueness(validated, null);
 
@@ -85,7 +107,17 @@ export class CRUDOperations {
       const item = this.deserializeRow(headers, dataRows[i]);
 
       if (this.matchesWhere(item, options.where)) {
-        const validated = this.validateAndApplyDefaults(options.data, 'update');
+        // Strip pkColumn silently — PK is readonly on update
+        const updateData = { ...options.data };
+        if (this.schema.pkColumn && this.schema.pkColumn in updateData) {
+          delete updateData[this.schema.pkColumn];
+        }
+
+        const validated = this.validateAndApplyDefaults(updateData, 'update');
+
+        if (!options.skipFKValidation) {
+          await this.validateForeignKeys(validated);
+        }
 
         await this.checkUniqueness(validated, item._id as string);
 
@@ -109,6 +141,7 @@ export class CRUDOperations {
       return await this.update({
         where: options.where,
         data: { _deleted_at: new Date().toISOString() },
+        skipFKValidation: true,
       });
     }
 
@@ -192,6 +225,25 @@ export class CRUDOperations {
     }
 
     return result;
+  }
+
+  private async validateForeignKeys(data: Record<string, any>): Promise<void> {
+    if (!this.fkResolver) return;
+
+    for (const [columnName, column] of Object.entries(this.schema.columns)) {
+      if (!column.ref) continue;
+      const value = data[columnName];
+      if (value === undefined || value === null) continue;
+
+      const [refTable, refColumn] = column.ref.split('.');
+      const exists = await this.fkResolver(refTable, refColumn, value);
+      if (!exists) {
+        throw new ValidationError(
+          `FK violation: ${refTable}.${refColumn} '${value}' does not exist`,
+          columnName
+        );
+      }
+    }
   }
 
   private serializeValue(value: any): string {

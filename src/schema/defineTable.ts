@@ -1,5 +1,6 @@
 import { TableSchema, ColumnDefinition } from './types';
 import { ColumnBuilder } from './columnBuilder';
+import { SchemaError } from '../errors/SchemaError';
 
 interface TableInput {
   name: string;
@@ -20,6 +21,17 @@ export function defineTable(input: TableInput): TableSchema {
     }
   }
 
+  const primaryColumns = Object.entries(columns).filter(([, col]) => col.primary);
+  if (primaryColumns.length > 1) {
+    const names = primaryColumns.map(([k]) => k).join(', ');
+    throw new SchemaError(
+      `Table '${input.name}' has ${primaryColumns.length} primary columns (${names}). Only one primary() column is allowed.`,
+      input.name
+    );
+  }
+
+  const pkColumn = primaryColumns.length === 1 ? primaryColumns[0][0] : undefined;
+
   if (input.timestamps) {
     columns._created_at = { type: 'date', readonly: true };
     columns._updated_at = { type: 'date', readonly: true };
@@ -37,5 +49,6 @@ export function defineTable(input: TableInput): TableSchema {
     timestamps: input.timestamps,
     softDelete: input.softDelete,
     columns,
+    pkColumn,
   };
 }

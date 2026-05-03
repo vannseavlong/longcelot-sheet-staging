@@ -1,5 +1,6 @@
 import { defineTable } from '../../src/schema/defineTable';
 import { string, number, boolean, date, json } from '../../src/schema/columnBuilder';
+import { SchemaError } from '../../src/errors/SchemaError';
 
 describe('defineTable()', () => {
   it('returns a schema with the correct name and actor', () => {
@@ -105,7 +106,7 @@ describe('defineTable()', () => {
     expect(schema.columns.status.default).toBe('pending');
   });
 
-  it('marks primary columns as unique', () => {
+  it('marks primary columns as unique and required', () => {
     const schema = defineTable({
       name: 'items',
       actor: 'user',
@@ -116,5 +117,44 @@ describe('defineTable()', () => {
 
     expect(schema.columns.item_code.primary).toBe(true);
     expect(schema.columns.item_code.unique).toBe(true);
+    expect(schema.columns.item_code.required).toBe(true);
+  });
+
+  it('sets pkColumn when one primary() column is defined', () => {
+    const schema = defineTable({
+      name: 'orders',
+      actor: 'user',
+      columns: {
+        order_code: string().primary(),
+        total: number(),
+      },
+    });
+
+    expect(schema.pkColumn).toBe('order_code');
+  });
+
+  it('pkColumn is undefined when no primary() column is defined', () => {
+    const schema = defineTable({
+      name: 'notes',
+      actor: 'user',
+      columns: {
+        body: string().required(),
+      },
+    });
+
+    expect(schema.pkColumn).toBeUndefined();
+  });
+
+  it('throws SchemaError when multiple primary() columns are defined', () => {
+    expect(() =>
+      defineTable({
+        name: 'bad',
+        actor: 'user',
+        columns: {
+          code_a: string().primary(),
+          code_b: number().primary(),
+        },
+      })
+    ).toThrow(SchemaError);
   });
 });

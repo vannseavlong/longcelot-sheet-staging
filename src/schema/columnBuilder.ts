@@ -50,6 +50,7 @@ export class ColumnBuilder {
   primary(): this {
     this.definition.primary = true;
     this.definition.unique = true;
+    this.definition.required = true;
     return this;
   }
 
