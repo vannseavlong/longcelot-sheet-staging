@@ -6,6 +6,7 @@ module.exports = {
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/'],
   globals: {
     'ts-jest': {
+      tsconfig: 'tsconfig.test.json',
       diagnostics: { ignoreCodes: [151002] },
     },
   },

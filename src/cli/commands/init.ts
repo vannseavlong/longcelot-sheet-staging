@@ -50,7 +50,7 @@ export async function initCommand(options: { integrate?: boolean }) {
       name: 'actors',
       message: 'Actors (comma-separated):',
       default: 'admin,user',
-      filter: (input) => input.split(',').map((s: string) => s.trim()),
+      filter: (input: string) => input.split(',').map((s: string) => s.trim()),
     },
   ]);
 
