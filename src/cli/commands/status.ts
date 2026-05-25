@@ -20,17 +20,29 @@ export async function statusCommand() {
   // Project info
   console.log(chalk.bold('Project'));
   console.log(`  Name:    ${config.projectName || chalk.gray('(not set)')}`);
-  console.log(`  Actors:  ${config.actors?.join(', ') || chalk.gray('(none)')}`);
+  const actorRoles: string[] = (config.actors ?? []).map((a: { role?: string } | string) =>
+    typeof a === 'string' ? a : a.role ?? ''
+  );
+  console.log(`  Actors:  ${actorRoles.join(', ') || chalk.gray('(none)')}`);
   console.log();
 
   // Environment
   console.log(chalk.bold('Environment'));
-  const envVars = [
-    ['ADMIN_SHEET_ID', process.env.ADMIN_SHEET_ID],
+  const baseEnvVars: [string, string | undefined][] = [
     ['GOOGLE_CLIENT_ID', process.env.GOOGLE_CLIENT_ID ? '(set)' : undefined],
     ['GOOGLE_CLIENT_SECRET', process.env.GOOGLE_CLIENT_SECRET ? '(set)' : undefined],
     ['GOOGLE_REDIRECT_URI', process.env.GOOGLE_REDIRECT_URI],
   ];
+  // Show sheet ID env vars per actor
+  const actorSheetEnvVars: [string, string | undefined][] = (config.actors ?? []).map(
+    (a: { role?: string; sheetIdEnv?: string } | string) => {
+      const envKey = typeof a === 'string'
+        ? (a === 'admin' ? 'ADMIN_SHEET_ID' : `DEV_${a.toUpperCase()}_SHEET_ID`)
+        : (a.sheetIdEnv ?? 'ADMIN_SHEET_ID');
+      return [envKey, process.env[envKey]] as [string, string | undefined];
+    }
+  );
+  const envVars = [...actorSheetEnvVars, ...baseEnvVars];
 
   for (const [name, value] of envVars) {
     const display = value ? chalk.green(value) : chalk.red('(missing)');
@@ -69,7 +81,8 @@ export async function statusCommand() {
   const schemasByActor: Record<string, TableSchema[]> = {};
   let totalSchemas = 0;
 
-  for (const actor of (config.actors || [])) {
+  for (const actorEntry of (config.actors || [])) {
+    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
     const actorDir = path.join(schemasDir, actor);
     schemasByActor[actor] = [];
 

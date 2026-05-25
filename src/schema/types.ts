@@ -24,10 +24,18 @@ export interface TableSchema {
   pkColumn?: string;
 }
 
+export interface ActorConfig {
+  role: string;
+  sheetIdEnv: string;
+}
+
+export type SchemaMismatchBehaviour = 'warn' | 'error' | 'auto-sync';
+
 export interface SheetDBConfig {
   projectName: string;
   superAdminEmail: string;
-  actors: string[];
+  actors: ActorConfig[];
+  onSchemaMismatch?: SchemaMismatchBehaviour;
 }
 
 export interface UserContext {

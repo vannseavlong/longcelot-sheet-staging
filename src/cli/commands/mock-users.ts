@@ -66,7 +66,8 @@ export async function mockUsersCommand(countArg?: string | number) {
 
   // Load and register all schemas
   const schemasDir = path.join(process.cwd(), 'schemas');
-  for (const actor of config.actors) {
+  for (const actorEntry of config.actors) {
+    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
     const actorDir = path.join(schemasDir, actor);
     if (!fs.existsSync(actorDir)) continue;
     const files = fs.readdirSync(actorDir).filter((f) => f.endsWith('.ts'));
@@ -84,7 +85,9 @@ export async function mockUsersCommand(countArg?: string | number) {
   for (let i = 0; i < count; i++) {
     const userId = `mock-${Date.now().toString(36)}-${i}`;
     // Rotate roles among configured actors (skip admin)
-    const actors = config.actors.filter((a: string) => a !== 'admin');
+    const actors = config.actors
+      .map((a: { role?: string } | string) => (typeof a === 'string' ? a : a.role))
+      .filter((r: string) => r !== 'admin');
     const role = actors[i % actors.length] || 'student';
     const email = makeEmail(userId, role);
 

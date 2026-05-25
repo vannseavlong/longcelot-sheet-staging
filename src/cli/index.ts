@@ -33,6 +33,7 @@ program
   .command('sync')
   .description('Sync schemas to Google Sheets')
   .option('--all-users', 'Sync schema changes to all registered user sheets')
+  .option('--dry-run', 'Preview --all-users changes without applying them')
   .action(syncCommand);
 
 program

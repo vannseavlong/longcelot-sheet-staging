@@ -103,11 +103,12 @@ function generateSQLTable(schema: TableSchema): string {
   return lines.join('\n');
 }
 
-function loadSchemas(config: { actors: string[] }): TableSchema[] {
+function loadSchemas(config: { actors: Array<{ role: string } | string> }): TableSchema[] {
   const schemas: TableSchema[] = [];
   const schemasDir = path.join(process.cwd(), 'schemas');
 
-  for (const actor of config.actors) {
+  for (const actorEntry of config.actors) {
+    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
     const actorDir = path.join(schemasDir, actor);
     if (!fs.existsSync(actorDir)) continue;
 

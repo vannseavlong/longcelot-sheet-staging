@@ -1,8 +1,26 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
-import { TableSchema, UserContext, FKResolver } from '../schema/types';
+import { TableSchema, UserContext, FKResolver, SchemaMismatchBehaviour } from '../schema/types';
 import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
+import { SchemaMismatchError } from '../errors/SchemaMismatchError';
+import { computeSchemaHash } from '../utils/schemaHash';
+import { defineTable } from '../schema/defineTable';
+import { string, number } from '../schema/columnBuilder';
+
+// Built-in admin table — tracks schema versions per actor sheet
+const SCHEMA_VERSIONS_SCHEMA: TableSchema = defineTable({
+  name: 'schema_versions',
+  actor: 'admin',
+  columns: {
+    schema_version_id: string().primary(),
+    actor_sheet_id: string().required(),
+    table_name: string().required(),
+    schema_hash: string().required(),
+    synced_at: string().required(),
+    column_count: number().required(),
+  },
+});
 
 export interface SheetAdapterConfig {
   adminSheetId: string;
@@ -11,7 +29,8 @@ export interface SheetAdapterConfig {
     clientSecret: string;
     redirectUri: string;
   };
-  tokens: any;
+  tokens: unknown;
+  onSchemaMismatch?: SchemaMismatchBehaviour;
 }
 
 export class SheetAdapter {
@@ -19,10 +38,16 @@ export class SheetAdapter {
   private adminSheetId: string;
   private schemas: Map<string, TableSchema> = new Map();
   private context?: UserContext;
+  private onSchemaMismatch?: SchemaMismatchBehaviour;
+  /** Pending schema version check promise set by withContext() */
+  private _pendingSchemaCheck?: Promise<void>;
 
   constructor(config: SheetAdapterConfig) {
-    this.client = new SheetClient(config.credentials, config.tokens);
+    // Allow test injection via _client (cast through unknown for type safety)
+    this.client = (config as unknown as Record<string, unknown>)._client as SheetClient
+      ?? new SheetClient(config.credentials, config.tokens);
     this.adminSheetId = config.adminSheetId;
+    this.onSchemaMismatch = config.onSchemaMismatch;
   }
 
   registerSchema(schema: TableSchema): void {
@@ -35,8 +60,14 @@ export class SheetAdapter {
   }
 
   withContext(context: UserContext): SheetAdapter {
-    const newAdapter = Object.create(this);
+    const newAdapter = Object.create(this) as SheetAdapter;
     newAdapter.context = context;
+    newAdapter._pendingSchemaCheck = undefined;
+
+    if (this.onSchemaMismatch && context.actorSheetId && context.role !== 'admin') {
+      newAdapter._pendingSchemaCheck = newAdapter._doSchemaVersionCheck(context);
+    }
+
     return newAdapter;
   }
 
@@ -54,7 +85,7 @@ export class SheetAdapter {
     }
 
     const fkResolver = this.createFKResolver();
-    return new CRUDOperations(this.client, spreadsheetId, schema, fkResolver);
+    return new CRUDOperations(this.client, spreadsheetId, schema, fkResolver, this._pendingSchemaCheck);
   }
 
   async createUserSheet(userId: string, role: string, email: string): Promise<string> {
@@ -99,6 +130,112 @@ export class SheetAdapter {
       const rows = await this.client.getAllRows(spreadsheetId, schema.name);
       if (rows.length === 0) {
         await this.client.writeHeader(spreadsheetId, schema.name, headers);
+      }
+    }
+  }
+
+  // ── Schema version tracking ───────────────────────────────────────────────
+
+  async upsertSchemaVersion(
+    actorSheetId: string,
+    tableName: string,
+    schemaHash: string,
+    columnCount: number
+  ): Promise<void> {
+    try {
+      await this._ensureSchemaVersionsSheet();
+      const crud = this._svCrud();
+      const existing = await crud.findOne({
+        where: { actor_sheet_id: actorSheetId, table_name: tableName },
+      });
+      const synced_at = new Date().toISOString();
+      if (existing) {
+        await crud.update({
+          where: { actor_sheet_id: actorSheetId, table_name: tableName },
+          data: { schema_hash: schemaHash, synced_at, column_count: columnCount },
+          skipFKValidation: true,
+        });
+      } else {
+        await crud.create(
+          { actor_sheet_id: actorSheetId, table_name: tableName, schema_hash: schemaHash, synced_at, column_count: columnCount },
+          { skipFKValidation: true }
+        );
+      }
+    } catch {
+      // Silently ignore version tracking errors to not break CRUD operations
+    }
+  }
+
+  async getSchemaVersion(
+    actorSheetId: string,
+    tableName: string
+  ): Promise<{ schema_hash: string; synced_at: string; column_count: number } | null> {
+    try {
+      await this._ensureSchemaVersionsSheet();
+      const crud = this._svCrud();
+      const record = await crud.findOne({ where: { actor_sheet_id: actorSheetId, table_name: tableName } });
+      if (!record) return null;
+      return {
+        schema_hash: record.schema_hash as string,
+        synced_at: record.synced_at as string,
+        column_count: record.column_count as number,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Internal helpers ──────────────────────────────────────────────────────
+
+  private _svCrud(): CRUDOperations {
+    return new CRUDOperations(this.client, this.adminSheetId, SCHEMA_VERSIONS_SCHEMA);
+  }
+
+  private async _ensureSchemaVersionsSheet(): Promise<void> {
+    const sheets = await this.client.getSheetNames(this.adminSheetId);
+    if (!sheets.includes('schema_versions')) {
+      await this.client.addSheet(this.adminSheetId, 'schema_versions');
+      await this.client.writeHeader(
+        this.adminSheetId,
+        'schema_versions',
+        Object.keys(SCHEMA_VERSIONS_SCHEMA.columns)
+      );
+    }
+  }
+
+  private async _doSchemaVersionCheck(context: UserContext): Promise<void> {
+    if (!context.actorSheetId) return;
+
+    const roleSchemas = Array.from(this.schemas.values()).filter(
+      (s) => s.actor === context.role && s.name !== 'schema_versions'
+    );
+
+    for (const schema of roleSchemas) {
+      const currentHash = computeSchemaHash(schema);
+      const stored = await this.getSchemaVersion(context.actorSheetId, schema.name);
+
+      if (!stored || stored.schema_hash !== currentHash) {
+        switch (this.onSchemaMismatch) {
+          case 'warn':
+            console.warn(
+              `[sheet-db] Schema mismatch: table '${schema.name}' on sheet '${context.actorSheetId}' ` +
+              `is outdated. Run 'sheet-db sync --all-users' to fix.`
+            );
+            break;
+
+          case 'error':
+            throw new SchemaMismatchError(schema.name, context.actorSheetId);
+
+          case 'auto-sync':
+            await this.syncSchema(schema);
+            await this.upsertSchemaVersion(
+              context.actorSheetId,
+              schema.name,
+              currentHash,
+              Object.keys(schema.columns).length
+            );
+            break;
+        }
       }
     }
   }

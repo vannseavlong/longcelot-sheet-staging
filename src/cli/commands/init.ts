@@ -56,12 +56,24 @@ export async function initCommand(options: { integrate?: boolean }) {
 
   const projectName = options.integrate ? defaultProjectName : answers.projectName;
 
+  const actorConfigs = answers.actors.map((role: string) => ({
+    role,
+    sheetIdEnv: role === 'admin' ? 'ADMIN_SHEET_ID' : `DEV_${role.toUpperCase()}_SHEET_ID`,
+  }));
+
   const configContent = `export default {
   projectName: "${projectName}",
   superAdminEmail: "${answers.superAdminEmail}",
-  actors: ${JSON.stringify(answers.actors, null, 2)}
+  actors: ${JSON.stringify(actorConfigs, null, 2)},
+  // Schema mismatch behaviour: 'warn' | 'error' | 'auto-sync'
+  onSchemaMismatch: 'warn',
 };
 `;
+
+  const nonAdminActors = answers.actors.filter((a: string) => a !== 'admin');
+  const devSheetVars = nonAdminActors
+    .map((role: string) => `DEV_${role.toUpperCase()}_SHEET_ID=`)
+    .join('\n');
 
   const envContent = `# Google OAuth credentials
 # Get these at: https://console.cloud.google.com/apis/credentials
@@ -72,7 +84,7 @@ GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
 # Your central admin Google Sheet ID
 # Create a blank Google Sheet and paste the ID from its URL here
 ADMIN_SHEET_ID=
-
+${nonAdminActors.length > 0 ? `\n# Development actor sheet IDs (one per actor type)\n${devSheetVars}\n` : ''}
 # Super admin email (new user sheets will be shared with this account)
 SUPER_ADMIN_EMAIL=${answers.superAdminEmail}
 `;
@@ -127,15 +139,30 @@ export default defineTable({
   },
 });
 `,
+    schema_versions: `import { defineTable, string, number } from 'longcelot-sheet-db';
+
+export default defineTable({
+  name: 'schema_versions',
+  actor: 'admin',
+  columns: {
+    schema_version_id: string().primary(),
+    actor_sheet_id: string().required(),
+    table_name: string().required(),
+    schema_hash: string().required(),
+    synced_at: string().required(),
+    column_count: number().required(),
+  },
+});
+`,
   };
 
-  for (const actor of answers.actors) {
-    const actorDir = path.join('schemas', actor);
+  for (const role of answers.actors) {
+    const actorDir = path.join('schemas', role);
     if (!fs.existsSync(actorDir)) {
       fs.mkdirSync(actorDir, { recursive: true });
     }
 
-    if (actor === 'admin') {
+    if (role === 'admin') {
       for (const [name, content] of Object.entries(adminSchemas)) {
         fs.writeFileSync(path.join(actorDir, `${name}.ts`), content);
       }

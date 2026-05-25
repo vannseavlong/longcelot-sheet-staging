@@ -73,7 +73,8 @@ export async function seedCommand(seedFile: string, opts?: any) {
 
   // Load and register all schemas
   const schemasDir = path.join(process.cwd(), 'schemas');
-  for (const actor of config.actors) {
+  for (const actorEntry of config.actors) {
+    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
     const actorDir = path.join(schemasDir, actor);
     if (!fs.existsSync(actorDir)) continue;
     const files = fs.readdirSync(actorDir).filter((f) => f.endsWith('.ts'));

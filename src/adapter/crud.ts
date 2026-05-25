@@ -15,10 +15,12 @@ export class CRUDOperations {
     private client: SheetClient,
     private spreadsheetId: string,
     private schema: TableSchema,
-    private fkResolver?: FKResolver
+    private fkResolver?: FKResolver,
+    private preFlight?: Promise<void>
   ) {}
 
   async create(data: Record<string, any>, options: CreateOptions = {}): Promise<Record<string, any>> {
+    if (this.preFlight) await this.preFlight;
     let incoming = { ...data };
 
     // Auto-generate string PK if not supplied
@@ -54,6 +56,7 @@ export class CRUDOperations {
   }
 
   async findMany(options: FindOptions = {}): Promise<Record<string, any>[]> {
+    if (this.preFlight) await this.preFlight;
     const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
 
     if (rows.length === 0) return [];
@@ -94,6 +97,7 @@ export class CRUDOperations {
   }
 
   async update(options: UpdateOptions): Promise<number> {
+    if (this.preFlight) await this.preFlight;
     const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
 
     if (rows.length === 0) return 0;
@@ -137,6 +141,7 @@ export class CRUDOperations {
   }
 
   async delete(options: DeleteOptions): Promise<number> {
+    if (this.preFlight) await this.preFlight;
     if (this.schema.softDelete) {
       return await this.update({
         where: options.where,

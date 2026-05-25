@@ -24,9 +24,11 @@ Instead of running MySQL, PostgreSQL, or MongoDB for staging:
 - 🔄 **Auto CRUD**: Automatic create, read, update, delete operations
 - 🎭 **Role-Based Permissions**: Built-in security boundaries
 - 🔑 **Authentication**: Google OAuth + bcrypt password hashing
-- 🛠️ **CLI Tools**: Initialize, generate, sync, and validate schemas
+- 🛠️ **CLI Tools**: Initialize, generate, sync, validate, export, mock-users
 - 📊 **Type-Safe**: Full TypeScript support
 - 💰 **Cost-Free**: No infrastructure costs for staging
+- 🔒 **Schema Integrity**: Hash-based version tracking detects stale user sheets at runtime
+- ♻️ **Safe Migrations**: `sync --all-users` pushes schema changes to every user sheet with rate-limit backoff
 
 ## 🚀 Quick Start
 
@@ -149,15 +151,28 @@ const bookings = await userContext.table('bookings').findMany({
 
 ### Actors
 
-Actors are user roles that determine where data is stored:
+Actors are user roles that determine where data is stored. Each actor maps to a sheet ID via an environment variable:
 
 ```typescript
-actors: ["admin", "user", "seller"]
+// sheet-db.config.ts
+actors: [
+  { role: "admin",  sheetIdEnv: "ADMIN_SHEET_ID" },
+  { role: "user",   sheetIdEnv: "DEV_USER_SHEET_ID" },
+  { role: "seller", sheetIdEnv: "DEV_SELLER_SHEET_ID" },
+]
 ```
 
-- **admin**: Data stored in central admin sheet
-- **user**: Data stored in user's personal sheet
-- **seller**: Data stored in seller's personal sheet
+```env
+# .env
+ADMIN_SHEET_ID=1ABCyourAdminSheetId
+DEV_USER_SHEET_ID=1DEFyourDevUserSheetId    # optional for local dev
+DEV_SELLER_SHEET_ID=1GHIyourDevSellerSheetId  # optional for local dev
+```
+
+- **admin**: Data stored in central admin sheet (always required)
+- **user / seller**: Each actor gets a personal sheet at runtime; `DEV_*_SHEET_ID` values let you sync schemas during development without registering real users
+
+`sheet-db init` scaffolds all env vars automatically based on the actors you define.
 
 ### Schema DSL
 
@@ -227,6 +242,50 @@ Permissions are enforced automatically:
 - Users can only access their own sheets
 - Admin can access admin tables
 - Cross-actor access is blocked
+
+### Schema Version Tracking
+
+`longcelot-sheet-db` computes a **SHA-256 hash** of every table schema and compares it against the hash stored in the built-in `schema_versions` admin table. When `withContext()` is called for a non-admin user, the check runs in the background — every subsequent CRUD call awaits the result before proceeding.
+
+Configure the behaviour in `sheet-db.config.ts`:
+
+```typescript
+export default {
+  // ...
+  onSchemaMismatch: 'warn',    // log warning and continue (default)
+  // onSchemaMismatch: 'error',     // throw SchemaMismatchError
+  // onSchemaMismatch: 'auto-sync', // sync the actor sheet automatically
+};
+```
+
+And pass it through to the adapter:
+
+```typescript
+import { createSheetAdapter } from 'longcelot-sheet-db';
+
+const adapter = createSheetAdapter({
+  adminSheetId: process.env.ADMIN_SHEET_ID,
+  credentials: { clientId, clientSecret, redirectUri },
+  tokens: oauthTokens,
+  onSchemaMismatch: 'warn', // or 'error' or 'auto-sync'
+});
+```
+
+| Mode | Behaviour |
+|------|-----------|
+| `'warn'` | Log a warning to stderr and continue — safe for production rollouts |
+| `'error'` | Throw `SchemaMismatchError` — useful in staging to hard-fail stale clients |
+| `'auto-sync'` | Silently sync the actor sheet and update the version record before proceeding |
+
+When you push a schema change, run `sheet-db sync --all-users` to propagate it to every registered user sheet and update the version records in one go:
+
+```bash
+# Push schema changes to all user sheets
+npx sheet-db sync --all-users
+
+# Preview what would change without applying
+npx sheet-db sync --all-users --dry-run
+```
 
 ### Integrating into an Existing Project
 If you already have a working backend (e.g., Express, NestJS), you can safely inject `longcelot-sheet-db` without ripping out your framework:
@@ -318,7 +377,26 @@ npx sheet-db sync
 # bunx sheet-db sync
 ```
 
-Creates missing sheets and adds missing columns (never deletes data).
+Creates missing sheets and adds missing columns (never deletes data). Iterates **all actors** defined in `sheet-db.config.ts` and prints a per-actor status table:
+
+```
+Actor      │ Sheet ID                   │ Tables   │ Status
+───────────┼────────────────────────────┼──────────┼────────────
+admin      │ 1ABCyourAdminSheetId       │ 3        │ ✅ synced
+student    │ 1DEFyourStudentSheetId     │ 5        │ ✅ synced
+teacher    │ (not set)                  │ 4        │ ⚠ skipped
+```
+
+Actors whose sheet ID env var is not set are skipped with a warning (non-fatal).
+
+**`--all-users`** — after syncing dev actor sheets, reads all rows from the admin `users` table and pushes any missing columns/tables to every registered user sheet. Updates the `schema_versions` record for each one. Uses exponential backoff (1s → 32s) to handle Google Sheets API rate limits.
+
+**`--dry-run`** — combine with `--all-users` to preview which user sheets are outdated without writing any changes:
+
+```bash
+npx sheet-db sync --all-users           # apply
+npx sheet-db sync --all-users --dry-run # preview only
+```
 
 ### Validate Schemas
 
@@ -404,10 +482,9 @@ const { valid, errors } = validatePasswordStrength('password');
 
 ### Central Admin Sheet
 
-- `users` - User registry
+- `users` - User registry with `actor_sheet_id` per user
 - `credentials` - Authentication data
-- `actors` - Actor definitions
-- `permissions` - Role permissions (optional)
+- `schema_versions` - Schema hash per `(actor_sheet_id, table_name)` — used for mismatch detection
 
 ### User-Owned Sheets
 

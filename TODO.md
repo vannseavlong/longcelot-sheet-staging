@@ -157,10 +157,10 @@ The admin `users` table must have an `actor_sheet_id` column.
 
 Implementation checklist:
 
-- [ ] Update actors config shape in sheet-db.config.ts DSL
-- [ ] Update init to scaffold DEV\_\*\_SHEET_ID per actor
-- [ ] Update sync to iterate all actors and print per-actor status table
-- [ ] Ensure admin users table schema includes actor_sheet_id column
+- [x] Update actors config shape in sheet-db.config.ts DSL
+- [x] Update init to scaffold DEV\_\*\_SHEET_ID per actor
+- [x] Update sync to iterate all actors and print per-actor status table
+- [x] Ensure admin users table schema includes actor_sheet_id column
 
 ---
 
@@ -190,14 +190,14 @@ Columns: `schema_version_id` (PK), `actor_sheet_id`, `table_name`, `schema_hash`
 
 Implementation checklist:
 
-- [ ] Schema hash computation utility
-- [ ] schema_versions table scaffolded by init
-- [ ] Mismatch detection in withContext()
-- [ ] onSchemaMismatch config option
-- [ ] sync --all-users command
-- [ ] Exponential backoff for rate limits
-- [ ] --dry-run flag
-- [ ] Tests: mismatch detection, auto-sync trigger, bulk sync
+- [x] Schema hash computation utility
+- [x] schema_versions table scaffolded by init
+- [x] Mismatch detection in withContext()
+- [x] onSchemaMismatch config option
+- [x] sync --all-users command
+- [x] Exponential backoff for rate limits
+- [x] --dry-run flag
+- [x] Tests: mismatch detection, auto-sync trigger, bulk sync
 
 ---
 

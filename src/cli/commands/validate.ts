@@ -19,7 +19,10 @@ export async function validateCommand() {
   const tableNames = new Set<string>();
   const schemasDir = path.join(process.cwd(), 'schemas');
 
-  for (const actor of config.actors) {
+  const actorRoles: string[] = config.actors.map((a: { role: string }) => a.role);
+
+  for (const actorCfg of config.actors) {
+    const actor = actorCfg.role ?? actorCfg;
     const actorDir = path.join(schemasDir, actor);
 
     if (!fs.existsSync(actorDir)) {
@@ -41,7 +44,7 @@ export async function validateCommand() {
           errors.push(`Schema ${schema.name} is missing 'actor'`);
         }
 
-        if (!config.actors.includes(schema.actor)) {
+        if (!actorRoles.includes(schema.actor)) {
           errors.push(`Schema ${schema.name} has unknown actor: ${schema.actor}`);
         }
 
@@ -87,10 +90,10 @@ export async function validateCommand() {
   console.log(chalk.green('✅ All schemas are valid!\n'));
 
   console.log(chalk.cyan('Schemas by actor:'));
-  for (const actor of config.actors) {
-    const actorSchemas = schemas.filter((s) => s.actor === actor);
+  for (const role of actorRoles) {
+    const actorSchemas = schemas.filter((s) => s.actor === role);
     if (actorSchemas.length > 0) {
-      console.log(chalk.bold(`\n  ${actor}:`));
+      console.log(chalk.bold(`\n  ${role}:`));
       actorSchemas.forEach((s) => {
         const colCount = Object.keys(s.columns).length;
         console.log(`    - ${s.name} (${colCount} columns)`);

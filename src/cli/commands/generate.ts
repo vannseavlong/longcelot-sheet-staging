@@ -19,7 +19,9 @@ export async function generateCommand(tableName: string) {
       type: 'list',
       name: 'actor',
       message: 'Which actor owns this table?',
-      choices: config.actors,
+      choices: config.actors.map((a: { role?: string } | string) =>
+        typeof a === 'string' ? a : a.role
+      ),
     },
     {
       type: 'confirm',

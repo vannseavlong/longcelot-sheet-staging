@@ -18,26 +18,41 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [Unreleased]
+## [0.1.9] — ready to publish
 
-### Planned (Phase 2 & 3 Roadmap)
-- **Added**: `init --integrate` CLI command to integrate `longcelot-sheet-db` into an existing Node.js project without destroying existing configuration.
-- **Added**: `sync --all-users` CLI command to bulk-update Google Sheets schemas across all initialized user endpoints.
-- **Added**: Developer sandbox CLI tools (`sheet-db mock-users`).
-- **Added**: Prisma/SQL DDL automated migration script (`sheet-db export`).
-- **Changed**: Improved documentation for integrating with existing backends and planning forward migration to SQL.
-- **Removed**: Redundant `Docs/apiReference.md` file layout to consolidate into root `API.md`.
+### Added
 
-### New Documentation (Q1-Q9)
-- **Added**: Clarified OAuth requirement — cannot be skipped, required for backend-to-Sheets communication.
-- **Added**: Integration workflow for existing projects — mapping user auth to sheet-db context.
-- **Added**: Development workflow documentation — how to test with multiple actor sheets.
-- **Added**: Migration path documentation — `user_id` vs `sheet_id` purpose.
-- **Added**: Cross-actor operations documentation — join APIs and permission models (roadmap).
-- **Added**: Export CLI (`sheet-db export`) for generating Prisma schemas and SQL DDL.
-- **Added**: Sync `--all-users` for pushing schema changes to all registered users.
+#### Schema Integrity (Q11)
+- **`computeSchemaHash(schema)`** — exported utility that computes a deterministic SHA-256 hash of a table's column definitions. Hash changes when any column is added, removed, or retyped; ordering of column definitions does not affect the hash.
+- **`SchemaMismatchError`** — new error class thrown when `onSchemaMismatch: 'error'` is set and a user actor sheet's schema hash differs from the registered schema.
+- **`schema_versions` built-in admin table** — scaffolded automatically by `sheet-db init`. Stores one row per `(actor_sheet_id, table_name)` with `schema_hash`, `synced_at`, and `column_count`. Read and written internally by the adapter.
+- **`onSchemaMismatch` adapter option** — `'warn'` logs to stderr and continues (default), `'error'` throws `SchemaMismatchError`, `'auto-sync'` silently syncs the actor sheet and updates the version record before the first CRUD operation completes.
+- **Schema pre-flight in `withContext()`** — when `onSchemaMismatch` is configured, `withContext()` immediately starts an async version check in the background. All CRUD methods (`create`, `findMany`, `findOne`, `update`, `delete`) await this shared promise before proceeding — so the check runs exactly once per context instance, never per call.
+- **`SheetAdapter.upsertSchemaVersion(actorSheetId, tableName, hash, columnCount)`** — public method for CLI tools and external tooling to write version records.
+- **`SheetAdapter.getSchemaVersion(actorSheetId, tableName)`** — public method to read the stored version record for a given sheet + table pair.
+- **`sync --all-users`** — pushes schema changes to every registered user sheet by reading `actor_sheet_id` values from the admin `users` table. Updates `schema_versions` after each successful sync. Skips sheets that are already up-to-date (hash match).
+- **`sync --all-users --dry-run`** — previews which user sheets are outdated and what would be synced without applying any changes.
+- **Exponential backoff in `sync --all-users`** — retries failing API calls up to 5 times with delays of 1 s → 2 s → 4 s → 8 s → 16 s (capped at 32 s) on Google Sheets rate-limit errors (HTTP 429 / quota exceeded).
 
-_Nothing yet — add your in-progress changes here before the next release._
+#### Multi-Actor Config (Q10)
+- **`ActorConfig` type** — actors in `sheet-db.config.ts` now use `{ role: string; sheetIdEnv: string }` objects, mapping each actor role to its sheet ID environment variable.
+- **`SchemaMismatchBehaviour` type** — exported union `'warn' | 'error' | 'auto-sync'`.
+- **Multi-actor `.env` scaffolding** — `sheet-db init` generates a `DEV_<ROLE>_SHEET_ID=` line for every non-admin actor.
+- **Per-actor status table in `sync`** — `sheet-db sync` iterates all configured actors and prints: Actor | Sheet ID | Tables | Status. Actors without a sheet ID env var are skipped with a warning (non-fatal).
+- **`actor_sheet_id` column on admin `users` table** — included in the schema scaffolded by `sheet-db init`.
+- **`schema_versions` schema file** — `sheet-db init` now also writes `schemas/admin/schema_versions.ts`.
+- **`onSchemaMismatch: 'warn'`** — included as a commented default in the config scaffolded by `sheet-db init`.
+
+#### Primary Key & Foreign Key (Q pre-existing — shipped in 0.1.8)
+- `primary()` column modifier — auto-generates a nanoid on `create()` for string PKs; strips PK silently on `update()`.
+- `ref('table.column')` — FK validation on `create()` and `update()`; skip via `{ skipFKValidation: true }`.
+- Circular reference detection at `registerSchema()` time.
+- `sheet-db export --prisma` / `--sql` — generates `schema.prisma` and SQL DDL from registered schemas.
+
+### Changed
+- **`SheetDBConfig.actors`** type changed from `string[]` to `ActorConfig[]`. CLI commands normalize both shapes at runtime for backward compatibility.
+- **`sync` command** resolves each actor's sheet ID from its `sheetIdEnv` field rather than hardcoding `ADMIN_SHEET_ID`.
+- **`CRUDOperations` constructor** — accepts an optional fifth argument `preFlight?: Promise<void>` that each async method awaits before executing. Internal change; no API surface change for callers.
 
 ---
 
