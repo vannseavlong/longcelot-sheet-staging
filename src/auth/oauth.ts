@@ -20,18 +20,18 @@ export class OAuthManager {
     });
   }
 
-  async getTokens(code: string): Promise<any> {
+  async getTokens(code: string): Promise<unknown> {
     const { tokens } = await this.client.getToken(code);
     return tokens;
   }
 
-  async refreshTokens(refreshToken: string): Promise<any> {
+  async refreshTokens(refreshToken: string): Promise<unknown> {
     this.client.setCredentials({ refresh_token: refreshToken });
     const { credentials } = await this.client.refreshAccessToken();
     return credentials;
   }
 
-  async verifyToken(token: string): Promise<any> {
+  async verifyToken(token: string): Promise<unknown> {
     const ticket = await this.client.verifyIdToken({
       idToken: token,
       audience: this.client._clientId,

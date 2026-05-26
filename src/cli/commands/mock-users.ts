@@ -37,7 +37,7 @@ export async function mockUsersCommand(countArg?: string | number) {
     process.exit(1);
   }
 
-  let tokens: any;
+  let tokens: unknown;
   try {
     tokens = JSON.parse(fs.readFileSync(tokensPath, 'utf-8'));
   } catch {
@@ -46,7 +46,10 @@ export async function mockUsersCommand(countArg?: string | number) {
   }
 
   // Load config and schemas
-  let config: any;
+  interface CLIConfig {
+    actors: Array<{ role: string } | string>;
+  }
+  let config: CLIConfig;
   try {
     config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
   } catch {
@@ -87,7 +90,7 @@ export async function mockUsersCommand(countArg?: string | number) {
     // Rotate roles among configured actors (skip admin)
     const actors = config.actors
       .map((a: { role?: string } | string) => (typeof a === 'string' ? a : a.role))
-      .filter((r: string) => r !== 'admin');
+      .filter((r): r is string => r !== undefined && r !== 'admin');
     const role = actors[i % actors.length] || 'student';
     const email = makeEmail(userId, role);
 

@@ -3,7 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
 
-export async function seedCommand(seedFile: string, opts?: any) {
+export async function seedCommand(seedFile: string, opts?: { allActors?: boolean }) {
   console.log(chalk.blue.bold('🌱 Seeding data into Google Sheets...\n'));
 
   require('dotenv').config();
@@ -29,7 +29,7 @@ export async function seedCommand(seedFile: string, opts?: any) {
     process.exit(1);
   }
 
-  let tokens: any;
+  let tokens: unknown;
   try {
     tokens = JSON.parse(fs.readFileSync(tokensPath, 'utf-8'));
   } catch {
@@ -44,16 +44,19 @@ export async function seedCommand(seedFile: string, opts?: any) {
     process.exit(1);
   }
 
-  let seedData: Record<string, any[]>;
+  let seedData: Record<string, unknown[]>;
   try {
-    seedData = require(seedFilePath);
+    seedData = require(seedFilePath) as Record<string, unknown[]>;
   } catch (err) {
     console.error(chalk.red(`❌ Failed to load seed file: ${err}`));
     process.exit(1);
   }
 
   // Load config and schemas
-  let config: any;
+  interface CLIConfig {
+    actors: Array<{ role: string } | string>;
+  }
+  let config: CLIConfig;
   try {
     config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
   } catch {
@@ -96,7 +99,7 @@ export async function seedCommand(seedFile: string, opts?: any) {
     console.log(chalk.cyan('\nSeeding to all actor sheets (--all-actors)...'));
 
     // Read users from admin users table
-    let users: any[] = [];
+    let users: Record<string, unknown>[] = [];
     try {
       users = await adapterWithContext.table('users').findMany();
     } catch {
@@ -114,13 +117,13 @@ export async function seedCommand(seedFile: string, opts?: any) {
 
     for (const user of users) {
       if (!user.actor_sheet_id) continue;
-      const targetAdapter = adapter.withContext({ userId: 'seed-cli', role: 'admin', actorSheetId: user.actor_sheet_id });
+      const targetAdapter = adapter.withContext({ userId: 'seed-cli', role: 'admin', actorSheetId: user.actor_sheet_id as string });
 
       for (const [tableName, records] of Object.entries(seedData)) {
         if (!Array.isArray(records)) continue;
         for (const record of records) {
           try {
-            await targetAdapter.table(tableName).create(record);
+            await targetAdapter.table(tableName).create(record as Record<string, unknown>);
             totalInsertedActors++;
           } catch {
             totalFailedActors++;
@@ -148,7 +151,7 @@ export async function seedCommand(seedFile: string, opts?: any) {
 
     for (const record of records) {
       try {
-        await adapterWithContext.table(tableName).create(record);
+        await adapterWithContext.table(tableName).create(record as Record<string, unknown>);
         inserted++;
       } catch (err) {
         console.error(chalk.red(`  ✖ Failed: ${err}`));

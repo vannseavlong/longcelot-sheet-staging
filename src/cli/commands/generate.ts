@@ -37,7 +37,7 @@ export async function generateCommand(tableName: string) {
     },
   ]);
 
-  const columns: any[] = [];
+  const columns: { name: string; type: string; required: boolean; unique: boolean; defaultValue?: string }[] = [];
   let addMore = true;
 
   while (addMore) {

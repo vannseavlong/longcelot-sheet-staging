@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-import { TableSchema } from '../../schema/types';
+import { TableSchema, ColumnDefinition } from '../../schema/types';
 
 export async function validateCommand() {
   console.log(chalk.blue.bold('🔍 Validating schemas...\n'));
@@ -58,13 +58,12 @@ export async function validateCommand() {
           errors.push(`Schema ${schema.name} has no columns`);
         }
 
-        for (const [colName, col] of Object.entries(schema.columns)) {
-          const column = col as any;
-          if (column.enum && (!Array.isArray(column.enum) || column.enum.length === 0)) {
+        for (const [colName, col] of Object.entries(schema.columns as Record<string, ColumnDefinition>)) {
+          if (col.enum && (!Array.isArray(col.enum) || col.enum.length === 0)) {
             errors.push(`Column ${schema.name}.${colName} has invalid enum`);
           }
 
-          if (column.min !== undefined && column.max !== undefined && column.min > column.max) {
+          if (col.min !== undefined && col.max !== undefined && col.min > col.max) {
             errors.push(`Column ${schema.name}.${colName} has min > max`);
           }
         }

@@ -1,17 +1,17 @@
 import { google, sheets_v4 } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client, Credentials } from 'google-auth-library';
 
 export class SheetClient {
   private sheets: sheets_v4.Sheets;
   private auth: OAuth2Client;
 
-  constructor(credentials: { clientId: string; clientSecret: string; redirectUri: string }, tokens: any) {
+  constructor(credentials: { clientId: string; clientSecret: string; redirectUri: string }, tokens: unknown) {
     this.auth = new google.auth.OAuth2(
       credentials.clientId,
       credentials.clientSecret,
       credentials.redirectUri
     );
-    this.auth.setCredentials(tokens);
+    this.auth.setCredentials(tokens as Credentials);
     this.sheets = google.sheets({ version: 'v4', auth: this.auth });
   }
 
@@ -55,7 +55,7 @@ export class SheetClient {
     });
   }
 
-  async appendRow(spreadsheetId: string, sheetName: string, values: any[]): Promise<void> {
+  async appendRow(spreadsheetId: string, sheetName: string, values: string[]): Promise<void> {
     await this.sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${sheetName}!A:A`,
@@ -66,7 +66,7 @@ export class SheetClient {
     });
   }
 
-  async getAllRows(spreadsheetId: string, sheetName: string): Promise<any[][]> {
+  async getAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]> {
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${sheetName}!A:ZZ`,
@@ -74,7 +74,7 @@ export class SheetClient {
     return response.data.values || [];
   }
 
-  async updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: any[]): Promise<void> {
+  async updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: string[]): Promise<void> {
     await this.sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${sheetName}!A${rowIndex}`,

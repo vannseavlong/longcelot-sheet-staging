@@ -18,6 +18,35 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.13] — 2026-05-26
+
+### Added
+
+#### Phase 5: CLI Completeness
+- **`sheet-db migrate`** — generates a `migrate.js` script that reads every table from Google Sheets and calls a stub `insertRow()`. Replace the stub with your Prisma/Sequelize/MySQL client to move data to production. Supports `--table <name>` (single table), `--output <dir>`, and `--dry-run` (preview plan without writing files).
+- **`sheet-db init --integrate`** — integrates into an existing project without overwriting `sheet-db.config.ts` or `.env`; appends missing Google OAuth vars to `.env` if needed.
+- **`sheet-db mock-users [count]`** — creates mock Google Sheets for development (default: 3); rotates through configured non-admin actor roles.
+- **`sheet-db seed <file> --all-actors`** — distributes seed records to every user's actor sheet by reading `actor_sheet_id` from the admin `users` table.
+- **`sheet-db export --prisma / --sql`** — generates `schema.prisma` or SQL DDL from registered schemas; supports `--output <dir>`.
+- **`sheet-db sync --all-users [--dry-run]`** — pushes schema changes to all registered user sheets; uses schema hash comparison to skip up-to-date sheets; exponential backoff on rate-limit errors.
+
+#### TypeScript Strictness
+- Replaced all `any` usages in production source with `unknown` or concrete types across: `crud.ts`, `sheetClient.ts`, `oauth.ts`, `generate.ts`, `seed.ts`, `mock-users.ts`, `status.ts`, `validate.ts`, `types.ts`, `columnBuilder.ts`.
+- `ColumnDefinition.default` is now `string | number | boolean | null` (was `any`).
+- `ColumnDefinition.enum` is now `(string | number | boolean)[]` (was `any[]`).
+- `WhereClause` is now `Record<string, unknown>` (was `Record<string, any>`).
+- `UpdateOptions.data` is now `Record<string, unknown>` (was `Record<string, any>`).
+- CRUD method signatures updated to `Record<string, unknown>` throughout.
+
+### Changed
+- `CRUDOperations.create` / `findMany` / `findOne` return `Record<string, unknown>` instead of `Record<string, any>`.
+- Boolean deserialization in `crud.ts` now checks `value === 'TRUE'` only (removed unreachable `|| value === true` branch after `sheetClient` was typed to return `string[][]`).
+
+### Fixed
+- `OAuth2Client.setCredentials` now correctly receives a `Credentials`-typed cast instead of raw `unknown`.
+
+---
+
 ## [0.1.12] — 2026-05-26
 
 ### Added

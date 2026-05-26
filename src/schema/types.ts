@@ -4,10 +4,10 @@ export interface ColumnDefinition {
   type: DataType;
   required?: boolean;
   unique?: boolean;
-  default?: any;
+  default?: string | number | boolean | null;
   min?: number;
   max?: number;
-  enum?: any[];
+  enum?: (string | number | boolean)[];
   pattern?: RegExp;
   readonly?: boolean;
   primary?: boolean;
@@ -53,7 +53,7 @@ export interface UserContext {
 }
 
 export interface WhereClause {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface FindOptions {
@@ -70,7 +70,7 @@ export interface CreateOptions {
 
 export interface UpdateOptions {
   where: WhereClause;
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   skipFKValidation?: boolean;
 }
 

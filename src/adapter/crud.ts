@@ -19,7 +19,7 @@ export class CRUDOperations {
     private preFlight?: Promise<void>
   ) {}
 
-  async create(data: Record<string, any>, options: CreateOptions = {}): Promise<Record<string, any>> {
+  async create(data: Record<string, unknown>, options: CreateOptions = {}): Promise<Record<string, unknown>> {
     if (this.preFlight) await this.preFlight;
     let incoming = { ...data };
 
@@ -55,7 +55,7 @@ export class CRUDOperations {
     return validated;
   }
 
-  async findMany(options: FindOptions = {}): Promise<Record<string, any>[]> {
+  async findMany(options: FindOptions = {}): Promise<Record<string, unknown>[]> {
     if (this.preFlight) await this.preFlight;
     const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
 
@@ -75,8 +75,9 @@ export class CRUDOperations {
       results.sort((a, b) => {
         const aVal = a[options.orderBy!];
         const bVal = b[options.orderBy!];
-        const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-        return order === 'asc' ? comparison : -comparison;
+        if (aVal === bVal) return 0;
+        const gt = String(aVal) > String(bVal) ? 1 : -1;
+        return order === 'asc' ? gt : -gt;
       });
     }
 
@@ -91,7 +92,7 @@ export class CRUDOperations {
     return results;
   }
 
-  async findOne(options: FindOptions = {}): Promise<Record<string, any> | null> {
+  async findOne(options: FindOptions = {}): Promise<Record<string, unknown> | null> {
     const results = await this.findMany({ ...options, limit: 1 });
     return results[0] || null;
   }
@@ -183,8 +184,8 @@ export class CRUDOperations {
     return headers;
   }
 
-  private validateAndApplyDefaults(data: Record<string, any>, mode: 'create' | 'update'): Record<string, any> {
-    const result: Record<string, any> = { ...data };
+  private validateAndApplyDefaults(data: Record<string, unknown>, mode: 'create' | 'update'): Record<string, unknown> {
+    const result: Record<string, unknown> = { ...data };
 
     for (const [columnName, column] of Object.entries(this.schema.columns)) {
       const value = result[columnName];
@@ -202,7 +203,7 @@ export class CRUDOperations {
         continue;
       }
 
-      if (column.enum && !column.enum.includes(value)) {
+      if (column.enum && !column.enum.includes(value as string | number | boolean)) {
         throw new ValidationError(`Column ${columnName} must be one of: ${column.enum.join(', ')}`, columnName);
       }
 
@@ -224,7 +225,7 @@ export class CRUDOperations {
         }
       }
 
-      if (column.pattern && !column.pattern.test(value)) {
+      if (column.pattern && typeof value === 'string' && !column.pattern.test(value)) {
         throw new ValidationError(`Column ${columnName} does not match required pattern`, columnName);
       }
     }
@@ -232,7 +233,7 @@ export class CRUDOperations {
     return result;
   }
 
-  private async validateForeignKeys(data: Record<string, any>): Promise<void> {
+  private async validateForeignKeys(data: Record<string, unknown>): Promise<void> {
     if (!this.fkResolver) return;
 
     for (const [columnName, column] of Object.entries(this.schema.columns)) {
@@ -251,15 +252,15 @@ export class CRUDOperations {
     }
   }
 
-  private serializeValue(value: any): string {
+  private serializeValue(value: unknown): string {
     if (value === null || value === undefined) return '';
     if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   }
 
-  private deserializeRow(headers: string[], row: any[]): Record<string, any> {
-    const result: Record<string, any> = {};
+  private deserializeRow(headers: string[], row: string[]): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
 
     headers.forEach((header, index) => {
       const column = this.schema.columns[header];
@@ -280,7 +281,7 @@ export class CRUDOperations {
           result[header] = Number(value);
           break;
         case 'boolean':
-          result[header] = value === 'TRUE' || value === true;
+          result[header] = value === 'TRUE';
           break;
         case 'json':
           try {
@@ -297,7 +298,7 @@ export class CRUDOperations {
     return result;
   }
 
-  private async checkUniqueness(data: Record<string, any>, excludeId: string | null): Promise<void> {
+  private async checkUniqueness(data: Record<string, unknown>, excludeId: string | null): Promise<void> {
     for (const [columnName, column] of Object.entries(this.schema.columns)) {
       if (!column.unique) continue;
       const value = data[columnName];
@@ -313,7 +314,7 @@ export class CRUDOperations {
     }
   }
 
-  private matchesWhere(item: Record<string, any>, where: Record<string, any>): boolean {
+  private matchesWhere(item: Record<string, unknown>, where: Record<string, unknown>): boolean {
     for (const [key, value] of Object.entries(where)) {
       if (item[key] !== value) {
         return false;

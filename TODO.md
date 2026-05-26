@@ -123,7 +123,7 @@ npx sheet-db sync
   - **New**: `--all-actors` flag to distribute seed data across all actor types
   - Support defining seeds per actor type
 
-- [ ] **Implement `sync --all-users`** (Phase 3)
+- [x] **Implement `sync --all-users`** (Phase 3)
   - Read all users from `users` table
   - Fetch all `actor_sheet_id`s
   - Push schema changes to every registered user sheet
@@ -810,29 +810,29 @@ CREATE TABLE users (
 
 **Planned/Needed**:
 
-- [ ] **`init --integrate`** — Integrate into existing project
+- [x] **`init --integrate`** — Integrate into existing project
   - Merge config without overwriting
   - Add to existing `.env`
   - Create `schemas/` without destroying existing code
 
-- [ ] **`mock-users`** — Generate test user sheets
+- [x] **`mock-users`** — Generate test user sheets
   - Create mock Google Sheets for development
   - Inspect data as different actors
   - Useful for manual testing
 
-- [ ] **`sync --all-users`** — Bulk sync to all user sheets
+- [x] **`sync --all-users`** — Bulk sync to all user sheets
   - Push schema updates to all registered users
   - Critical for schema changes
 
-- [ ] **`export`** — Export to SQL/Prisma
+- [x] **`export`** — Export to SQL/Prisma
   - Generate DDL statements
   - Generate Prisma schema
   - Migration documentation
 
-- [ ] **`migrate`** — Data migration assistant
-  - Export from Sheets to SQL
-  - Map columns
-  - Verify data integrity
+- [x] **`migrate`** — Data migration assistant
+  - Generates `migrate.js` script with `insertRow()` stub
+  - Supports `--table`, `--output`, `--dry-run`
+  - Developer replaces stub with real DB client
 
 ---
 
@@ -840,24 +840,24 @@ CREATE TABLE users (
 
 ### High Priority (Phase 1) - Core Correctness
 
-- [ ] PK auto-generation for string primary() columns (nanoid)
-- [ ] PK readonly enforcement on update() — strip silently
-- [ ] FK validation via ref() on create() and update()
-- [ ] SchemaError on duplicate primary() or circular ref()
-- [ ] skipFKValidation option for bulk seed operations
-- [ ] Export command: emit @id + @relation (Prisma) and PRIMARY KEY + FOREIGN KEY (SQL)
-- [ ] Tests: PK auto-gen, PK readonly, FK pass/fail, skipFKValidation, circular ref
+- [x] PK auto-generation for string primary() columns (nanoid)
+- [x] PK readonly enforcement on update() — strip silently
+- [x] FK validation via ref() on create() and update()
+- [x] SchemaError on duplicate primary() or circular ref()
+- [x] skipFKValidation option for bulk seed operations
+- [x] Export command: emit @id + @relation (Prisma) and PRIMARY KEY + FOREIGN KEY (SQL)
+- [x] Tests: PK auto-gen, PK readonly, FK pass/fail, skipFKValidation, circular ref
 
 ### High Priority (Phase 2) - Developer Experience
 
-- [ ] `sheet-db mock-users` CLI - Generate test user sheets for development
-- [ ] Enhance `sheet-db seed` with `--all-actors` - Distribute seed data across actor types
-- [ ] Implement `init --integrate` - Integrate into existing project without overwriting
-- [ ] Better developer documentation for OAuth flow
-- [ ] Multi-actor .env scaffolding - DEV\_\*\_SHEET_ID per actor type
-- [ ] Update actors config shape in sheet-db.config.ts DSL
-- [ ] Update sync to iterate all actors and print per-actor status table
-- [ ] Ensure admin users table schema includes actor_sheet_id column
+- [x] `sheet-db mock-users` CLI - Generate test user sheets for development
+- [x] Enhance `sheet-db seed` with `--all-actors` - Distribute seed data across actor types
+- [x] Implement `init --integrate` - Integrate into existing project without overwriting
+- [x] Multi-actor .env scaffolding - DEV\_\*\_SHEET_ID per actor type
+- [x] Update actors config shape in sheet-db.config.ts DSL
+- [x] Update sync to iterate all actors and print per-actor status table
+- [x] Ensure admin users table schema includes actor_sheet_id column
+- [ ] Better developer documentation for OAuth flow (lower priority)
 
 ### High Priority (Phase 3) - Schema Syncing & Migrations
 
@@ -889,7 +889,7 @@ CREATE TABLE users (
 
 ### Lower Priority
 
-- [ ] `sheet-db migrate` command
+- [x] `sheet-db migrate` command (generates migration script with insertRow() stub)
 - [ ] Column encryption
 - [ ] Audit logs
 - [ ] Row-level permissions
@@ -904,8 +904,10 @@ CREATE TABLE users (
   - [x] Clarify `user_id` vs `sheet_id` purpose
   - [x] Add migration section with export command plans
 
-- [ ] Update `API.md`:
-  - [ ] Add cross-actor operations documentation (when implemented)
+- [x] Update `API.md`:
+  - [x] Add cross-actor operations documentation
+  - [x] Update all CLI command docs (mock-users, sync --all-users, seed --all-actors, export, migrate)
+  - [x] Update type definitions (ActorPermission, ActorConfig, SchemaMismatchBehaviour, UserContext)
 
 - [x] Update `CHANGELOG.md`:
   - [x] Fix duplicate `[Unreleased]` sections
@@ -967,4 +969,4 @@ MySQL/PostgreSQL + Prisma/Sequelize (production)
 
 ---
 
-_Last updated: 2026-04-03_
+_Last updated: 2026-05-26_

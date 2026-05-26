@@ -246,7 +246,7 @@ describe('CRUDOperations primary key (string)', () => {
 
     expect(record.sku_id).toBeDefined();
     expect(typeof record.sku_id).toBe('string');
-    expect(record.sku_id.length).toBeGreaterThan(0);
+    expect((record.sku_id as string).length).toBeGreaterThan(0);
   });
 
   it('uses the supplied value when a string PK is provided', async () => {

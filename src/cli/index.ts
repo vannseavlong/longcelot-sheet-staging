@@ -10,6 +10,7 @@ import { mockUsersCommand } from './commands/mock-users';
 import { doctorCommand } from './commands/doctor';
 import { statusCommand } from './commands/status';
 import { exportCommand } from './commands/export';
+import { migrateCommand } from './commands/migrate';
 
 const program = new Command();
 
@@ -69,5 +70,13 @@ program
   .option('--sql', 'Generate SQL DDL (CREATE TABLE statements)')
   .option('--output <dir>', 'Output directory (default: current directory)')
   .action((options) => exportCommand(options));
+
+program
+  .command('migrate')
+  .description('Generate a data migration script to move data from Google Sheets to a production DB')
+  .option('--table <name>', 'Migrate a single table only')
+  .option('--output <dir>', 'Output directory for migrate.js (default: current directory)')
+  .option('--dry-run', 'Preview migration plan without writing any files')
+  .action((options) => migrateCommand(options));
 
 program.parse(process.argv);

@@ -8,6 +8,8 @@
 - [CRUD Operations](#crud-operations)
 - [Authentication](#authentication)
 - [CLI Commands](#cli-commands)
+- [Cross-Actor Operations](#cross-actor-operations)
+- [Type Definitions](#type-definitions)
 
 ## Schema Definition
 
@@ -157,7 +159,9 @@ Creates a new sheet adapter instance.
     clientSecret: string;
     redirectUri: string;
   };
-  tokens: any; // OAuth tokens
+  tokens: unknown;                          // OAuth tokens object
+  onSchemaMismatch?: 'warn' | 'error' | 'auto-sync';
+  permissions?: Record<string, ActorPermission>; // cross-actor permission matrix
 }
 ```
 
@@ -207,7 +211,7 @@ adapter.registerSchemas([usersSchema, bookingsSchema, paymentsSchema]);
 
 ### `adapter.withContext(context)`
 
-Creates a new adapter instance with user context.
+Creates a new adapter instance with user context. Optionally starts an async schema version check when `onSchemaMismatch` is configured.
 
 **Parameters:**
 
@@ -216,6 +220,9 @@ Creates a new adapter instance with user context.
   userId: string;
   role: string;
   actorSheetId?: string;
+  // Cross-actor fields (see Cross-Actor Operations below)
+  targetRole?: string;
+  targetSheetId?: string;
 }
 ```
 
@@ -226,9 +233,33 @@ Creates a new adapter instance with user context.
 ```typescript
 const userContext = adapter.withContext({
   userId: 'user_123',
-  role: 'user',
+  role: 'student',
   actorSheetId: 'sheet-id-xyz',
 });
+```
+
+### `adapter.asActor(targetRole, targetSheetId)`
+
+Convenience method — clones the current context and sets cross-actor fields. Requires `withContext()` to have been called first.
+
+**Parameters:**
+
+- `targetRole: string` - The actor type to access
+- `targetSheetId: string` - The sheet ID of the target actor
+
+**Returns:** `SheetAdapter` pointing at the target actor's sheet
+
+**Example:**
+
+```typescript
+// Teacher accessing a student's sheet
+const teacherCtx = adapter.withContext({
+  userId: 'teacher_001',
+  role: 'teacher',
+  actorSheetId: 'teacher-sheet-id',
+});
+const studentCtx = teacherCtx.asActor('student', 'student-sheet-id-123');
+const scores = await studentCtx.table('scores').findMany({});
 ```
 
 ### `adapter.table(tableName)`
@@ -283,15 +314,16 @@ await adapter.syncSchema(bookingsSchema);
 
 ## CRUD Operations
 
-### `table.create(data)`
+### `table.create(data, options?)`
 
 Creates a new row.
 
 **Parameters:**
 
-- `data: Record<string, any>` - Row data
+- `data: Record<string, unknown>` - Row data
+- `options?: { skipFKValidation?: boolean }` - Skip FK checks for bulk seeding
 
-**Returns:** `Promise<Record<string, any>>` - Created row with generated fields
+**Returns:** `Promise<Record<string, unknown>>` - Created row with generated fields
 
 **Example:**
 
@@ -312,7 +344,7 @@ Finds multiple rows.
 
 ```typescript
 {
-  where?: Record<string, any>;
+  where?: Record<string, unknown>;
   limit?: number;
   offset?: number;
   orderBy?: string;
@@ -320,7 +352,7 @@ Finds multiple rows.
 }
 ```
 
-**Returns:** `Promise<Record<string, any>[]>`
+**Returns:** `Promise<Record<string, unknown>[]>`
 
 **Example:**
 
@@ -341,11 +373,11 @@ Finds a single row.
 
 ```typescript
 {
-  where?: Record<string, any>;
+  where?: Record<string, unknown>;
 }
 ```
 
-**Returns:** `Promise<Record<string, any> | null>`
+**Returns:** `Promise<Record<string, unknown> | null>`
 
 **Example:**
 
@@ -363,8 +395,9 @@ Updates rows matching criteria.
 
 ```typescript
 {
-  where: Record<string, any>;
-  data: Record<string, any>;
+  where: Record<string, unknown>;
+  data: Record<string, unknown>;
+  skipFKValidation?: boolean;
 }
 ```
 
@@ -381,13 +414,13 @@ const updated = await table.update({
 
 ### `table.delete(options)`
 
-Deletes rows matching criteria.
+Deletes rows matching criteria. If `softDelete: true` is set on the schema, sets `_deleted_at` instead of removing the row.
 
 **Parameters:**
 
 ```typescript
 {
-  where: Record<string, any>;
+  where: Record<string, unknown>;
 }
 ```
 
@@ -440,7 +473,7 @@ Exchanges authorization code for tokens.
 
 - `code: string` - Authorization code from OAuth callback
 
-**Returns:** `Promise<any>` - OAuth tokens
+**Returns:** `Promise<unknown>` - OAuth tokens (save to `.sheet-db-tokens.json`)
 
 ### `oauth.refreshTokens(refreshToken)`
 
@@ -450,7 +483,7 @@ Refreshes expired tokens.
 
 - `refreshToken: string`
 
-**Returns:** `Promise<any>` - New tokens
+**Returns:** `Promise<unknown>` - New tokens
 
 ### `oauth.verifyToken(idToken)`
 
@@ -460,7 +493,7 @@ Verifies an ID token.
 
 - `idToken: string`
 
-**Returns:** `Promise<any>` - Token payload
+**Returns:** `Promise<unknown>` - Token payload
 
 ### `hashPassword(password)`
 
@@ -523,46 +556,165 @@ if (!valid) {
 
 ## CLI Commands
 
-### `sheet-db init`
+### `sheet-db init [--integrate]`
 
-Initializes a new longcelot-sheet-db project.
+Initializes a new project. With `--integrate`, merges into an existing project without overwriting files.
 
 **Creates:**
 
-- `sheet-db.config.ts`
-- `.env`
-- `schemas/` directory
+- `sheet-db.config.ts` — actor config with per-actor `sheetIdEnv` mappings
+- `.env` — Google OAuth vars + one `DEV_<ROLE>_SHEET_ID` per non-admin actor
+- `schemas/admin/` — scaffolds `users`, `credentials`, `schema_versions` tables
+
+```bash
+npx sheet-db init
+npx sheet-db init --integrate   # safe merge into existing project
+```
 
 ### `sheet-db generate <table-name>`
 
-Generates a new table schema interactively.
-
-**Example:**
+Interactively generates a new table schema file.
 
 ```bash
-pnpm sheet-db generate bookings
+npx sheet-db generate bookings
 ```
 
-### `sheet-db sync`
+### `sheet-db sync [--all-users] [--dry-run]`
 
-Syncs all schemas to Google Sheets.
+Syncs all schemas to Google Sheets. Iterates every configured actor and prints a per-actor status table: Actor | Sheet ID | Tables | Status.
 
-**Actions:**
+- `--all-users` — also pushes schema changes to every registered user sheet (reads `actor_sheet_id` values from admin `users` table, skips sheets that are already up-to-date via schema hash comparison)
+- `--dry-run` — preview `--all-users` changes without applying them (requires `--all-users`)
 
-- Creates missing sheets
-- Adds missing columns
-- Never deletes existing data
+```bash
+npx sheet-db sync
+npx sheet-db sync --all-users
+npx sheet-db sync --all-users --dry-run
+```
 
 ### `sheet-db validate`
 
-Validates all schemas.
+Validates all schema files.
 
 **Checks:**
 
 - Duplicate table names
-- Invalid modifiers
 - Unknown actors
 - Missing required fields
+- Invalid enum / min > max
+
+### `sheet-db seed <seed-file> [--all-actors]`
+
+Seeds data from a JS/TS file (exporting `Record<string, unknown[]>`).
+
+- `--all-actors` — distributes seed records to every user's actor sheet (reads from admin `users` table)
+
+```bash
+npx sheet-db seed ./seeds/initial.js
+npx sheet-db seed ./seeds/initial.js --all-actors
+```
+
+### `sheet-db mock-users [count]`
+
+Creates `count` mock Google Sheets for development (default: 3). Rotates through configured non-admin actor roles.
+
+```bash
+npx sheet-db mock-users
+npx sheet-db mock-users 5
+```
+
+### `sheet-db export [--prisma] [--sql] [--output <dir>]`
+
+Exports registered schemas to production DB formats.
+
+- `--prisma` — writes `schema.prisma` (Prisma DSL)
+- `--sql` — writes `schema.sql` (SQL DDL `CREATE TABLE` statements)
+- `--output <dir>` — output directory (default: current directory)
+
+```bash
+npx sheet-db export --prisma --output ./prisma
+npx sheet-db export --sql
+npx sheet-db export --prisma --sql --output ./migration
+```
+
+### `sheet-db migrate [--table <name>] [--output <dir>] [--dry-run]`
+
+Generates a `migrate.js` script that reads every table from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client to move data.
+
+- `--table <name>` — migrate a single table only
+- `--output <dir>` — output directory (default: current directory)
+- `--dry-run` — preview migration plan without writing any files
+
+```bash
+npx sheet-db migrate
+npx sheet-db migrate --table bookings
+npx sheet-db migrate --dry-run
+```
+
+### `sheet-db doctor`
+
+Health check: validates env vars, config file, OAuth tokens, and schema directory.
+
+### `sheet-db status`
+
+Displays project status: actor list, env var values, OAuth token state, and all registered tables with column counts.
+
+## Cross-Actor Operations
+
+Cross-actor operations allow one actor (e.g. teacher) to perform CRUD on another actor's sheet (e.g. student), subject to a permission matrix.
+
+### Permission Matrix Configuration
+
+```typescript
+const adapter = createSheetAdapter({
+  adminSheetId: process.env.ADMIN_SHEET_ID,
+  credentials: { clientId, clientSecret, redirectUri },
+  tokens: oauthTokens,
+  permissions: {
+    teacher: {
+      canAccess: ['student'],
+      tables: ['scores', 'attendance'],  // omit to allow all tables
+    },
+  },
+});
+```
+
+### Cross-Actor Context
+
+```typescript
+// Option A: withContext with targetRole + targetSheetId
+const ctx = adapter.withContext({
+  userId: 'teacher_001',
+  role: 'teacher',
+  actorSheetId: 'teacher-sheet-id',
+  targetRole: 'student',
+  targetSheetId: 'student-sheet-id-123',
+});
+
+// Option B: asActor() shorthand
+const ctx = adapter
+  .withContext({ userId: 'teacher_001', role: 'teacher', actorSheetId: 'teacher-sheet-id' })
+  .asActor('student', 'student-sheet-id-123');
+
+// All CRUD operations now target the student sheet
+await ctx.table('scores').create({ student_id: 'stu_456', score: 95 });
+const scores = await ctx.table('scores').findMany({ where: { student_id: 'stu_456' } });
+await ctx.table('scores').update({ where: { _id: 'score_001' }, data: { score: 98 } });
+await ctx.table('scores').delete({ where: { _id: 'score_001' } });
+```
+
+### Permission Rules
+
+| Scenario | Behaviour |
+|---|---|
+| Same actor access | Always allowed |
+| Admin access | Bypasses all permission checks |
+| Cross-actor — role in `permissions.canAccess` | Allowed |
+| Cross-actor — role not in `permissions` | `PermissionError` |
+| Cross-actor — table not in `permissions.tables` | `PermissionError` |
+| Cross-actor — `targetSheetId` missing | `PermissionError` |
+
+---
 
 ## Type Definitions
 
@@ -575,6 +727,7 @@ interface TableSchema {
   timestamps?: boolean;
   softDelete?: boolean;
   columns: Record<string, ColumnDefinition>;
+  pkColumn?: string;  // set automatically when primary() is used
 }
 ```
 
@@ -585,14 +738,14 @@ interface ColumnDefinition {
   type: 'string' | 'number' | 'boolean' | 'date' | 'json';
   required?: boolean;
   unique?: boolean;
-  default?: any;
+  default?: string | number | boolean | null;
   min?: number;
   max?: number;
-  enum?: any[];
+  enum?: (string | number | boolean)[];
   pattern?: RegExp;
   readonly?: boolean;
-  primary?: boolean;
-  ref?: string;
+  primary?: boolean;  // auto-generates nanoid for string columns
+  ref?: string;       // 'table.column' FK reference
   index?: boolean;
 }
 ```
@@ -604,5 +757,36 @@ interface UserContext {
   userId: string;
   role: string;
   actorSheetId?: string;
+  targetRole?: string;      // cross-actor: which actor type to access
+  targetSheetId?: string;   // cross-actor: the target actor's sheet ID
 }
 ```
+
+### `ActorPermission`
+
+```typescript
+interface ActorPermission {
+  canAccess: string[];    // actor roles this role can access
+  tables?: string[];      // restrict to specific tables (omit = all tables)
+}
+```
+
+### `ActorConfig`
+
+```typescript
+interface ActorConfig {
+  role: string;
+  sheetIdEnv: string;   // env var name that holds this actor's sheet ID
+}
+```
+
+### `SchemaMismatchBehaviour`
+
+```typescript
+type SchemaMismatchBehaviour = 'warn' | 'error' | 'auto-sync';
+```
+
+Configured via `onSchemaMismatch` in `createSheetAdapter()`:
+- `'warn'` — logs to stderr, continues (default)
+- `'error'` — throws `SchemaMismatchError`
+- `'auto-sync'` — syncs the actor sheet before proceeding

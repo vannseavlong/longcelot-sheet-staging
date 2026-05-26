@@ -17,7 +17,7 @@ export class ColumnBuilder {
     return this;
   }
 
-  default(value: any): this {
+  default(value: string | number | boolean | null): this {
     this.definition.default = value;
     return this;
   }
@@ -32,7 +32,7 @@ export class ColumnBuilder {
     return this;
   }
 
-  enum(values: any[]): this {
+  enum(values: (string | number | boolean)[]): this {
     this.definition.enum = values;
     return this;
   }

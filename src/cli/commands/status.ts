@@ -8,8 +8,12 @@ export async function statusCommand() {
 
   require('dotenv').config();
 
+  interface CLIConfig {
+    projectName?: string;
+    actors: Array<{ role: string; sheetIdEnv?: string } | string>;
+  }
   // Load config
-  let config: any;
+  let config: CLIConfig;
   try {
     config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
   } catch {
