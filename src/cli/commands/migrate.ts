@@ -32,7 +32,7 @@ function loadSchemas(config: { actors: Array<{ role: string } | string> }): Tabl
   return schemas;
 }
 
-function generateMigrationScript(schemas: TableSchema[]): string {
+export function generateMigrationScript(schemas: TableSchema[]): string {
   const lines: string[] = [
     '/**',
     ' * longcelot-sheet-db → Production DB Migration Script',
