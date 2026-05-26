@@ -218,12 +218,12 @@ Implementation checklist:
 
 **What needs to be built**:
 
-- [ ] **Implement `sheet-db export` command**
+- [x] **Implement `sheet-db export` command**
   - Export to SQL DDL (`CREATE TABLE` statements)
   - Export to Prisma schema (`schema.prisma`)
   - Export to Sequelize/TypeORM models
 
-- [ ] **Create migration guide documentation**
+- [x] **Create migration guide documentation**
   - Step-by-step migration process
   - Data export strategy
   - Code adapter swap instructions
@@ -698,21 +698,21 @@ class SheetAdapter {
 
 ##### 10. Implementation Checklist
 
-- [ ] Add `ActorPermission` and `permissions` to `SheetAdapterConfig`
-- [ ] Add `targetRole` and `targetSheetId` to `UserContext` type
-- [ ] Update `hasPermission()` to check permission matrix
-- [ ] Update `resolveSpreadsheetId()` to use `targetSheetId`
-- [ ] Add validation: ensure targetSheetId provided when cross-actor
-- [ ] Add validation: throw clear error when table not in allowed list
-- [ ] Update TypeScript types in `src/schema/types.ts`
-- [ ] Add `asActor()` helper method
-- [ ] Add tests for all CRUD scenarios:
-  - [ ] Same actor access (existing behavior)
-  - [ ] Cross-actor with permission (CREATE/READ/UPDATE/DELETE)
-  - [ ] Cross-actor without permission (should fail)
-  - [ ] Cross-actor with wrong table (should fail)
-  - [ ] Admin bypass (should always work)
-- [ ] Document use cases in developerGuide.md
+- [x] Add `ActorPermission` and `permissions` to `SheetAdapterConfig`
+- [x] Add `targetRole` and `targetSheetId` to `UserContext` type
+- [x] Update `hasPermission()` to check permission matrix
+- [x] Update `resolveSpreadsheetId()` to use `targetSheetId`
+- [x] Add validation: ensure targetSheetId provided when cross-actor
+- [x] Add validation: throw clear error when table not in allowed list
+- [x] Update TypeScript types in `src/schema/types.ts`
+- [x] Add `asActor()` helper method
+- [x] Add tests for all CRUD scenarios:
+  - [x] Same actor access (existing behavior)
+  - [x] Cross-actor with permission (CREATE/READ/UPDATE/DELETE)
+  - [x] Cross-actor without permission (should fail)
+  - [x] Cross-actor with wrong table (should fail)
+  - [x] Admin bypass (should always work)
+- [x] Document use cases in developerGuide.md
 
 ##### 8. Related: Cross-Actor Join Query (Future)
 
@@ -861,26 +861,26 @@ CREATE TABLE users (
 
 ### High Priority (Phase 3) - Schema Syncing & Migrations
 
-- [ ] `sheet-db export` - Export schemas to Prisma schema and SQL DDL
-- [ ] Migration guide - Step-by-step guide for moving to production DB
-- [ ] `sync --all-users` - Push schema changes to all registered user sheets
-- [ ] Schema version hash utility for runtime mismatch detection
-- [ ] schema_versions admin table scaffolded by init
-- [ ] onSchemaMismatch config option ('warn' | 'error' | 'auto-sync')
-- [ ] Mismatch detection in withContext()
-- [ ] Exponential backoff for Google Sheets API rate limits in bulk sync
-- [ ] --dry-run flag for sync --all-users
-- [ ] Tests: mismatch detection, auto-sync trigger, bulk sync
+- [x] `sheet-db export` - Export schemas to Prisma schema and SQL DDL
+- [x] Migration guide - Step-by-step guide for moving to production DB
+- [x] `sync --all-users` - Push schema changes to all registered user sheets
+- [x] Schema version hash utility for runtime mismatch detection
+- [x] schema_versions admin table scaffolded by init
+- [x] onSchemaMismatch config option ('warn' | 'error' | 'auto-sync')
+- [x] Mismatch detection in withContext()
+- [x] Exponential backoff for Google Sheets API rate limits in bulk sync
+- [x] --dry-run flag for sync --all-users
+- [x] Tests: mismatch detection, auto-sync trigger, bulk sync
 
 ### High Priority (Phase 4) - Cross-Actor CRUD
 
-- [ ] **Permission Matrix Configuration** - Add `permissions` to `SheetAdapterConfig`
-- [ ] **UserContext Enhancement** - Add `targetRole` and `targetSheetId`
-- [ ] **Update `hasPermission()`** - Check permission matrix for cross-actor access
-- [ ] **Update `resolveSpreadsheetId()`** - Use `targetSheetId` when cross-actor
-- [ ] **Add `asActor()` helper** - Convenience method for cross-actor context
-- [ ] **Tests** - Cover all CRUD scenarios (create, read, update, delete)
-- [ ] **Documentation** - Update developerGuide.md with cross-actor examples
+- [x] **Permission Matrix Configuration** - Add `permissions` to `SheetAdapterConfig`
+- [x] **UserContext Enhancement** - Add `targetRole` and `targetSheetId`
+- [x] **Update `hasPermission()`** - Check permission matrix for cross-actor access
+- [x] **Update `resolveSpreadsheetId()`** - Use `targetSheetId` when cross-actor
+- [x] **Add `asActor()` helper** - Convenience method for cross-actor context
+- [x] **Tests** - Cover all CRUD scenarios (create, read, update, delete)
+- [x] **Documentation** - Update developerGuide.md with cross-actor examples
 
 ### Medium Priority
 

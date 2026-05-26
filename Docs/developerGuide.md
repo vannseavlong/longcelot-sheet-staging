@@ -247,7 +247,127 @@ Organize schemas by actor.
 
 ---
 
-## 13. Best Practices
+## 13. Cross-Actor Operations
+
+By default, actors can only access their own sheet. Cross-actor access lets one role operate on another role's tables (e.g. a teacher grading a student's scores).
+
+### 13.1 Configure the Permission Matrix
+
+Pass `permissions` when creating the adapter:
+
+```ts
+const adapter = createSheetAdapter({
+  adminSheetId: process.env.ADMIN_SHEET_ID,
+  credentials: { clientId, clientSecret, redirectUri },
+  tokens: oauthTokens,
+  permissions: {
+    teacher: {
+      canAccess: ["student"],           // which actor sheets teacher can enter
+      tables: ["scores", "attendance"], // optional: restrict to these tables only
+    },
+    parent: {
+      canAccess: ["student"],
+      tables: ["scores", "attendance"],
+    },
+  },
+});
+```
+
+### 13.2 Set Cross-Actor Context
+
+Provide both the caller's context **and** the target sheet:
+
+```ts
+// Fetch the student's sheet ID from your users table first, then:
+const ctx = adapter.withContext({
+  userId: "teacher_001",
+  role: "teacher",
+  actorSheetId: "teacher-sheet-id",
+  targetRole: "student",
+  targetSheetId: "student-sheet-id-from-users-table",
+});
+```
+
+Or use the `asActor()` shorthand:
+
+```ts
+const teacherCtx = adapter.withContext({
+  userId: "teacher_001",
+  role: "teacher",
+  actorSheetId: "teacher-sheet-id",
+});
+
+const crossCtx = teacherCtx.asActor("student", "student-sheet-id");
+```
+
+### 13.3 CRUD Across Actor Sheets
+
+All four operations work seamlessly — they route to the **target** sheet, not the caller's:
+
+```ts
+// CREATE — teacher writes a score into the student's sheet
+await crossCtx.table("scores").create({
+  student_id: "student_123",
+  subject: "Mathematics",
+  score: 95,
+  graded_by: "teacher_001",
+});
+
+// READ — teacher reads back scores from the student's sheet
+const scores = await crossCtx.table("scores").findMany({
+  where: { student_id: "student_123" },
+});
+
+// UPDATE — teacher corrects a score
+await crossCtx.table("scores").update({
+  where: { _id: "score_xyz" },
+  data: { score: 98 },
+});
+
+// DELETE — teacher removes an erroneous entry
+await crossCtx.table("scores").delete({ where: { _id: "score_xyz" } });
+```
+
+### 13.4 Security Rules
+
+| Scenario | Result |
+|---|---|
+| No `permissions` configured for a role attempting cross-actor access | `PermissionError` |
+| Role not in `canAccess` list for the target | `PermissionError` |
+| Table not in the allowed `tables` list | `PermissionError` |
+| `targetSheetId` missing while `targetRole` is set | `PermissionError` |
+| Admin role — no config needed | Always allowed |
+
+### 13.5 Fetching All Student Data Across Multiple Sheets
+
+```ts
+// 1. Get your teacher's student list from their own sheet
+const myStudents = await adapter
+  .withContext({ userId: teacherId, role: "teacher", actorSheetId: teacherSheetId })
+  .table("teacher_students")
+  .findMany({ where: { teacher_id: teacherId } });
+
+// 2. Loop and aggregate
+const allScores = [];
+for (const student of myStudents) {
+  const scores = await adapter
+    .withContext({
+      userId: teacherId,
+      role: "teacher",
+      actorSheetId: teacherSheetId,
+      targetRole: "student",
+      targetSheetId: student.actor_sheet_id,
+    })
+    .table("scores")
+    .findMany();
+
+  allScores.push(...scores.map((s) => ({ ...s, student_name: student.name })));
+}
+```
+
+---
+
+## 14. Best Practices
 
 - Keep schemas simple
 - Use actors consistently
@@ -255,3 +375,4 @@ Organize schemas by actor.
 - Treat as staging environment
 - Design with future migration in mind (use `user_id` as primary identity)
 - Never expose OAuth tokens in client-side code
+- For cross-actor access, always fetch the `targetSheetId` from your admin `users` table at request time

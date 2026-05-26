@@ -38,10 +38,18 @@ export interface SheetDBConfig {
   onSchemaMismatch?: SchemaMismatchBehaviour;
 }
 
+export interface ActorPermission {
+  canAccess: string[];
+  tables?: string[];
+  allowedOperations?: Array<'create' | 'read' | 'update' | 'delete'>;
+}
+
 export interface UserContext {
   userId: string;
   role: string;
   actorSheetId?: string;
+  targetRole?: string;
+  targetSheetId?: string;
 }
 
 export interface WhereClause {

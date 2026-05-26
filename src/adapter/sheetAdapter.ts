@@ -1,6 +1,6 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
-import { TableSchema, UserContext, FKResolver, SchemaMismatchBehaviour } from '../schema/types';
+import { TableSchema, UserContext, FKResolver, SchemaMismatchBehaviour, ActorPermission } from '../schema/types';
 import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
 import { SchemaMismatchError } from '../errors/SchemaMismatchError';
@@ -31,6 +31,7 @@ export interface SheetAdapterConfig {
   };
   tokens: unknown;
   onSchemaMismatch?: SchemaMismatchBehaviour;
+  permissions?: Record<string, ActorPermission>;
 }
 
 export class SheetAdapter {
@@ -39,6 +40,7 @@ export class SheetAdapter {
   private schemas: Map<string, TableSchema> = new Map();
   private context?: UserContext;
   private onSchemaMismatch?: SchemaMismatchBehaviour;
+  private permissions?: Record<string, ActorPermission>;
   /** Pending schema version check promise set by withContext() */
   private _pendingSchemaCheck?: Promise<void>;
 
@@ -48,6 +50,7 @@ export class SheetAdapter {
       ?? new SheetClient(config.credentials, config.tokens);
     this.adminSheetId = config.adminSheetId;
     this.onSchemaMismatch = config.onSchemaMismatch;
+    this.permissions = config.permissions;
   }
 
   registerSchema(schema: TableSchema): void {
@@ -69,6 +72,13 @@ export class SheetAdapter {
     }
 
     return newAdapter;
+  }
+
+  asActor(targetRole: string, targetSheetId: string): SheetAdapter {
+    if (!this.context) {
+      throw new PermissionError('Context required before calling asActor()', undefined);
+    }
+    return this.withContext({ ...this.context, targetRole, targetSheetId });
   }
 
   table(tableName: string): CRUDOperations {
@@ -300,6 +310,18 @@ export class SheetAdapter {
       return this.adminSheetId;
     }
 
+    const isCrossActor = this.context?.targetRole && this.context.targetRole !== this.context?.role;
+
+    if (isCrossActor && schema.actor === this.context?.targetRole) {
+      if (!this.context?.targetSheetId) {
+        throw new PermissionError(
+          `targetSheetId required for cross-actor access to '${schema.actor}' tables`,
+          this.context?.role
+        );
+      }
+      return this.context.targetSheetId;
+    }
+
     if (this.context?.actorSheetId) {
       return this.context.actorSheetId;
     }
@@ -308,23 +330,45 @@ export class SheetAdapter {
   }
 
   private hasPermission(schema: TableSchema): boolean {
-    if (!this.context) {
-      return false;
+    if (!this.context) return false;
+
+    if (this.context.role === 'admin') return true;
+
+    // Same actor accessing their own tables
+    if (schema.actor === this.context.role && !this.context.targetRole) return true;
+
+    // Admin tables: non-admin cannot access unless it's the users table on create
+    if (schema.actor === 'admin') return false;
+
+    // Cross-actor: check permission matrix
+    const targetRole = this.context.targetRole;
+    if (!targetRole || targetRole === this.context.role) return schema.actor === this.context.role;
+
+    if (schema.actor !== targetRole) return false;
+
+    const perm = this.permissions?.[this.context.role];
+    if (!perm) {
+      throw new PermissionError(
+        `'${this.context.role}' has no cross-actor permissions configured`,
+        this.context.role
+      );
     }
 
-    if (this.context.role === 'admin') {
-      return true;
+    if (!perm.canAccess.includes(targetRole)) {
+      throw new PermissionError(
+        `'${this.context.role}' cannot access '${targetRole}' sheets`,
+        this.context.role
+      );
     }
 
-    if (schema.actor === this.context.role) {
-      return true;
+    if (perm.tables && !perm.tables.includes(schema.name)) {
+      throw new PermissionError(
+        `Table '${schema.name}' is not allowed for '${this.context.role}' → '${targetRole}' access`,
+        this.context.role
+      );
     }
 
-    if (schema.actor === 'admin') {
-      return false;
-    }
-
-    return false;
+    return true;
   }
 
   private async sheetExists(schema: TableSchema): Promise<boolean> {

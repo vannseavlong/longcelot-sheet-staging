@@ -31,7 +31,7 @@ function mapTypeToSQL(col: ColumnDefinition): string {
   }
 }
 
-function generatePrismaModel(schema: TableSchema): string {
+export function generatePrismaModel(schema: TableSchema): string {
   const lines: string[] = [`model ${schema.name} {`];
 
   for (const [colName, col] of Object.entries(schema.columns)) {
@@ -73,7 +73,7 @@ function generatePrismaModel(schema: TableSchema): string {
   return lines.join('\n');
 }
 
-function generateSQLTable(schema: TableSchema): string {
+export function generateSQLTable(schema: TableSchema): string {
   const lines: string[] = [`CREATE TABLE ${schema.name} (`];
   const columnLines: string[] = [];
   const constraintLines: string[] = [];

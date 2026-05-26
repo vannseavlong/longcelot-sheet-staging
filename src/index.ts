@@ -14,6 +14,7 @@ export type {
   ColumnDefinition,
   SheetDBConfig,
   ActorConfig,
+  ActorPermission,
   SchemaMismatchBehaviour,
   UserContext,
   FindOptions,

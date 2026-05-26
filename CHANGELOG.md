@@ -18,6 +18,32 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.12] — 2026-05-26
+
+### Added
+
+#### Cross-Actor CRUD Operations (Phase 4)
+- **`permissions` option on `SheetAdapterConfig`** — define a permission matrix that controls which roles can access other actors' sheets and which tables they may touch. Example: `{ teacher: { canAccess: ['student'], tables: ['scores', 'attendance'] } }`.
+- **`targetRole` and `targetSheetId` on `UserContext`** — pass these alongside the caller's own context to route all CRUD operations to a different actor's sheet.
+- **`asActor(targetRole, targetSheetId)`** on `SheetAdapter` — convenience method that clones the current context with cross-actor fields set, avoiding repetitive `withContext()` calls.
+- **Cross-actor permission enforcement in `hasPermission()`** — checks the permission matrix for `canAccess` and optional `tables` restrictions. Throws `PermissionError` with a clear message for every violation scenario (no config, not in canAccess list, table not allowed, missing targetSheetId).
+- **Cross-actor sheet routing in `resolveSpreadsheetId()`** — when `targetRole` is set and differs from the caller's role, CRUD operations use `targetSheetId` instead of `actorSheetId`. Admin role bypasses all checks.
+- **`ActorPermission` type** exported from the package.
+- **18 unit tests** in `tests/unit/crossActorPermissions.test.ts` covering same-actor access, `asActor()`, cross-actor allow/deny, missing targetSheetId, admin bypass, and CRUD routing verification (findMany / create / update / delete each confirmed to hit the correct spreadsheet ID).
+
+#### Schema Export (Phase 3 — test coverage)
+- **`generatePrismaModel` and `generateSQLTable` are now exported** from `src/cli/commands/export.ts`, making them unit-testable without going through the CLI.
+- **19 unit tests** in `tests/unit/export.test.ts` covering: Prisma model generation (all DataTypes, PK `@id`, `@default(cuid())`, optional `?`, `@unique`, `@relation` for FK columns), SQL DDL generation (all DataTypes, `PRIMARY KEY`, `FOREIGN KEY`, `NOT NULL`, fallback `_id` PK).
+
+#### Developer Experience
+- **`jest.config.js` `maxWorkers: 1`** — prevents Jest worker SIGKILL on memory-constrained environments when all test suites run together.
+- **`Docs/developerGuide.md` Section 13** — new cross-actor operations guide covering permission matrix config, `withContext` + `asActor()` usage, all four CRUD operations, security rules table, and multi-sheet aggregation pattern.
+
+### Changed
+- `TODO.md` Phase 3 and Phase 4 implementation checklists fully checked off.
+
+---
+
 ## [0.1.9] — ready to publish
 
 ### Added
