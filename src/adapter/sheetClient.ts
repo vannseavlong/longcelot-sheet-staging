@@ -66,6 +66,18 @@ export class SheetClient {
     });
   }
 
+  async appendRows(spreadsheetId: string, sheetName: string, rows: string[][]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:A`,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: rows,
+      },
+    });
+  }
+
   async getAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]> {
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId,

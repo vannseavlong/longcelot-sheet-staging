@@ -3,7 +3,27 @@ import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
 
-export async function seedCommand(seedFile: string, opts?: { allActors?: boolean }) {
+export interface SeedOptions {
+  allActors?: boolean;
+  skipExisting?: boolean;
+  upsert?: boolean;
+}
+
+async function loadSeedData(seedFilePath: string): Promise<Record<string, unknown[]>> {
+  const mod = require(seedFilePath) as
+    | Record<string, unknown[]>
+    | { default: Record<string, unknown[]> | ((env: NodeJS.ProcessEnv) => Promise<Record<string, unknown[]>>) };
+
+  const exported = (mod as { default?: unknown }).default ?? mod;
+
+  if (typeof exported === 'function') {
+    return await (exported as (env: NodeJS.ProcessEnv) => Promise<Record<string, unknown[]>>)(process.env);
+  }
+
+  return exported as Record<string, unknown[]>;
+}
+
+export async function seedCommand(seedFile: string, opts?: SeedOptions) {
   console.log(chalk.blue.bold('🌱 Seeding data into Google Sheets...\n'));
 
   require('dotenv').config();
@@ -46,7 +66,7 @@ export async function seedCommand(seedFile: string, opts?: { allActors?: boolean
 
   let seedData: Record<string, unknown[]>;
   try {
-    seedData = require(seedFilePath) as Record<string, unknown[]>;
+    seedData = await loadSeedData(seedFilePath);
   } catch (err) {
     console.error(chalk.red(`❌ Failed to load seed file: ${err}`));
     process.exit(1);
@@ -92,13 +112,59 @@ export async function seedCommand(seedFile: string, opts?: { allActors?: boolean
   // Use admin context for seeding
   const adapterWithContext = adapter.withContext({ userId: 'seed-cli', role: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! });
 
+  const isSkipExisting = opts?.skipExisting ?? false;
+  const isUpsert = opts?.upsert ?? false;
+
+  async function seedTable(
+    ctx: ReturnType<typeof adapter.withContext>,
+    tableName: string,
+    records: unknown[]
+  ): Promise<{ inserted: number; skipped: number; updated: number; failed: number }> {
+    let inserted = 0;
+    let skipped = 0;
+    let updated = 0;
+    let failed = 0;
+
+    for (const record of records) {
+      try {
+        const row = record as Record<string, unknown>;
+        if (isUpsert) {
+          // Determine unique column(s) for upsert — use _id if present, else first provided key
+          const whereKey = Object.keys(row)[0];
+          const where = { [whereKey]: row[whereKey] };
+          await ctx.table(tableName).upsert({ where, data: row, skipFKValidation: true });
+          updated++;
+        } else if (isSkipExisting) {
+          // Try create; skip on unique constraint violation
+          try {
+            await ctx.table(tableName).create(row, { skipFKValidation: true });
+            inserted++;
+          } catch (err) {
+            if (err instanceof Error && err.message.includes('Unique constraint')) {
+              skipped++;
+            } else {
+              throw err;
+            }
+          }
+        } else {
+          await ctx.table(tableName).create(row, { skipFKValidation: true });
+          inserted++;
+        }
+      } catch (err) {
+        console.error(chalk.red(`  ✖ Failed: ${err}`));
+        failed++;
+      }
+    }
+
+    return { inserted, skipped, updated, failed };
+  }
+
   let totalInserted = 0;
   let totalFailed = 0;
 
-  if (opts && opts.allActors) {
+  if (opts?.allActors) {
     console.log(chalk.cyan('\nSeeding to all actor sheets (--all-actors)...'));
 
-    // Read users from admin users table
     let users: Record<string, unknown>[] = [];
     try {
       users = await adapterWithContext.table('users').findMany();
@@ -121,19 +187,14 @@ export async function seedCommand(seedFile: string, opts?: { allActors?: boolean
 
       for (const [tableName, records] of Object.entries(seedData)) {
         if (!Array.isArray(records)) continue;
-        for (const record of records) {
-          try {
-            await targetAdapter.table(tableName).create(record as Record<string, unknown>);
-            totalInsertedActors++;
-          } catch {
-            totalFailedActors++;
-          }
-        }
+        const result = await seedTable(targetAdapter, tableName, records);
+        totalInsertedActors += result.inserted + result.updated;
+        totalFailedActors += result.failed;
       }
     }
 
     console.log();
-    console.log(chalk.bold(`Seed complete (all-actors): ${totalInsertedActors} inserted, ${totalFailedActors} failed.`));
+    console.log(chalk.bold(`Seed complete (all-actors): ${totalInsertedActors} inserted/updated, ${totalFailedActors} failed.`));
     if (totalFailedActors > 0) process.exit(1);
 
     return;
@@ -146,27 +207,21 @@ export async function seedCommand(seedFile: string, opts?: { allActors?: boolean
     }
 
     console.log(chalk.cyan(`\nSeeding ${tableName} (${records.length} records)...`));
-    let inserted = 0;
-    let failed = 0;
+    const result = await seedTable(adapterWithContext, tableName, records);
 
-    for (const record of records) {
-      try {
-        await adapterWithContext.table(tableName).create(record as Record<string, unknown>);
-        inserted++;
-      } catch (err) {
-        console.error(chalk.red(`  ✖ Failed: ${err}`));
-        failed++;
-      }
-    }
-
-    const status = failed === 0 ? chalk.green('✓') : chalk.yellow('⚠');
-    console.log(`  ${status} ${inserted} inserted, ${failed} failed`);
-    totalInserted += inserted;
-    totalFailed += failed;
+    const status = result.failed === 0 ? chalk.green('✓') : chalk.yellow('⚠');
+    const parts = [];
+    if (result.inserted > 0) parts.push(`${result.inserted} inserted`);
+    if (result.updated > 0) parts.push(`${result.updated} upserted`);
+    if (result.skipped > 0) parts.push(`${result.skipped} skipped`);
+    if (result.failed > 0) parts.push(`${result.failed} failed`);
+    console.log(`  ${status} ${parts.join(', ')}`);
+    totalInserted += result.inserted + result.updated;
+    totalFailed += result.failed;
   }
 
   console.log();
-  console.log(chalk.bold(`Seed complete: ${totalInserted} inserted, ${totalFailed} failed.`));
+  console.log(chalk.bold(`Seed complete: ${totalInserted} inserted/updated, ${totalFailed} failed.`));
 
   if (totalFailed > 0) process.exit(1);
 }

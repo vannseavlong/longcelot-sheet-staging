@@ -18,6 +18,54 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.16] — 2026-06-02
+
+### Added
+
+#### Auth — Google Sign-In & Express route helpers
+- **`createLoginOAuthManager(config)`** — new factory pre-configured with `openid email profile` scopes alongside Sheets scopes. Produces an `id_token` so `verifyToken()` works for user-facing Google Sign-In. `createOAuthManager` is unchanged (Sheets-only, no `id_token`).
+- **`getAuthUrl(scopes?)`** — now accepts an optional `scopes` override on both managers.
+- **`createAuthRouter(options)`** — Express-compatible middleware that wires `GET /auth/google` and `GET /auth/callback` automatically. Signs an HS256 JWT (Node built-in `crypto`, no extra dep) and redirects to `frontendUrl?token=...`. Options: `adapter`, `jwtSecret`, `frontendUrl`, `onUser`, `registrationPolicy`, `oauthConfig`, `basePath`.
+- **`registrationPolicy`** on `createAuthRouter` — `'open'` (default, any Google user can get in) or `'login-only'` (user must already exist in your users table; `onUser` returning `null` sends a `401`). Solves the common pattern of admin/manager portals that block self-registration.
+- Exported types: `AuthRouterOptions`, `AuthRouter`, `GoogleProfile`, `RegistrationPolicy`.
+
+#### CRUD — new operations
+- **`table.upsert({ where, data })`** — insert-or-update: calls `findOne` first; updates if found, creates if not. Exported `UpsertOptions` type.
+- **`table.createMany(rows[])`** — batch insert. All rows validated individually then written in a single `values.append` API call (one round-trip regardless of row count). `SheetClient.appendRows()` added internally.
+- **`table.count({ where? })`** — returns the number of matching rows without loading full row objects.
+
+#### CLI — new flags
+- **`seed <file> --skip-existing`** — skip rows where a unique column already matches; no error on re-seed (idempotent).
+- **`seed <file> --upsert`** — update existing rows on unique conflict instead of throwing.
+- **`seed <file>` dynamic format** — seed file may now `export default async function(env: NodeJS.ProcessEnv)` returning the seed object. Plain object export is still supported.
+- **`sync --token-file <path>`** — load a pre-stored tokens JSON file instead of the interactive browser OAuth prompt; enables unattended CI/CD pipelines.
+
+#### Skills / docs
+- Added three new skill files: `skills/permissions/SKILL.md`, `skills/migrations/SKILL.md`, `skills/auth-router/SKILL.md`.
+- Updated all five existing skills to v0.1.15 with accurate API descriptions.
+- Updated `_artifacts/skill_tree.yaml`, `domain_map.yaml`, `skill_spec.md`.
+- Updated `README.md`, `Docs/developerGuide.md` with new API sections and examples.
+- Added `DEVELOPER_REPLY.md` — response to bEasy developer feedback.
+
+### Changed
+- `OAuthManager` constructor now accepts a `defaultScopes` parameter; `getAuthUrl` falls back to instance default scopes if none passed.
+- Seed command now returns per-table stats (inserted / upserted / skipped / failed) instead of a single inserted/failed counter.
+- `seed --all-actors` output label updated to "inserted/updated" to reflect upsert paths.
+
+---
+
+## [0.1.15] — 2026-05-26
+
+> Internal release — version bump only, no functional changes over 0.1.14.
+
+---
+
+## [0.1.14] — 2026-05-26
+
+> Internal release — version bump only, no functional changes over 0.1.13.
+
+---
+
 ## [0.1.13] — 2026-05-26
 
 ### Added

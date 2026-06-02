@@ -969,4 +969,77 @@ MySQL/PostgreSQL + Prisma/Sequelize (production)
 
 ---
 
-_Last updated: 2026-05-26_
+_Last updated: 2026-06-02_
+
+---
+
+## Phase 6: Developer-Reported Improvements (bEasy feedback)
+
+Discovered while building the bEasy admin portal. Severity ratings from developer feedback.
+
+### 6.1 OAuth — Identity Scopes & User Login (Critical)
+
+**Problem**: `createOAuthManager` default scopes (`spreadsheets`, `drive.file`) never return an `id_token`, so `verifyToken()` always throws `"The verifyIdToken method requires an ID Token"`.
+
+- [x] `getAuthUrl()` already accepts optional `scopes[]` — document this clearly
+- [x] Add `createLoginOAuthManager({ clientId, clientSecret, redirectUri })` — pre-configured with `openid email profile` + Sheets scopes, ready for Google Sign-In
+
+### 6.2 Auth Route Helpers (High)
+
+**Problem**: No Express route helper for the common `GET /auth/google` → callback → JWT pattern. Every project reimplements it.
+
+- [x] Export `createAuthRouter(options)` that wires `GET /auth/google` and `GET /auth/callback`
+- [x] Accept `onUser` callback so developer controls user lookup/shape
+- [x] `registrationPolicy` option: `'login-only'` (admin/manager) vs `'open'` (user can sign up)
+- [ ] Add NestJS guard / middleware variant (future)
+
+### 6.3 Seed Duplicate Handling (High)
+
+**Problem**: Running `sheet-db seed` twice throws unique constraint violations. No upsert or skip behaviour.
+
+- [x] `--skip-existing` flag: skip rows where a unique column already matches
+- [x] `--upsert` flag: update existing row on unique conflict instead of throwing
+- [x] Dynamic seed file — accept `export default async function(env)` in addition to plain object
+
+### 6.4 `upsert()` CRUD method (Medium)
+
+**Problem**: No way to insert-or-update without manual `findOne()` + branch logic.
+
+- [x] `table.upsert({ where, data })` — insert if not found, update if exists
+- [x] Export `UpsertOptions` type
+
+### 6.5 `createMany()` Bulk Insert (Medium)
+
+**Problem**: Seeding N rows = N API calls (300–700 ms each). No batch insert.
+
+- [x] `table.createMany(rows[])` — batch into a single `values.append` call
+- [x] Returns array of created records with auto-generated `_id`s
+
+### 6.6 `count()` Aggregate (Low)
+
+**Problem**: Counting rows requires loading entire sheet with `findMany()` then checking `.length`.
+
+- [x] `table.count({ where? })` — returns number of matching rows efficiently
+
+### 6.7 Dynamic Seed File Format (Low)
+
+**Problem**: Seed file is a static `Record<string, unknown[]>`. No clean way to pass env vars or CLI args.
+
+- [x] Accept `export default async function(env: NodeJS.ProcessEnv): Promise<Record<string, unknown[]>>` as seed file export
+- [x] Fall back to plain object export for backward compatibility
+
+### 6.8 CI-Friendly Sync (Medium)
+
+**Problem**: `sheet-db sync` requires interactive OAuth browser flow — blocks CI/CD pipelines and Docker builds.
+
+- [x] `--token-file <path>` flag: inject pre-stored tokens file (skips interactive prompt)
+- [ ] Document service account alternative (future)
+
+### 6.9 Role-Differentiated Auth (High)
+
+**Problem**: No built-in way to restrict certain roles to login-only while allowing others to self-register.
+
+- [x] `registrationPolicy` in `createAuthRouter`:
+  - `'open'` — any authenticated user can trigger user creation (default)
+  - `'login-only'` — user must already exist in the sheet; throws if not found
+  - `'invite-only'` — user must exist with `status: 'invited'` (future)

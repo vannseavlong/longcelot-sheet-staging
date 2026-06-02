@@ -6,7 +6,8 @@ export { SchemaMismatchError } from './errors/SchemaMismatchError';
 export { defineTable } from './schema/defineTable';
 export { string, number, boolean, date, json, ColumnBuilder } from './schema/columnBuilder';
 export { createSheetAdapter, SheetAdapter } from './adapter/sheetAdapter';
-export { createOAuthManager, OAuthManager } from './auth/oauth';
+export { createOAuthManager, createLoginOAuthManager, OAuthManager } from './auth/oauth';
+export { createAuthRouter } from './auth/router';
 export { hashPassword, comparePassword, validatePasswordStrength } from './auth/password';
 
 export type {
@@ -19,10 +20,18 @@ export type {
   UserContext,
   FindOptions,
   UpdateOptions,
+  UpsertOptions,
   DeleteOptions,
+  CreateOptions,
 } from './schema/types';
 
 export { computeSchemaHash } from './utils/schemaHash';
 
 export type { SheetAdapterConfig } from './adapter/sheetAdapter';
 export type { OAuthConfig } from './auth/oauth';
+export type {
+  AuthRouterOptions,
+  AuthRouter,
+  GoogleProfile,
+  RegistrationPolicy,
+} from './auth/router';

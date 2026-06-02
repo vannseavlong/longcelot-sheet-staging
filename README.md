@@ -21,14 +21,15 @@ Instead of running MySQL, PostgreSQL, or MongoDB for staging:
 
 - 📝 **Schema-First Design**: Define tables using a TypeScript DSL
 - 🔐 **Actor-Based Isolation**: Each user role owns their own sheet
-- 🔄 **Auto CRUD**: Automatic create, read, update, delete operations
-- 🎭 **Role-Based Permissions**: Built-in security boundaries
-- 🔑 **Authentication**: Google OAuth + bcrypt password hashing
-- 🛠️ **CLI Tools**: Initialize, generate, sync, validate, export, mock-users
+- 🔄 **Auto CRUD**: `create`, `createMany`, `findMany`, `findOne`, `count`, `update`, `upsert`, `delete`
+- 🎭 **Role-Based Permissions**: Built-in security boundaries + cross-actor access matrix
+- 🔑 **Authentication**: `createAuthRouter` wires Google Sign-In + JWT in one call; role-based registration policy
+- 🛠️ **CLI Tools**: Initialize, generate, sync, validate, seed, export, mock-users
 - 📊 **Type-Safe**: Full TypeScript support
 - 💰 **Cost-Free**: No infrastructure costs for staging
 - 🔒 **Schema Integrity**: Hash-based version tracking detects stale user sheets at runtime
 - ♻️ **Safe Migrations**: `sync --all-users` pushes schema changes to every user sheet with rate-limit backoff
+- 🚀 **CI-Friendly**: `sync --token-file` skips interactive OAuth prompt in CI/CD pipelines
 
 ## 🚀 Quick Start
 
@@ -204,10 +205,18 @@ Define tables using a fluent builder API:
 ### CRUD Operations
 
 ```typescript
-const table = adapter.table('bookings');
+const table = ctx.table('bookings');
 
-await table.create({ ... });
+// Create
+await table.create({ service: 'Consultation', price: 100 });
 
+// Bulk create — single API call
+await table.createMany([
+  { service: 'Consultation', price: 100 },
+  { service: 'Follow-up', price: 50 },
+]);
+
+// Read
 await table.findMany({
   where: { status: 'pending' },
   orderBy: 'date',
@@ -218,11 +227,22 @@ await table.findMany({
 
 await table.findOne({ where: { booking_id: 'bk_001' } });
 
+// Count (without loading all rows)
+const total = await table.count({ where: { status: 'pending' } });
+
+// Update
 await table.update({
   where: { booking_id: 'bk_001' },
   data: { status: 'confirmed' },
 });
 
+// Upsert (insert if not found, update if exists)
+await table.upsert({
+  where: { email: 'admin@example.com' },
+  data: { role: 'admin', status: 'active' },
+});
+
+// Delete
 await table.delete({ where: { booking_id: 'bk_001' } });
 ```
 
@@ -329,6 +349,96 @@ app.get('/bookings', async (req, res) => {
 });
 ```
 
+### Google Sign-In & Auth Routes
+
+For user-facing Google Sign-In, use `createLoginOAuthManager` (pre-configured with `openid email profile` scopes) and `createAuthRouter` to wire up the two required Express routes automatically.
+
+#### Login-only roles (admin / manager)
+
+```typescript
+import express from 'express';
+import { createSheetAdapter, createAuthRouter } from 'longcelot-sheet-db';
+
+const adapter = createSheetAdapter({ ... });
+
+const adminAuth = createAuthRouter({
+  adapter,
+  jwtSecret: process.env.JWT_SECRET!,
+  frontendUrl: process.env.FRONTEND_URL!,
+  registrationPolicy: 'login-only', // user must already exist — no self-signup
+  async onUser(profile, adapter) {
+    const ctx = adapter.withContext({
+      userId: 'auth',
+      role: 'admin',
+      actorSheetId: process.env.ADMIN_SHEET_ID!,
+    });
+    return await ctx.table('users').findOne({ where: { email: profile.email } });
+  },
+});
+
+app.use(adminAuth.handler);
+// Exposes: GET /auth/google  and  GET /auth/callback
+```
+
+#### Open registration (regular users)
+
+```typescript
+const userAuth = createAuthRouter({
+  adapter,
+  jwtSecret: process.env.JWT_SECRET!,
+  frontendUrl: process.env.FRONTEND_URL!,
+  registrationPolicy: 'open', // allows self-signup (default)
+  basePath: '/user',           // → /user/auth/google, /user/auth/callback
+  async onUser(profile, adapter) {
+    const ctx = adapter.withContext({
+      userId: 'auth',
+      role: 'admin',
+      actorSheetId: process.env.ADMIN_SHEET_ID!,
+    });
+    let user = await ctx.table('users').findOne({ where: { email: profile.email } });
+    if (!user) {
+      // Auto-create the user and their sheet on first login
+      const sheetId = await adapter.createUserSheet(profile.sub, 'user', profile.email);
+      user = await ctx.table('users').findOne({ where: { email: profile.email } });
+    }
+    return user;
+  },
+});
+
+app.use(userAuth.handler);
+```
+
+**Registration policy summary:**
+
+| Policy | Behaviour |
+|--------|-----------|
+| `'open'` | Any Google-authenticated user can access; `onUser` returning `null` lets them in with bare profile |
+| `'login-only'` | `onUser` must return a non-null user; returns `401` if user is not found |
+
+#### Using `createLoginOAuthManager` directly
+
+If you prefer to wire up routes manually:
+
+```typescript
+import { createLoginOAuthManager } from 'longcelot-sheet-db';
+
+const oauth = createLoginOAuthManager({
+  clientId: process.env.GOOGLE_CLIENT_ID!,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+  redirectUri: process.env.GOOGLE_REDIRECT_URI!,
+});
+
+// Step 1: redirect to Google
+app.get('/auth/google', (req, res) => res.redirect(oauth.getAuthUrl()));
+
+// Step 2: handle callback
+app.get('/auth/callback', async (req, res) => {
+  const tokens = await oauth.getTokens(req.query.code as string);
+  const profile = await oauth.verifyToken((tokens as Record<string, string>).id_token);
+  // ... lookup user, issue JWT
+});
+```
+
 ### Why do we need `user_id` if we have `sheet_id`?
 
 The `sheet_id` dictates the **physical storage location** on Google Drive — it exists only in the sheet-db world. When you eventually graduate from Google Sheets to a production SQL database (MySQL, PostgreSQL), the `sheet_id` goes away entirely.
@@ -398,6 +508,14 @@ npx sheet-db sync --all-users           # apply
 npx sheet-db sync --all-users --dry-run # preview only
 ```
 
+**`--token-file <path>`** — CI/CD-friendly: load a pre-stored tokens JSON file instead of triggering the interactive browser OAuth prompt. Inject the file from a CI secret:
+
+```bash
+# In GitHub Actions:
+echo "$SHEET_DB_TOKENS" > /tmp/tokens.json
+npx sheet-db sync --token-file /tmp/tokens.json
+```
+
 ### Validate Schemas
 
 ```bash
@@ -416,13 +534,41 @@ Checks for:
 ### Seed Data
 
 ```bash
-npx sheet-db seed
-# pnpm dlx sheet-db seed
-# yarn dlx sheet-db seed
-# bunx sheet-db seed
+npx sheet-db seed <seed-file>
+# pnpm dlx sheet-db seed seeds/admin.ts
 ```
 
 Load initial or test data into your sheets.
+
+**Seed file formats** — both are supported:
+
+```typescript
+// Static export (simple)
+export default {
+  users: [
+    { email: 'admin@example.com', role: 'admin', status: 'active' },
+  ],
+}
+
+// Dynamic export (receives process.env — great for CI or per-environment seeds)
+export default async function(env: NodeJS.ProcessEnv) {
+  return {
+    users: [
+      { email: env.SUPER_ADMIN_EMAIL, role: 'admin', status: 'active' },
+    ],
+  }
+}
+```
+
+**Flags:**
+- `--skip-existing` — skip rows where a unique column already matches (no error on re-seed)
+- `--upsert` — update existing rows on unique conflict instead of throwing
+- `--all-actors` — distribute seed data to all registered user sheets
+
+```bash
+npx sheet-db seed seeds/admin.ts --skip-existing  # idempotent re-seed
+npx sheet-db seed seeds/admin.ts --upsert          # update on conflict
+```
 
 ### Doctor
 

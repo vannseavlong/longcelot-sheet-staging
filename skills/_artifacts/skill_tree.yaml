@@ -1,18 +1,22 @@
 package: longcelot-sheet-db
-version: "0.1.5"
+version: "0.1.15"
 
 skill_tree:
   - name: core
     path: skills/core/SKILL.md
     description: >
       Package setup, SheetAdapter creation, schema registration, environment
-      variables, and integration with existing backends.
+      variables, onSchemaMismatch config, permissions matrix, asActor() helper,
+      and integration with existing backends.
     covers:
-      - createSheetAdapter
+      - createSheetAdapter / SheetAdapterConfig
       - registerSchema / registerSchemas
       - withContext (overview)
+      - asActor()
       - createUserSheet
       - syncSchema
+      - onSchemaMismatch config
+      - permissions config (overview)
       - Environment variables
     depends_on: []
 
@@ -20,11 +24,14 @@ skill_tree:
     path: skills/schema/SKILL.md
     description: >
       Defining tables with defineTable() and fluent column builders.
-      All column types and modifiers.
+      All column types and modifiers — including primary() PK auto-generation
+      and ref() FK runtime enforcement.
     covers:
       - defineTable
       - string / number / boolean / date / json builders
       - All column modifiers
+      - primary() — auto-generation, PK readonly enforcement
+      - ref() — FK validation at runtime, skipFKValidation
       - Auto-generated columns
       - timestamps / softDelete options
       - actor field
@@ -34,15 +41,19 @@ skill_tree:
   - name: crud
     path: skills/crud/SKILL.md
     description: >
-      Data access operations: create, findMany, findOne, update, delete.
-      Actor isolation, filtering, pagination, and serialization.
+      Data access operations: create, createMany, findMany, findOne, count,
+      update, upsert, delete. Actor isolation, filtering, pagination,
+      serialization, and performance characteristics.
     covers:
       - withContext / UserContext
       - table()
-      - create
+      - create / CreateOptions
+      - createMany (bulk insert)
       - findMany / FindOptions
       - findOne
+      - count
       - update / UpdateOptions
+      - upsert / UpsertOptions
       - delete / DeleteOptions
       - Soft delete behavior
       - Serialization rules
@@ -54,27 +65,96 @@ skill_tree:
   - name: auth
     path: skills/auth/SKILL.md
     description: >
-      Google OAuth2 flow (OAuthManager) and bcrypt password utilities.
+      Google OAuth2 flow — two managers: createOAuthManager (Sheets only) and
+      createLoginOAuthManager (includes openid for user identity). bcrypt
+      password utilities. For built-in Express routes see auth-router skill.
     covers:
-      - createOAuthManager / OAuthConfig
+      - createOAuthManager vs createLoginOAuthManager
+      - OAuthConfig
       - getAuthUrl / getTokens / refreshTokens / verifyToken
+      - When verifyToken() works (requires openid scope)
       - hashPassword / comparePassword / validatePasswordStrength
     depends_on:
       - core
 
+  - name: auth-router
+    path: skills/auth-router/SKILL.md
+    description: >
+      createAuthRouter — wires GET /auth/google and GET /auth/callback as
+      Express middleware. Supports login-only and open-registration policies,
+      multiple role endpoints, and HS256 JWT issuance.
+    covers:
+      - createAuthRouter / AuthRouterOptions
+      - registrationPolicy ('open' | 'login-only')
+      - GoogleProfile type
+      - onUser callback
+      - Multiple auth endpoints for different roles
+      - JWT format and verification
+      - createLoginOAuthManager for manual wiring
+    depends_on:
+      - core
+      - auth
+
+  - name: permissions
+    path: skills/permissions/SKILL.md
+    description: >
+      Cross-actor CRUD: configure a permission matrix, use targetRole +
+      targetSheetId in withContext(), use asActor() shorthand, and aggregate
+      data across multiple user sheets.
+    covers:
+      - ActorPermission type
+      - permissions map in SheetAdapterConfig
+      - targetRole / targetSheetId in UserContext
+      - asActor() shorthand
+      - Full cross-actor CRUD (create, findMany, update, delete)
+      - Admin bypass behavior
+      - Fetching targetSheetId from admin users table
+      - Aggregating data across multiple sheets
+      - Permission enforcement error table
+    depends_on:
+      - core
+      - crud
+
+  - name: migrations
+    path: skills/migrations/SKILL.md
+    description: >
+      Schema versioning (schema_versions table, onSchemaMismatch, computeSchemaHash),
+      sync --all-users bulk push, sheet-db export to Prisma/SQL, and
+      sheet-db migrate data migration script generation.
+    covers:
+      - schema_versions built-in table
+      - computeSchemaHash utility
+      - onSchemaMismatch ('warn' | 'error' | 'auto-sync')
+      - SchemaMismatchError
+      - sync --all-users / --dry-run
+      - sheet-db export --prisma / --sql
+      - sheet-db migrate script generation
+      - Full migration path to production DB
+      - What persists after migration (user_id vs actor_sheet_id)
+    depends_on:
+      - core
+      - schema
+      - cli
+
   - name: cli
     path: skills/cli/SKILL.md
     description: >
-      The sheet-db CLI: init, generate, sync, validate, seed, doctor, status.
+      The sheet-db CLI: init, generate, sync (with --all-users, --dry-run,
+      --token-file), validate, seed (with --skip-existing, --upsert, dynamic
+      format), mock-users, doctor, status, export, migrate.
     covers:
-      - sheet-db init
+      - sheet-db init / --integrate
       - sheet-db generate
-      - sheet-db sync
+      - sheet-db sync / --all-users / --dry-run / --token-file
       - sheet-db validate
-      - sheet-db seed
+      - sheet-db seed / --skip-existing / --upsert / --all-actors
+      - Dynamic seed file format (async function)
+      - sheet-db mock-users
       - sheet-db doctor
       - sheet-db status
-      - sheet-db.config.ts
+      - sheet-db export
+      - sheet-db migrate
+      - sheet-db.config.ts (ActorConfig shape)
       - .sheet-db-tokens.json
     depends_on:
       - core

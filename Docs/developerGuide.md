@@ -367,7 +367,121 @@ for (const student of myStudents) {
 
 ---
 
-## 14. Best Practices
+---
+
+## 14. Auth Routes & Role-Differentiated Login
+
+### 14.1 Why two OAuth managers?
+
+| Function | Scopes | Purpose |
+|---|---|---|
+| `createOAuthManager` | `spreadsheets`, `drive.file` | Backend-to-Sheets only — no `id_token` |
+| `createLoginOAuthManager` | + `openid email profile` | User-facing Sign-In — produces `id_token` for `verifyToken()` |
+
+`verifyToken()` only works when `openid` scope was requested. Always use `createLoginOAuthManager` for user-facing Google Sign-In.
+
+### 14.2 createAuthRouter — wires up two Express routes
+
+```typescript
+import express from 'express';
+import { createSheetAdapter, createAuthRouter } from 'longcelot-sheet-db';
+
+const app = express();
+const adapter = createSheetAdapter({ ... });
+
+const auth = createAuthRouter({
+  adapter,
+  jwtSecret: process.env.JWT_SECRET!,
+  frontendUrl: process.env.FRONTEND_URL!,
+  registrationPolicy: 'login-only', // or 'open'
+  async onUser(profile, adapter) {
+    const ctx = adapter.withContext({
+      userId: 'auth',
+      role: 'admin',
+      actorSheetId: process.env.ADMIN_SHEET_ID!,
+    });
+    return await ctx.table('users').findOne({ where: { email: profile.email } });
+  },
+});
+
+app.use(auth.handler);
+// Routes: GET /auth/google  →  GET /auth/callback  →  redirect to frontendUrl?token=...
+```
+
+### 14.3 Registration Policy
+
+| Policy | Who can log in |
+|---|---|
+| `'login-only'` | Only users already in the `users` table. Returns `401` if `onUser` returns `null`. Best for admin/manager portals. |
+| `'open'` (default) | Any Google-authenticated user; use `onUser` to create the user on first sign-in. Best for public-facing apps. |
+
+**Pattern: login-only role (admin/manager portal)**
+
+```typescript
+registrationPolicy: 'login-only',
+async onUser(profile, adapter) {
+  // User must already exist — if not found, router returns 401 automatically
+  return await ctx.table('admins').findOne({ where: { email: profile.email } });
+}
+```
+
+**Pattern: open role (end users can self-register)**
+
+```typescript
+registrationPolicy: 'open',
+async onUser(profile, adapter) {
+  let user = await ctx.table('users').findOne({ where: { email: profile.email } });
+  if (!user) {
+    const sheetId = await adapter.createUserSheet(profile.sub, 'user', profile.email);
+    user = await ctx.table('users').findOne({ where: { email: profile.email } });
+  }
+  return user;
+}
+```
+
+### 14.4 Multiple auth endpoints (one per role)
+
+```typescript
+// Admin portal — login-only at /admin/auth/google
+app.use(createAuthRouter({ ..., registrationPolicy: 'login-only', basePath: '/admin' }).handler);
+
+// User portal — open registration at /auth/google
+app.use(createAuthRouter({ ..., registrationPolicy: 'open', basePath: '' }).handler);
+```
+
+---
+
+## 15. Bulk Operations & Aggregates
+
+### 15.1 createMany — batch insert
+
+```typescript
+// All rows inserted in a single Google Sheets API call
+await ctx.table('products').createMany([
+  { name: 'Widget A', price: 9.99 },
+  { name: 'Widget B', price: 19.99 },
+]);
+```
+
+### 15.2 upsert — insert-or-update
+
+```typescript
+await ctx.table('users').upsert({
+  where: { email: 'admin@example.com' },
+  data: { role: 'admin', status: 'active' },
+});
+```
+
+### 15.3 count — without loading all rows
+
+```typescript
+const pending = await ctx.table('orders').count({ where: { status: 'pending' } });
+const total = await ctx.table('orders').count(); // no filter
+```
+
+---
+
+## 16. Best Practices
 
 - Keep schemas simple
 - Use actors consistently
@@ -376,3 +490,6 @@ for (const student of myStudents) {
 - Design with future migration in mind (use `user_id` as primary identity)
 - Never expose OAuth tokens in client-side code
 - For cross-actor access, always fetch the `targetSheetId` from your admin `users` table at request time
+- Use `createLoginOAuthManager` for user-facing Sign-In; `createOAuthManager` for backend-only Sheets access
+- Use `--skip-existing` for idempotent seed scripts (safe to run multiple times)
+- Use `--token-file` in CI to avoid interactive OAuth prompts

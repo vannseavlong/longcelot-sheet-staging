@@ -6,6 +6,7 @@ import {
   UpdateOptions,
   DeleteOptions,
   CreateOptions,
+  UpsertOptions,
   FKResolver,
 } from '../schema/types';
 import { ValidationError } from '../errors/ValidationError';
@@ -139,6 +140,83 @@ export class CRUDOperations {
     }
 
     return updated;
+  }
+
+  async upsert(options: UpsertOptions): Promise<Record<string, unknown>> {
+    if (this.preFlight) await this.preFlight;
+    const existing = await this.findOne({ where: options.where });
+    if (existing) {
+      await this.update({
+        where: options.where,
+        data: options.data,
+        skipFKValidation: options.skipFKValidation,
+      });
+      return { ...existing, ...options.data };
+    }
+    return await this.create({ ...options.where, ...options.data }, { skipFKValidation: options.skipFKValidation });
+  }
+
+  async createMany(records: Record<string, unknown>[], options: CreateOptions = {}): Promise<Record<string, unknown>[]> {
+    if (this.preFlight) await this.preFlight;
+    if (records.length === 0) return [];
+
+    const results: Record<string, unknown>[] = [];
+    const headers = await this.getHeaders();
+
+    for (const data of records) {
+      let incoming = { ...data };
+
+      if (this.schema.pkColumn) {
+        const pkDef = this.schema.columns[this.schema.pkColumn];
+        if (pkDef?.type === 'string' && (incoming[this.schema.pkColumn] === undefined || incoming[this.schema.pkColumn] === null)) {
+          incoming[this.schema.pkColumn] = nanoid();
+        }
+      }
+
+      const dataWithId = { _id: nanoid(), ...incoming };
+      const validated = this.validateAndApplyDefaults(dataWithId, 'create');
+
+      if (!options.skipFKValidation) {
+        await this.validateForeignKeys(validated);
+      }
+
+      await this.checkUniqueness(validated, null);
+
+      if (this.schema.timestamps) {
+        const now = new Date().toISOString();
+        validated._created_at = now;
+        validated._updated_at = now;
+      }
+
+      results.push(validated);
+    }
+
+    // Batch all rows into a single append call
+    const rows = results.map((validated) =>
+      headers.map((header) => this.serializeValue(validated[header]))
+    );
+
+    await this.client.appendRows(this.spreadsheetId, this.schema.name, rows);
+
+    return results;
+  }
+
+  async count(options: Pick<FindOptions, 'where'> = {}): Promise<number> {
+    if (this.preFlight) await this.preFlight;
+    const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
+    if (rows.length === 0) return 0;
+
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+
+    if (!options.where) return dataRows.length;
+
+    let count = 0;
+    for (const row of dataRows) {
+      const item = this.deserializeRow(headers, row);
+      if (this.matchesWhere(item, options.where)) count++;
+    }
+    return count;
   }
 
   async delete(options: DeleteOptions): Promise<number> {

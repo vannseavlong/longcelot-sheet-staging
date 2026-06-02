@@ -1,28 +1,41 @@
 ---
 name: auth
-description: Handle authentication with longcelot-sheet-db. Use when implementing Google OAuth2 login flow, exchanging authorization codes for tokens, refreshing expired tokens, verifying Google ID tokens, hashing or comparing passwords with bcrypt, or validating password strength.
+description: Handle authentication with longcelot-sheet-db. Use when implementing Google OAuth2 for backend Sheets access, exchanging authorization codes for tokens, refreshing expired tokens, verifying Google ID tokens for user identity, hashing or comparing passwords with bcrypt, or validating password strength. For user-facing Google Sign-In with built-in Express routes, see skills/auth-router/SKILL.md.
 license: MIT
 metadata:
   package: longcelot-sheet-db
-  version: "0.1.5"
+  version: "0.1.15"
 ---
 
 # longcelot-sheet-db — Authentication
 
-The package provides two authentication utilities: **OAuthManager** for Google OAuth2 (required for Sheets API access) and **password utilities** for bcrypt-based password hashing.
+The package provides two layers of authentication:
+1. **OAuthManager** — Google OAuth2 (required for Sheets API access)
+2. **Password utilities** — bcrypt-based hashing for username/password flows
 
-## Google OAuth2 — OAuthManager
+---
 
-### Why OAuth is required
+## Two OAuth Managers — Choose the Right One
 
-Google Sheets API requires OAuth2 for all read/write operations. This is a hard requirement — there is no way to bypass it. OAuth is used strictly for **backend-to-Google-Sheets** communication. Your app's own authentication (JWT, sessions, etc.) is separate and unaffected.
+| Function | Scopes included | Produces `id_token`? | Use for |
+|---|---|---|---|
+| `createOAuthManager` | `spreadsheets`, `drive.file` | ❌ No | Backend-to-Sheets only |
+| `createLoginOAuthManager` | + `openid email profile` | ✅ Yes | User-facing Google Sign-In |
 
-### Creating the OAuthManager
+**Critical**: `verifyToken()` requires an `id_token`. It only works when `openid` scope was requested. Always use `createLoginOAuthManager` when you need to identify the user.
 
 ```typescript
-import { createOAuthManager } from 'longcelot-sheet-db';
+import { createOAuthManager, createLoginOAuthManager } from 'longcelot-sheet-db';
 
-const oauth = createOAuthManager({
+// Backend-to-Sheets only (no id_token, verifyToken will throw)
+const sheetsOAuth = createOAuthManager({
+  clientId: process.env.GOOGLE_CLIENT_ID!,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+  redirectUri: process.env.GOOGLE_REDIRECT_URI!,
+});
+
+// User-facing Sign-In (includes openid, verifyToken works)
+const loginOAuth = createLoginOAuthManager({
   clientId: process.env.GOOGLE_CLIENT_ID!,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
   redirectUri: process.env.GOOGLE_REDIRECT_URI!,
@@ -39,51 +52,55 @@ interface OAuthConfig {
 }
 ```
 
-### Complete OAuth2 Flow
+---
 
-**Step 1 — Generate authorization URL and redirect user:**
+## Complete OAuth2 Flow (manual wiring)
+
+**Step 1 — Generate auth URL and redirect user:**
 
 ```typescript
-const authUrl = oauth.getAuthUrl();
-// Redirect user to authUrl in their browser
+const authUrl = loginOAuth.getAuthUrl();
+// Optional: pass custom scopes
+const customUrl = loginOAuth.getAuthUrl(['openid', 'email', 'https://www.googleapis.com/auth/spreadsheets']);
 res.redirect(authUrl);
 ```
 
-**Step 2 — Handle the callback and exchange code for tokens:**
+**Step 2 — Handle callback, exchange code, verify identity:**
 
 ```typescript
-// In your redirect URI handler (e.g., GET /auth/callback)
 app.get('/auth/callback', async (req, res) => {
-  const { code } = req.query;
-  const tokens = await oauth.getTokens(code as string);
+  const tokens = await loginOAuth.getTokens(req.query.code as string);
   // tokens contains: access_token, refresh_token, id_token, expiry_date
 
-  // Verify the user's identity
-  const payload = await oauth.verifyToken(tokens.id_token!);
-  // payload.email, payload.name, payload.sub (Google user ID)
-
-  // Store tokens securely (e.g., encrypted in DB or session)
-  // Use tokens when creating the SheetAdapter
+  const profile = await loginOAuth.verifyToken(
+    (tokens as Record<string, string>).id_token
+  );
+  // profile.email, profile.name, profile.sub (Google user ID)
+  // profile.email_verified — always verify this is true before trusting the email
 });
 ```
 
 **Step 3 — Refresh expired tokens:**
 
 ```typescript
-const refreshedTokens = await oauth.refreshTokens(storedRefreshToken);
-// Use refreshedTokens.access_token for the next request
+const refreshed = await oauth.refreshTokens(storedRefreshToken);
+// Use refreshed.access_token for the next request
 ```
 
-### OAuthManager methods
+---
+
+## OAuthManager methods
 
 | Method | Signature | Description |
-|--|--|--|
-| `getAuthUrl()` | `() => string` | Returns Google authorization URL |
-| `getTokens(code)` | `(code: string) => Promise<Credentials>` | Exchanges auth code for tokens |
-| `refreshTokens(refreshToken)` | `(token: string) => Promise<Credentials>` | Refreshes an expired access token |
-| `verifyToken(idToken)` | `(token: string) => Promise<TokenPayload>` | Verifies and decodes a Google ID token |
+|---|---|---|
+| `getAuthUrl(scopes?)` | `(scopes?: string[]) => string` | Returns Google authorization URL |
+| `getTokens(code)` | `(code: string) => Promise<unknown>` | Exchanges auth code for tokens |
+| `refreshTokens(refreshToken)` | `(token: string) => Promise<unknown>` | Refreshes an expired access token |
+| `verifyToken(idToken)` | `(token: string) => Promise<unknown>` | Verifies and decodes a Google ID token — requires `openid` scope |
 
-### Passing Tokens to the Adapter
+---
+
+## Passing Tokens to the Adapter
 
 ```typescript
 import { createSheetAdapter } from 'longcelot-sheet-db';
@@ -91,13 +108,15 @@ import { createSheetAdapter } from 'longcelot-sheet-db';
 const adapter = createSheetAdapter({
   adminSheetId: process.env.ADMIN_SHEET_ID!,
   credentials: { clientId, clientSecret, redirectUri },
-  tokens: userTokens, // Credentials object from getTokens() or refreshTokens()
+  tokens: userTokens, // token object from getTokens() or refreshTokens()
 });
 ```
 
+---
+
 ## Password Utilities
 
-For apps that need username/password authentication alongside or instead of Google OAuth:
+For apps using username/password authentication alongside or instead of Google OAuth:
 
 ```typescript
 import {
@@ -112,14 +131,14 @@ import {
 ```typescript
 const hash = await hashPassword('SecurePass123!');
 // Uses bcrypt with 10 salt rounds
-// Store hash in your credentials table, never the plain text password
+// Store hash in your credentials table — never the plain text
 ```
 
 ### comparePassword()
 
 ```typescript
 const isValid = await comparePassword('SecurePass123!', storedHash);
-// Returns true if the password matches
+// Returns true if the password matches the hash
 ```
 
 ### validatePasswordStrength()
@@ -133,10 +152,13 @@ const { valid } = validatePasswordStrength('SecurePass123!');
 // valid: true
 ```
 
+---
+
 ## Common Mistakes
 
-- **Not storing the `refresh_token`** — Google only returns `refresh_token` on the first authorization. Store it persistently; losing it requires the user to re-authorize.
-- **Creating the adapter with expired `access_token`** — Access tokens expire after 1 hour. Always call `oauth.refreshTokens()` before constructing the adapter if the stored token is expired (`tokens.expiry_date < Date.now()`).
-- **Using `verifyToken()` for access control** — `verifyToken()` confirms the token's cryptographic validity and returns the user's Google profile, but your app must still check whether the user exists in your `users` table.
-- **Storing plaintext passwords** — Always use `hashPassword()` before persisting credentials. Never store the raw password.
-- **Calling `hashPassword()` synchronously** — It is async (bcrypt); always `await` it.
+- **Using `createOAuthManager` for user login** — It does not request `openid` scope so Google never returns an `id_token`. Calling `verifyToken()` on its tokens always throws `"The verifyIdToken method requires an ID Token"`. Use `createLoginOAuthManager` instead.
+- **Not storing the `refresh_token`** — Google only returns `refresh_token` on the first authorization. Store it persistently; losing it requires the user to re-authorize from scratch.
+- **Creating the adapter with an expired `access_token`** — Access tokens expire after 1 hour. Check `tokens.expiry_date < Date.now()` before constructing the adapter and refresh first if needed.
+- **Not verifying `email_verified`** — `verifyToken()` returns the raw Google profile. Always check `profile.email_verified === true` before using the email as a trusted identity.
+- **Storing plaintext passwords** — Always `await hashPassword()` before persisting. Never store the raw password string.
+- **For built-in Express auth routes** — See `skills/auth-router/SKILL.md` for `createAuthRouter` which wires `/auth/google` and `/auth/callback` routes automatically.

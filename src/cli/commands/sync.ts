@@ -127,7 +127,7 @@ function printStatusTable(
   console.log();
 }
 
-export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolean }) {
+export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolean; tokenFile?: string }) {
   console.log(chalk.blue.bold('🔄 Syncing schemas to Google Sheets...\n'));
 
   require('dotenv').config();
@@ -177,7 +177,17 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
 
   let tokens: unknown;
   try {
-    tokens = await resolveTokens(oauth);
+    if (options.tokenFile) {
+      const tokenFilePath = path.resolve(process.cwd(), options.tokenFile);
+      if (!fs.existsSync(tokenFilePath)) {
+        console.error(chalk.red(`❌ Token file not found: ${tokenFilePath}`));
+        process.exit(1);
+      }
+      tokens = JSON.parse(fs.readFileSync(tokenFilePath, 'utf-8'));
+      console.log(chalk.green(`✅ Loaded tokens from ${options.tokenFile}\n`));
+    } else {
+      tokens = await resolveTokens(oauth);
+    }
   } catch (err) {
     console.error(chalk.red(`❌ Authentication failed: ${err}`));
     process.exit(1);

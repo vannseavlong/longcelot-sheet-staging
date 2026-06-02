@@ -35,6 +35,7 @@ program
   .description('Sync schemas to Google Sheets')
   .option('--all-users', 'Sync schema changes to all registered user sheets')
   .option('--dry-run', 'Preview --all-users changes without applying them')
+  .option('--token-file <path>', 'Path to existing tokens JSON file (for CI/CD — skips interactive OAuth prompt)')
   .action(syncCommand);
 
 program
@@ -46,7 +47,13 @@ program
   .command('seed <seed-file>')
   .description('Seed initial data into Google Sheets from a JS/TS file')
   .option('--all-actors', 'Distribute seed data to all actor sheets (per users table)')
-  .action((seedFile, options) => seedCommand(seedFile, options));
+  .option('--skip-existing', 'Skip rows where a unique column already matches (no error)')
+  .option('--upsert', 'Update existing row on unique conflict instead of throwing')
+  .action((seedFile, options) => seedCommand(seedFile, {
+    allActors: options.allActors,
+    skipExisting: options.skipExisting,
+    upsert: options.upsert,
+  }));
 
 program
   .command('mock-users [count]')

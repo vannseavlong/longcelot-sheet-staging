@@ -74,6 +74,12 @@ export interface UpdateOptions {
   skipFKValidation?: boolean;
 }
 
+export interface UpsertOptions {
+  where: WhereClause;
+  data: Record<string, unknown>;
+  skipFKValidation?: boolean;
+}
+
 export interface DeleteOptions {
   where: WhereClause;
 }
