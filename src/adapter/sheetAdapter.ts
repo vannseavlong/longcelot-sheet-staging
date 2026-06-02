@@ -125,21 +125,26 @@ export class SheetAdapter {
   }
 
   async syncSchema(schema: TableSchema): Promise<void> {
+    const spreadsheetId = this.resolveSpreadsheetId(schema);
     const sheetExists = await this.sheetExists(schema);
 
     if (!sheetExists) {
-      const spreadsheetId = this.resolveSpreadsheetId(schema);
       await this.client.addSheet(spreadsheetId, schema.name);
     }
 
-    const headers = Object.keys(schema.columns);
-    const spreadsheetId = this.resolveSpreadsheetId(schema);
-    const existingSheets = await this.client.getSheetNames(spreadsheetId);
+    const schemaHeaders = Object.keys(schema.columns);
+    const rows = await this.client.getAllRows(spreadsheetId, schema.name);
 
-    if (existingSheets.includes(schema.name)) {
-      const rows = await this.client.getAllRows(spreadsheetId, schema.name);
-      if (rows.length === 0) {
-        await this.client.writeHeader(spreadsheetId, schema.name, headers);
+    if (rows.length === 0) {
+      await this.client.writeHeader(spreadsheetId, schema.name, schemaHeaders);
+    } else {
+      const existingHeaders = rows[0];
+      const missingHeaders = schemaHeaders.filter((h) => !existingHeaders.includes(h));
+      if (missingHeaders.length > 0) {
+        await this.client.writeHeader(spreadsheetId, schema.name, [
+          ...existingHeaders,
+          ...missingHeaders,
+        ]);
       }
     }
   }

@@ -1043,3 +1043,21 @@ Discovered while building the bEasy admin portal. Severity ratings from develope
   - `'open'` — any authenticated user can trigger user creation (default)
   - `'login-only'` — user must already exist in the sheet; throws if not found
   - `'invite-only'` — user must exist with `status: 'invited'` (future)
+
+---
+
+## Phase 7: Bug Fixes (post-release)
+
+### 7.1 `sync` does not add new columns to existing tables (Critical)
+
+**Problem**: `syncSchema()` only writes headers when creating a brand-new tab (`rows.length === 0`). For tabs that already exist with data, running `sync` after adding columns to the schema does nothing — the new column headers are never appended. The CLI still reports "✅ synced", giving a false impression the sheet is current.
+
+**Reproduction:**
+1. Run `sync` on a fresh project — columns created correctly ✓
+2. Add a new column to any existing schema
+3. Run `sync` again — output says "✅ synced" but new column header is **not** in the sheet ✗
+
+**Fix**: In `syncSchema()`, read the current row-1 headers, diff against the schema column list, and append any missing headers to the right of existing ones. Purely additive — consistent with the "never deletes data" guarantee.
+
+- [x] Fix `syncSchema()` in `SheetAdapter` to diff row-1 headers and append missing columns
+- [x] Tests: new tab (all headers written), existing tab no changes (no-op), existing tab with missing columns (appended), existing tab with data rows (data preserved)
