@@ -1061,3 +1061,29 @@ Discovered while building the bEasy admin portal. Severity ratings from develope
 
 - [x] Fix `syncSchema()` in `SheetAdapter` to diff row-1 headers and append missing columns
 - [x] Tests: new tab (all headers written), existing tab no changes (no-op), existing tab with missing columns (appended), existing tab with data rows (data preserved)
+
+### 7.2 `mock-users` throws `PermissionError` unconditionally (Critical)
+
+**Problem**: `mockUsersCommand` calls `adapter.createUserSheet()` on the raw adapter — no context is set. Inside `createUserSheet`, `this.table('users')` calls `hasPermission()` which immediately returns `false` when `this.context` is `undefined`. The command can never create a single user.
+
+**Fix**: Call `adapter.withContext({ userId: 'mock-cli', role: 'admin', actorSheetId })` and invoke `createUserSheet` on the resulting admin-context adapter.
+
+- [x] Fix `mock-users.ts`: derive `adminSheetId` from config/env and call `createUserSheet` on an admin-context adapter
+
+### 7.3 `createUserSheet` inserts an incomplete row into the `users` table (High)
+
+**Problem**: `createUserSheet` hard-codes exactly 5 fields (`user_id`, `role`, `email`, `actor_sheet_id`, `created_at`). Projects with additional required columns on the `users` schema get either a `ValidationError` on create or permanent empty cells for those columns.
+
+**Fix**: Add optional `extraFields?: Record<string, unknown>` parameter to `createUserSheet` that is spread into the `create()` call.
+
+- [x] Add `extraFields?` param to `createUserSheet` in `sheetAdapter.ts` and merge it into the `create()` call
+
+### 7.4 `schemasDir` config option is parsed but never applied to schema lookup path (High)
+
+**Problem**: Both `loadSchemasForActor` in `sync.ts` and the schema-load loop in `mock-users.ts` always resolve schemas from `process.cwd()/schemas/{role}`. The `schemasDir` field from `sheet-db.config.ts` is never read, so projects that store schemas under `src/schemas/` or any non-default location always get "No schemas found."
+
+**Fix**: Read `config.schemasDir` and use `path.resolve(process.cwd(), config.schemasDir)` as the root when set; fall back to the default `schemas/` directory otherwise.
+
+- [x] Add `schemasDir?: string` to `SheetDBConfig` in `types.ts`
+- [x] Update `loadSchemasForActor` in `sync.ts` to accept and apply the schemas root path
+- [x] Apply same fix to the schema-load loop in `mock-users.ts`

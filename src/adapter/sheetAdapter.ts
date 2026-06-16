@@ -98,7 +98,12 @@ export class SheetAdapter {
     return new CRUDOperations(this.client, spreadsheetId, schema, fkResolver, this._pendingSchemaCheck);
   }
 
-  async createUserSheet(userId: string, role: string, email: string): Promise<string> {
+  async createUserSheet(
+    userId: string,
+    role: string,
+    email: string,
+    extraFields?: Record<string, unknown>
+  ): Promise<string> {
     const sheetId = await this.client.createSpreadsheet(`${role}-${userId}`);
 
     await this.client.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL!, 'writer');
@@ -119,6 +124,7 @@ export class SheetAdapter {
       email,
       actor_sheet_id: sheetId,
       created_at: new Date().toISOString(),
+      ...extraFields,
     });
 
     return sheetId;

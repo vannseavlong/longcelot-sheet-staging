@@ -36,6 +36,7 @@ export interface SheetDBConfig {
   superAdminEmail: string;
   actors: ActorConfig[];
   onSchemaMismatch?: SchemaMismatchBehaviour;
+  schemasDir?: string;
 }
 
 export interface ActorPermission {

@@ -47,7 +47,8 @@ export async function mockUsersCommand(countArg?: string | number) {
 
   // Load config and schemas
   interface CLIConfig {
-    actors: Array<{ role: string } | string>;
+    actors: Array<{ role: string; sheetIdEnv?: string } | string>;
+    schemasDir?: string;
   }
   let config: CLIConfig;
   try {
@@ -57,8 +58,10 @@ export async function mockUsersCommand(countArg?: string | number) {
     process.exit(1);
   }
 
+  const adminSheetId = process.env.ADMIN_SHEET_ID!;
+
   const adapter = createSheetAdapter({
-    adminSheetId: process.env.ADMIN_SHEET_ID!,
+    adminSheetId,
     credentials: {
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
@@ -68,10 +71,13 @@ export async function mockUsersCommand(countArg?: string | number) {
   });
 
   // Load and register all schemas
-  const schemasDir = path.join(process.cwd(), 'schemas');
+  const schemasRoot = config.schemasDir
+    ? path.resolve(process.cwd(), config.schemasDir)
+    : path.join(process.cwd(), 'schemas');
+
   for (const actorEntry of config.actors) {
     const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
-    const actorDir = path.join(schemasDir, actor);
+    const actorDir = path.join(schemasRoot, actor);
     if (!fs.existsSync(actorDir)) continue;
     const files = fs.readdirSync(actorDir).filter((f) => f.endsWith('.ts'));
     for (const file of files) {
@@ -84,6 +90,13 @@ export async function mockUsersCommand(countArg?: string | number) {
     }
   }
 
+  // createUserSheet is an admin operation — requires admin context
+  const adminAdapter = adapter.withContext({
+    userId: 'mock-cli',
+    role: 'admin',
+    actorSheetId: adminSheetId,
+  });
+
   let created = 0;
   for (let i = 0; i < count; i++) {
     const userId = `mock-${Date.now().toString(36)}-${i}`;
@@ -95,7 +108,7 @@ export async function mockUsersCommand(countArg?: string | number) {
     const email = makeEmail(userId, role);
 
     try {
-      const sheetId = await adapter.createUserSheet(userId, role, email);
+      const sheetId = await adminAdapter.createUserSheet(userId, role, email);
       console.log(chalk.green(`  ✓ Created ${role} user ${userId} → sheet ${sheetId}`));
       created++;
     } catch (err) {

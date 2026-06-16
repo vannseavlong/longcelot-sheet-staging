@@ -18,6 +18,29 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.18] — 2026-06-16
+
+### Fixed
+
+#### CLI — `mock-users`
+- **`sheet-db mock-users` no longer throws `PermissionError` unconditionally.** The command was calling `adapter.createUserSheet()` on the raw (context-less) adapter. `hasPermission()` returns `false` when `this.context` is `undefined`, so every run failed with 0 users created. Fixed by constructing an admin context (`role: 'admin'`) before the user creation loop and routing all `createUserSheet` calls through it.
+- **`schemasDir` config option is now applied in `mock-users`.** Schema files were always loaded from the hard-coded path `process.cwd()/schemas/{role}` regardless of what `schemasDir` was set to in `sheet-db.config.ts`. Fixed in line with the same change made to `sync`.
+
+#### Adapter — `createUserSheet`
+- **`createUserSheet` now accepts an optional `extraFields` parameter.** Previously the method hard-coded exactly five fields into the `users` table row (`user_id`, `role`, `email`, `actor_sheet_id`, `created_at`). Projects with additional required columns on `users` received a `ValidationError` or permanently empty cells. The new signature is:
+  ```ts
+  createUserSheet(userId, role, email, extraFields?: Record<string, unknown>)
+  ```
+  `extraFields` is spread after the base fields, so callers can supply any extra schema columns without overwriting the core ones.
+
+#### CLI — `sync`
+- **`schemasDir` config option is now applied in `sync`.** `loadSchemasForActor` was hard-coded to `process.cwd()/schemas/{role}`. Projects with a custom `schemasDir` in `sheet-db.config.ts` always got "No schemas found." Fixed: the schemas root is now derived from `config.schemasDir` when set, with `path.resolve` so both relative and absolute paths work. Fallback is unchanged (`schemas/`).
+
+#### Types
+- Added `schemasDir?: string` to `SheetDBConfig` interface in `src/schema/types.ts`.
+
+---
+
 ## [0.1.16] — 2026-06-02
 
 ### Added

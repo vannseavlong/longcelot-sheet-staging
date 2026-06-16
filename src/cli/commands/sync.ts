@@ -90,9 +90,9 @@ async function resolveTokens(
   return tokens;
 }
 
-function loadSchemasForActor(role: string): TableSchema[] {
+function loadSchemasForActor(role: string, schemasRoot: string): TableSchema[] {
   const schemas: TableSchema[] = [];
-  const actorDir = path.join(process.cwd(), 'schemas', role);
+  const actorDir = path.join(schemasRoot, role);
   if (!fs.existsSync(actorDir)) return schemas;
 
   const files = fs.readdirSync(actorDir).filter((f) => f.endsWith('.ts'));
@@ -140,7 +140,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
     }
   }
 
-  let config: { actors: ActorConfig[]; projectName?: string };
+  let config: { actors: ActorConfig[]; projectName?: string; schemasDir?: string };
   try {
     config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
   } catch {
@@ -156,10 +156,14 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
     process.exit(1);
   }
 
+  const schemasRoot = config.schemasDir
+    ? path.resolve(process.cwd(), config.schemasDir)
+    : path.join(process.cwd(), 'schemas');
+
   // Collect all schemas across actors
   const allSchemas: TableSchema[] = [];
   for (const actor of config.actors) {
-    allSchemas.push(...loadSchemasForActor(actor.role));
+    allSchemas.push(...loadSchemasForActor(actor.role, schemasRoot));
   }
 
   if (allSchemas.length === 0) {
