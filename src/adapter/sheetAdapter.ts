@@ -1,6 +1,17 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
-import { TableSchema, UserContext, FKResolver, SchemaMismatchBehaviour, ActorPermission } from '../schema/types';
+import {
+  TableSchema,
+  UserContext,
+  FKResolver,
+  SchemaMismatchBehaviour,
+  ActorPermission,
+  DriveFolderConfig,
+  TokenStore,
+  StorageAdapter,
+  UploadOptions,
+  CreateUserSheetOptions,
+} from '../schema/types';
 import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
 import { SchemaMismatchError } from '../errors/SchemaMismatchError';
@@ -32,15 +43,30 @@ export interface SheetAdapterConfig {
   tokens: unknown;
   onSchemaMismatch?: SchemaMismatchBehaviour;
   permissions?: Record<string, ActorPermission>;
+  /** Place sheets in this Drive folder hierarchy. */
+  driveFolder?: DriveFolderConfig;
+  /** When set, all Drive file operations target this Shared Drive. */
+  sharedDriveId?: string;
+  /** Per-actor token store. Adapter calls get(userId) in createUserSheet when actorTokens not passed directly. */
+  tokenStore?: TokenStore;
+  /** File upload provider. Pass new DriveStorageAdapter() for built-in Drive upload. */
+  storage?: StorageAdapter;
 }
 
 export class SheetAdapter {
   private client: SheetClient;
+  private credentials: { clientId: string; clientSecret: string; redirectUri: string };
   private adminSheetId: string;
   private schemas: Map<string, TableSchema> = new Map();
   private context?: UserContext;
   private onSchemaMismatch?: SchemaMismatchBehaviour;
   private permissions?: Record<string, ActorPermission>;
+  private driveFolder?: DriveFolderConfig;
+  private sharedDriveId?: string;
+  private tokenStore?: TokenStore;
+  private storage?: StorageAdapter;
+  /** Cached Drive folder IDs: role -> folderId */
+  private _folderCache = new Map<string, string>();
   /** Pending schema version check promise set by withContext() */
   private _pendingSchemaCheck?: Promise<void>;
 
@@ -48,9 +74,20 @@ export class SheetAdapter {
     // Allow test injection via _client (cast through unknown for type safety)
     this.client = (config as unknown as Record<string, unknown>)._client as SheetClient
       ?? new SheetClient(config.credentials, config.tokens);
+    this.credentials = config.credentials;
     this.adminSheetId = config.adminSheetId;
     this.onSchemaMismatch = config.onSchemaMismatch;
     this.permissions = config.permissions;
+    this.driveFolder = config.driveFolder;
+    this.sharedDriveId = config.sharedDriveId;
+    this.tokenStore = config.tokenStore;
+    this.storage = config.storage;
+
+    // Inject the admin SheetClient into DriveStorageAdapter so callers don't repeat credentials
+    const storageAsAny = this.storage as unknown as Record<string, unknown>;
+    if (storageAsAny && typeof storageAsAny['_setClient'] === 'function') {
+      (storageAsAny['_setClient'] as (c: SheetClient) => void)(this.client);
+    }
   }
 
   registerSchema(schema: TableSchema): void {
@@ -102,12 +139,40 @@ export class SheetAdapter {
     userId: string,
     role: string,
     email: string,
-    extraFields?: Record<string, unknown>
+    options?: CreateUserSheetOptions
   ): Promise<string> {
-    const sheetId = await this.client.createSpreadsheet(`${role}-${userId}`);
+    // Resolve actor tokens: explicit > tokenStore > none (fall back to admin client)
+    let actorTokens = options?.actorTokens;
+    if (!actorTokens && this.tokenStore) {
+      actorTokens = (await this.tokenStore.get(userId)) ?? undefined;
+    }
 
-    await this.client.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL!, 'writer');
-    await this.client.shareWithUser(sheetId, email, 'writer');
+    // Choose which client to use for spreadsheet creation
+    const clientForCreate = actorTokens
+      ? new SheetClient(this.credentials, actorTokens as unknown)
+      : this.client;
+
+    // Resolve Drive folder for this role (respects driveFolder config + sharedDriveId)
+    const folderId = await this.resolveFolderForRole(role, clientForCreate);
+
+    // Create the spreadsheet
+    const sheetId = await clientForCreate.createSpreadsheet(`${role}-${userId}`, {
+      folderId,
+      sharedDriveId: this.sharedDriveId,
+    });
+
+    if (actorTokens) {
+      // Sheet lives in actor's Drive — share with admin so admin can manage it
+      if (process.env.SUPER_ADMIN_EMAIL) {
+        await clientForCreate.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL, 'writer');
+      }
+    } else {
+      // Sheet lives in admin's Drive — share with the actor and the admin email
+      if (process.env.SUPER_ADMIN_EMAIL) {
+        await this.client.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL, 'writer');
+      }
+      await this.client.shareWithUser(sheetId, email, 'writer');
+    }
 
     const userTables = Array.from(this.schemas.values()).filter((s) => s.actor === role);
 
@@ -124,10 +189,28 @@ export class SheetAdapter {
       email,
       actor_sheet_id: sheetId,
       created_at: new Date().toISOString(),
-      ...extraFields,
+      ...options?.extraFields,
     });
 
     return sheetId;
+  }
+
+  async upload(file: Buffer, options: UploadOptions): Promise<string> {
+    if (!this.storage) {
+      throw new SchemaError(
+        'No storage adapter configured. Pass storage: new DriveStorageAdapter() to createSheetAdapter().'
+      );
+    }
+    return this.storage.upload(file, options);
+  }
+
+  async deleteFile(url: string): Promise<void> {
+    if (!this.storage) {
+      throw new SchemaError(
+        'No storage adapter configured. Pass storage: new DriveStorageAdapter() to createSheetAdapter().'
+      );
+    }
+    return this.storage.delete(url);
   }
 
   async syncSchema(schema: TableSchema): Promise<void> {
@@ -259,6 +342,24 @@ export class SheetAdapter {
         }
       }
     }
+  }
+
+  private async resolveFolderForRole(role: string, client: SheetClient): Promise<string | undefined> {
+    if (!this.driveFolder) return undefined;
+
+    if (this._folderCache.has(role)) return this._folderCache.get(role)!;
+
+    const rootId = await client.findOrCreateFolder(
+      this.driveFolder.root,
+      undefined,
+      this.sharedDriveId
+    );
+
+    const subfolderName = this.driveFolder.subfolders?.[role] ?? role;
+    const folderId = await client.findOrCreateFolder(subfolderName, rootId, this.sharedDriveId);
+
+    this._folderCache.set(role, folderId);
+    return folderId;
   }
 
   private createFKResolver(): FKResolver {

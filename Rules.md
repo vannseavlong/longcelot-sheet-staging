@@ -125,6 +125,8 @@ Before publishing a new package version:
 - [ ] Git tag format is correct (e.g., `v0.1.6`)
 - [ ] Tag and commit pushed to remote
 - [ ] Release command executed intentionally
+- [ ] Report sent to landing page / documentation website team to update docs to the latest package version
+- [ ] Skills in `skills/` folder added or updated to reflect new/changed functionality
 
 Recommended release flow:
 

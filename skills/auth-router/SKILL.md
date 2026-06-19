@@ -1,10 +1,10 @@
 ---
 name: auth-router
-description: Wire up Google Sign-In Express routes with longcelot-sheet-db. Use when implementing the Google OAuth callback flow as Express middleware, setting up login-only roles (admin/manager) that block self-registration, setting up open-registration roles (users can sign up on first login), issuing JWTs after successful authentication, or handling multiple auth endpoints for different roles on the same server.
+description: Wire up Google Sign-In Express routes with longcelot-sheet-db. Use when implementing the Google OAuth callback flow as Express middleware, setting up login-only roles (admin/manager) that block self-registration, setting up open-registration roles (users can sign up on first login), issuing JWTs after successful authentication, handling multiple auth endpoints for different roles on the same server, or capturing actor OAuth tokens during registration to enable actor-owned Drive sheets.
 license: MIT
 metadata:
   package: longcelot-sheet-db
-  version: "0.1.15"
+  version: "0.1.19"
 ---
 
 # longcelot-sheet-db — Auth Router (`createAuthRouter`)
@@ -133,6 +133,45 @@ const userAuth = createAuthRouter({
 
 app.use(userAuth.handler);
 ```
+
+### Actor-owned sheets during registration
+
+If you want the new sheet created in the **actor's own Google Drive** (not the admin's), you need the actor's OAuth tokens at registration time. `createAuthRouter` does not expose tokens through `onUser` directly — use `createLoginOAuthManager` to wire the callback manually so you can intercept the tokens:
+
+```typescript
+import { createLoginOAuthManager } from 'longcelot-sheet-db';
+import type { OAuthTokens } from 'longcelot-sheet-db';
+
+const oauth = createLoginOAuthManager({ clientId, clientSecret, redirectUri });
+
+app.get('/auth/google', (req, res) => res.redirect(oauth.getAuthUrl()));
+
+app.get('/auth/callback', async (req, res) => {
+  const tokens = await oauth.getTokens(req.query.code as string) as OAuthTokens;
+  const profile = await oauth.verifyToken((tokens as Record<string, string>).id_token);
+
+  const adminCtx = adapter.withContext({
+    userId: 'auth',
+    role: 'admin',
+    actorSheetId: process.env.ADMIN_SHEET_ID!,
+  });
+
+  let user = await adminCtx.table('users').findOne({ where: { email: profile.email } });
+
+  if (!user) {
+    // Sheet is created in the actor's Drive, not the admin's
+    await adapter.createUserSheet(profile.sub, 'seller', profile.email, {
+      actorTokens: tokens,
+      extraFields: { display_name: profile.name },
+    });
+    user = await adminCtx.table('users').findOne({ where: { email: profile.email } });
+  }
+
+  // Issue your own JWT, redirect to frontendUrl, etc.
+});
+```
+
+See `skills/drive/SKILL.md` for full `actorTokens` and `TokenStore` documentation.
 
 ---
 

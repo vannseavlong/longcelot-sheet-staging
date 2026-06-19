@@ -1,8 +1,17 @@
-import { google, sheets_v4 } from 'googleapis';
+import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OAuth2Client, Credentials } from 'google-auth-library';
+import { Readable } from 'stream';
+
+export interface CreateSpreadsheetOptions {
+  /** Place the spreadsheet inside this Drive folder ID. */
+  folderId?: string;
+  /** When set, enables supportsAllDrives for Shared Drive placement. */
+  sharedDriveId?: string;
+}
 
 export class SheetClient {
   private sheets: sheets_v4.Sheets;
+  private drive: drive_v3.Drive;
   private auth: OAuth2Client;
 
   constructor(credentials: { clientId: string; clientSecret: string; redirectUri: string }, tokens: unknown) {
@@ -13,15 +22,107 @@ export class SheetClient {
     );
     this.auth.setCredentials(tokens as Credentials);
     this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+    this.drive = google.drive({ version: 'v3', auth: this.auth });
   }
 
-  async createSpreadsheet(title: string): Promise<string> {
-    const response = await this.sheets.spreadsheets.create({
+  async createSpreadsheet(title: string, options?: CreateSpreadsheetOptions): Promise<string> {
+    const supportsAllDrives = !!(options?.sharedDriveId || options?.folderId);
+    const parents = options?.folderId
+      ? [options.folderId]
+      : options?.sharedDriveId
+      ? [options.sharedDriveId]
+      : undefined;
+
+    const response = await this.drive.files.create({
+      supportsAllDrives,
       requestBody: {
-        properties: { title },
+        name: title,
+        mimeType: 'application/vnd.google-apps.spreadsheet',
+        ...(parents ? { parents } : {}),
       },
+      fields: 'id',
     });
-    return response.data.spreadsheetId!;
+    return response.data.id!;
+  }
+
+  async findOrCreateFolder(name: string, parentId?: string, sharedDriveId?: string): Promise<string> {
+    const escapedName = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    let q = `name='${escapedName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
+
+    const listParams: drive_v3.Params$Resource$Files$List = {
+      q,
+      fields: 'files(id)',
+      pageSize: 1,
+    };
+
+    if (sharedDriveId) {
+      listParams.corpora = 'drive';
+      listParams.driveId = sharedDriveId;
+      listParams.includeItemsFromAllDrives = true;
+      listParams.supportsAllDrives = true;
+    }
+
+    const found = await this.drive.files.list(listParams);
+    if (found.data.files && found.data.files.length > 0) {
+      return found.data.files[0].id!;
+    }
+
+    const createParents = parentId
+      ? [parentId]
+      : sharedDriveId
+      ? [sharedDriveId]
+      : undefined;
+
+    const created = await this.drive.files.create({
+      supportsAllDrives: !!sharedDriveId,
+      requestBody: {
+        name,
+        mimeType: 'application/vnd.google-apps.folder',
+        ...(createParents ? { parents: createParents } : {}),
+      },
+      fields: 'id',
+    });
+    return created.data.id!;
+  }
+
+  async uploadFile(
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+    folderId?: string,
+    makePublic?: boolean
+  ): Promise<string> {
+    const readable = new Readable();
+    readable.push(buffer);
+    readable.push(null);
+
+    const response = await this.drive.files.create({
+      requestBody: {
+        name: filename,
+        ...(folderId ? { parents: [folderId] } : {}),
+      },
+      media: {
+        mimeType,
+        body: readable,
+      },
+      fields: 'id',
+    });
+
+    const fileId = response.data.id!;
+
+    if (makePublic) {
+      await this.drive.permissions.create({
+        fileId,
+        requestBody: { type: 'anyone', role: 'reader' },
+      });
+    }
+
+    return fileId;
+  }
+
+  async deleteFile(fileId: string): Promise<void> {
+    await this.drive.files.delete({ fileId });
   }
 
   async addSheet(spreadsheetId: string, sheetName: string): Promise<void> {
@@ -119,8 +220,7 @@ export class SheetClient {
   }
 
   async shareWithUser(spreadsheetId: string, email: string, role: 'reader' | 'writer' = 'writer'): Promise<void> {
-    const drive = google.drive({ version: 'v3', auth: this.auth });
-    await drive.permissions.create({
+    await this.drive.permissions.create({
       fileId: spreadsheetId,
       requestBody: {
         type: 'user',

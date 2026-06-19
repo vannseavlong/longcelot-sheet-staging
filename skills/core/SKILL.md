@@ -1,10 +1,10 @@
 ---
 name: core
-description: Set up and configure longcelot-sheet-db. Use when installing the package, creating a SheetAdapter, providing OAuth credentials and tokens, wiring environment variables, configuring schema mismatch behavior, adding a cross-actor permissions matrix, or connecting the adapter to an existing backend (Express, NestJS, etc.).
+description: Set up and configure longcelot-sheet-db. Use when installing the package, creating a SheetAdapter, providing OAuth credentials and tokens, wiring environment variables, configuring schema mismatch behavior, adding a cross-actor permissions matrix, configuring Drive folder organisation (driveFolder), Shared Drive (sharedDriveId), per-actor token persistence (tokenStore), file upload (storage / DriveStorageAdapter), or connecting the adapter to an existing backend (Express, NestJS, etc.).
 license: MIT
 metadata:
   package: longcelot-sheet-db
-  version: "0.1.15"
+  version: "0.1.19"
 ---
 
 # longcelot-sheet-db — Core Setup
@@ -62,11 +62,17 @@ interface SheetAdapterConfig {
     clientSecret: string;
     redirectUri: string;
   };
-  tokens: unknown;                          // Google OAuth2 token object
-  onSchemaMismatch?: SchemaMismatchBehaviour; // 'warn' | 'error' | 'auto-sync'
-  permissions?: Record<string, ActorPermission>; // cross-actor access matrix
+  tokens: unknown;                                        // admin Google OAuth2 token object
+  onSchemaMismatch?: SchemaMismatchBehaviour;             // 'warn' | 'error' | 'auto-sync'
+  permissions?: Record<string, ActorPermission>;          // cross-actor access matrix
+  driveFolder?: DriveFolderConfig;                        // folder organisation in Drive
+  sharedDriveId?: string;                                 // target a Google Workspace Shared Drive
+  tokenStore?: TokenStore;                                // per-actor OAuth token persistence
+  storage?: StorageAdapter;                               // file upload provider
 }
 ```
+
+For Drive folder organisation, actor-owned sheets, Shared Drive, `TokenStore`, and `StorageAdapter` / `DriveStorageAdapter`, see `skills/drive/SKILL.md`.
 
 ---
 
@@ -159,12 +165,21 @@ app.get('/bookings', async (req, res) => {
 When a new user registers, create their personal sheet and register them in the admin users table:
 
 ```typescript
+// Basic — sheet created in admin's Drive (previous behaviour, unchanged)
 const sheetId = await adapter.createUserSheet(userId, role, email);
+
+// With options — sheet created in the actor's own Drive when actorTokens provided
+const sheetId = await adapter.createUserSheet(userId, role, email, {
+  actorTokens: tokensFromGoogleCallback, // OAuthTokens from oauth.getTokens(code)
+  extraFields: { display_name: 'Alice' }, // extra columns in the users table row
+});
 // Creates a new Google Spreadsheet named '{role}-{userId}'
-// Adds all tables for that role as sheet tabs with headers
-// Inserts a row in admin 'users' table with user_id, role, email, actor_sheet_id
-// Returns the new sheetId — store it for future withContext() calls
+// Adds all tables for that role as sheet tabs with correct headers
+// Inserts a row in admin 'users' table with user_id, role, email, actor_sheet_id + extraFields
+// Returns the new sheetId — store it in your JWT/session for withContext() calls
 ```
+
+See `skills/drive/SKILL.md` for the full actor-owned sheet pattern and `TokenStore`.
 
 ---
 

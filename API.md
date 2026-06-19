@@ -159,9 +159,13 @@ Creates a new sheet adapter instance.
     clientSecret: string;
     redirectUri: string;
   };
-  tokens: unknown;                          // OAuth tokens object
+  tokens: unknown;                                        // admin OAuth tokens object
   onSchemaMismatch?: 'warn' | 'error' | 'auto-sync';
-  permissions?: Record<string, ActorPermission>; // cross-actor permission matrix
+  permissions?: Record<string, ActorPermission>;          // cross-actor permission matrix
+  driveFolder?: DriveFolderConfig;                        // folder organisation in Drive
+  sharedDriveId?: string;                                 // target a Google Workspace Shared Drive
+  tokenStore?: TokenStore;                                // per-actor token persistence
+  storage?: StorageAdapter;                               // file upload provider
 }
 ```
 
@@ -278,23 +282,78 @@ Gets CRUD operations for a table.
 const bookings = adapter.table('bookings');
 ```
 
-### `adapter.createUserSheet(userId, role, email)`
+### `adapter.createUserSheet(userId, role, email, options?)`
 
-Creates a new sheet for a user.
+Creates a new sheet for a user and registers them in the admin `users` table.
+
+When `actorTokens` are provided (or resolved via `tokenStore`), the sheet is created in **the actor's own Google Drive**. Otherwise the admin's Drive is used (previous behaviour).
 
 **Parameters:**
 
-- `userId: string` - Unique user ID
-- `role: string` - User role/actor
-- `email: string` - User email
+- `userId: string`
+- `role: string`
+- `email: string`
+- `options?: CreateUserSheetOptions`
+  - `actorTokens?: OAuthTokens` — actor's own Google OAuth tokens; sheet is created in their Drive
+  - `extraFields?: Record<string, unknown>` — extra columns spread into the `users` table `create()` call
 
 **Returns:** `Promise<string>` - Sheet ID
 
 **Example:**
 
 ```typescript
+// Basic (sheet in admin's Drive)
 const sheetId = await adapter.createUserSheet('user_123', 'student', 'student@school.com');
+
+// Actor-owned (sheet in student's Drive)
+const sheetId = await adapter.createUserSheet('user_123', 'student', 'student@school.com', {
+  actorTokens: { access_token: '...', refresh_token: '...' },
+  extraFields: { display_name: 'Alice' },
+});
 ```
+
+### `adapter.upload(file, options)`
+
+Uploads a file using the configured `StorageAdapter`. Throws `SchemaError` if no storage adapter is configured.
+
+**Parameters:**
+
+- `file: Buffer`
+- `options: UploadOptions`
+  - `filename: string`
+  - `mimeType: string`
+  - `folder?: string` — subfolder path; created if missing (e.g. `'uploads/products'`)
+  - `public?: boolean` — make the file publicly readable (Drive: sets `anyone / reader` permission)
+
+**Returns:** `Promise<string>` - Public URL
+
+**Example:**
+
+```typescript
+import { DriveStorageAdapter } from 'longcelot-sheet-db';
+
+const adapter = createSheetAdapter({
+  ...,
+  storage: new DriveStorageAdapter({ folder: 'uploads' }),
+});
+
+const url = await adapter.upload(imageBuffer, {
+  filename: 'product.jpg',
+  mimeType: 'image/jpeg',
+  public: true,
+});
+// 'https://drive.google.com/uc?id=FILE_ID'
+```
+
+### `adapter.deleteFile(url)`
+
+Deletes a file via the configured `StorageAdapter`. Throws `SchemaError` if no storage adapter is configured.
+
+**Parameters:**
+
+- `url: string` - URL previously returned by `adapter.upload()`
+
+**Returns:** `Promise<void>`
 
 ### `adapter.syncSchema(schema)`
 
@@ -790,3 +849,93 @@ Configured via `onSchemaMismatch` in `createSheetAdapter()`:
 - `'warn'` — logs to stderr, continues (default)
 - `'error'` — throws `SchemaMismatchError`
 - `'auto-sync'` — syncs the actor sheet before proceeding
+
+### `OAuthTokens`
+
+```typescript
+interface OAuthTokens {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  expiry_date?: number | null;
+  id_token?: string | null;
+  token_type?: string | null;
+  scope?: string | null;
+}
+```
+
+### `TokenStore`
+
+```typescript
+interface TokenStore {
+  get(actorId: string): Promise<OAuthTokens | null>;
+  set(actorId: string, tokens: OAuthTokens): Promise<void>;
+}
+```
+
+Passed as `tokenStore` to `createSheetAdapter`. The adapter calls `get(userId)` in `createUserSheet` when `actorTokens` is not provided directly. Callers are responsible for calling `set(userId, tokens)` after each Google OAuth callback.
+
+### `DriveFolderConfig`
+
+```typescript
+interface DriveFolderConfig {
+  root: string;                        // folder name at Drive root; created if missing
+  subfolders?: Record<string, string>; // actor role -> subfolder name (defaults to role name)
+}
+```
+
+### `UploadOptions`
+
+```typescript
+interface UploadOptions {
+  filename: string;
+  mimeType: string;
+  folder?: string;   // subfolder path relative to driveFolder.root; created if missing
+  public?: boolean;  // when true, sets Drive permission: anyone / reader
+}
+```
+
+### `StorageAdapter`
+
+```typescript
+interface StorageAdapter {
+  upload(file: Buffer, options: UploadOptions): Promise<string>; // returns public URL
+  delete(url: string): Promise<void>;
+}
+```
+
+### `CreateUserSheetOptions`
+
+```typescript
+interface CreateUserSheetOptions {
+  actorTokens?: OAuthTokens;             // create sheet in actor's Drive when provided
+  extraFields?: Record<string, unknown>; // extra columns merged into the users table row
+}
+```
+
+### `DriveStorageAdapter`
+
+```typescript
+class DriveStorageAdapter implements StorageAdapter {
+  constructor(options?: { folder?: string }); // default folder: 'uploads'
+  upload(file: Buffer, options: UploadOptions): Promise<string>;
+  delete(url: string): Promise<void>;
+}
+```
+
+Built-in `StorageAdapter` implementation that uploads to Google Drive and returns a `https://drive.google.com/uc?id=…` URL. The adapter's `SheetClient` is injected automatically at `createSheetAdapter()` time — no credential repetition needed.
+
+**Example:**
+
+```typescript
+import { DriveStorageAdapter } from 'longcelot-sheet-db';
+
+const adapter = createSheetAdapter({
+  adminSheetId: process.env.ADMIN_SHEET_ID,
+  credentials: { ... },
+  tokens: adminTokens,
+  driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } },
+  sharedDriveId: process.env.SHARED_DRIVE_ID,  // optional
+  tokenStore: myTokenStore,                     // optional
+  storage: new DriveStorageAdapter({ folder: 'uploads' }),
+});
+```

@@ -8,6 +8,14 @@ type SheetData = Map<string, any[][]>; // sheetName -> rows (row 0 = headers)
 export class MockSheetClient {
   private spreadsheets: Map<string, SheetData> = new Map();
   private idCounter = 1;
+  /** Tracks calls to createSpreadsheet for assertion in tests */
+  createSpreadsheetCalls: Array<{ title: string; options?: unknown }> = [];
+  /** Tracks calls to findOrCreateFolder */
+  findOrCreateFolderCalls: Array<{ name: string; parentId?: string; sharedDriveId?: string }> = [];
+  /** Tracks calls to uploadFile */
+  uploadFileCalls: Array<{ filename: string; mimeType: string; folderId?: string; makePublic?: boolean }> = [];
+  /** Tracks calls to deleteFile */
+  deleteFileCalls: string[] = [];
 
   /** Pre-seed a spreadsheet so tests can skip createSpreadsheet */
   seed(spreadsheetId: string, sheetName: string, rows: any[][]) {
@@ -17,10 +25,31 @@ export class MockSheetClient {
     this.spreadsheets.get(spreadsheetId)!.set(sheetName, rows.map((r) => [...r]));
   }
 
-  async createSpreadsheet(_title: string): Promise<string> {
+  async createSpreadsheet(title: string, options?: unknown): Promise<string> {
+    this.createSpreadsheetCalls.push({ title, options });
     const id = `mock-sheet-${this.idCounter++}`;
     this.spreadsheets.set(id, new Map());
     return id;
+  }
+
+  async findOrCreateFolder(name: string, parentId?: string, sharedDriveId?: string): Promise<string> {
+    this.findOrCreateFolderCalls.push({ name, parentId, sharedDriveId });
+    return `mock-folder-${name}`;
+  }
+
+  async uploadFile(
+    _buffer: Buffer,
+    filename: string,
+    mimeType: string,
+    folderId?: string,
+    makePublic?: boolean
+  ): Promise<string> {
+    this.uploadFileCalls.push({ filename, mimeType, folderId, makePublic });
+    return `mock-file-${filename}`;
+  }
+
+  async deleteFile(fileId: string): Promise<void> {
+    this.deleteFileCalls.push(fileId);
   }
 
   async addSheet(spreadsheetId: string, sheetName: string): Promise<void> {

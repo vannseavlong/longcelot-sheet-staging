@@ -18,6 +18,47 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.19] — 2026-06-19
+
+### Added
+
+#### Adapter — Drive Architecture
+
+- **`driveFolder` config option** — pass `{ root: string; subfolders?: Record<string, string> }` to `createSheetAdapter` to organise all created spreadsheets under a named folder hierarchy in Google Drive. Root folder and per-role subfolders are created automatically on first use and cached. Works with both My Drive and Shared Drives.
+- **`sharedDriveId` config option** — when set, all Drive file-creation and folder-lookup calls pass `supportsAllDrives: true` and target the specified Shared Drive. Enables Google Workspace teams to centralise all staging sheets in a managed Shared Drive.
+- **`tokenStore` config option** — accepts a `TokenStore` (`get(actorId)` / `set(actorId, tokens)`) so per-actor OAuth tokens can be persisted externally (Redis, DB, file). The adapter calls `tokenStore.get(userId)` in `createUserSheet` when `actorTokens` is not passed directly, enabling actor-owned sheet creation without surfacing tokens at every call site.
+- **`storage` config option** — accepts any `StorageAdapter` implementation for file upload. Pass `new DriveStorageAdapter()` (built-in) or a custom provider (S3, GCS, Cloudinary). The adapter's own `SheetClient` is injected into `DriveStorageAdapter` automatically — no credential repetition required.
+- **`DriveStorageAdapter` class** (exported) — built-in file upload via Google Drive. Resolves nested folder paths (`uploads/products`) on demand, caches folder IDs, and optionally sets `anyone / reader` permission for public access.
+- **`adapter.upload(file, options)`** — delegates to the configured `StorageAdapter`. Returns a public URL (e.g. `https://drive.google.com/uc?id=...` for Drive). Throws `SchemaError` if no storage adapter is configured.
+- **`adapter.deleteFile(url)`** — delegates delete to the configured `StorageAdapter`. `DriveStorageAdapter` extracts the Drive file ID from the URL and calls `drive.files.delete`.
+
+#### Adapter — Actor-owned sheets
+
+- **`createUserSheet` now accepts actor OAuth tokens** — when `actorTokens` are provided (or resolved via `tokenStore`), the spreadsheet is created in the **actor's own Google Drive** using their OAuth client. The actor client then shares the sheet with the admin email. This removes the admin's storage quota burden and eliminates the single-token dependency. Falls back to admin-client creation when no actor tokens are present (backward compatible).
+
+#### New exported types
+
+- `OAuthTokens` — shape of a Google OAuth token set (`access_token`, `refresh_token`, `expiry_date`, …)
+- `TokenStore` — interface for per-actor token persistence
+- `DriveFolderConfig` — shape of the `driveFolder` config option
+- `UploadOptions` — `{ filename, mimeType, folder?, public? }` passed to `adapter.upload()`
+- `StorageAdapter` — two-method interface (`upload`, `delete`) for pluggable file storage
+- `CreateUserSheetOptions` — options object for `createUserSheet` (`actorTokens?`, `extraFields?`)
+
+### Changed
+
+- **`createUserSheet` 4th parameter** — previously `extraFields?: Record<string, unknown>` (positional). Now `options?: CreateUserSheetOptions`. **Migration:** wrap existing `extraFields` usage inside the options object: `{ extraFields: { ... } }`.
+- **`SheetClient.createSpreadsheet`** — internally switched from `sheets.spreadsheets.create` to `drive.files.create` (same result; enables `parents` placement and Shared Drive support). No change for callers.
+- **`SheetClient.shareWithUser`** — now uses the already-initialised `this.drive` instance instead of creating a new `google.drive` call per invocation.
+
+### Added (internal)
+
+- `SheetClient.findOrCreateFolder(name, parentId?, sharedDriveId?)` — Drive folder lookup with create-on-miss.
+- `SheetClient.uploadFile(buffer, filename, mimeType, folderId?, makePublic?)` — multipart Drive upload.
+- `SheetClient.deleteFile(fileId)` — Drive file deletion.
+
+---
+
 ## [0.1.18] — 2026-06-16
 
 ### Fixed

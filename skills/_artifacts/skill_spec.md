@@ -24,11 +24,12 @@ Each skill must be independently useful. An agent reading only one skill must be
 **Must cover:**
 - Installation commands for npm / pnpm / yarn / bun
 - Required environment variables and their purpose
-- `createSheetAdapter()` and full `SheetAdapterConfig` (including `onSchemaMismatch` and `permissions`)
+- `createSheetAdapter()` and full `SheetAdapterConfig` (including `onSchemaMismatch`, `permissions`, `driveFolder`, `sharedDriveId`, `tokenStore`, `storage`)
 - `registerSchema()` / `registerSchemas()`
 - `withContext()` and `asActor()` overview
-- `createUserSheet()` for user onboarding
+- `createUserSheet(userId, role, email, options?)` — basic and actor-owned (actorTokens / extraFields)
 - Integration pattern with existing auth (JWT → actorSheetId mapping)
+- Cross-references to `skills/drive/SKILL.md` for Drive config details
 - Common mistakes: missing registerSchema, stale tokens, actor mismatch, CJS/ESM constraint
 
 ### schema
@@ -135,6 +136,21 @@ Each skill must be independently useful. An agent reading only one skill must be
 - `.sheet-db-tokens.json` lifecycle
 - Common mistakes: missing env vars, committing token file, not syncing after schema change, re-seeding without --skip-existing, CI hangs without --token-file
 
+### drive
+**Goal**: Agent can configure Drive folder organisation (`driveFolder`), target a Shared Drive (`sharedDriveId`), create user sheets in the actor's own Drive (`actorTokens` / `TokenStore`), upload and delete files (`StorageAdapter`, `DriveStorageAdapter`, `adapter.upload()`, `adapter.deleteFile()`), and use a custom storage provider.
+
+**Must cover:**
+- `DriveFolderConfig` shape and how root/subfolders are created and cached
+- `sharedDriveId` and `supportsAllDrives` behaviour
+- `actorTokens` in `CreateUserSheetOptions` — why, what it does internally, where to get the tokens
+- `TokenStore` interface and priority order (explicit > tokenStore > admin fallback)
+- `OAuthTokens` type and the refresh_token persistence requirement
+- `StorageAdapter` interface (two methods: `upload` / `delete`)
+- `DriveStorageAdapter` — client injection, folder resolution, `public` flag, URL format
+- Custom provider example (S3 or similar)
+- `adapter.upload()` and `adapter.deleteFile()` — delegation and error when no storage configured
+- Common mistakes: driveFolder vs DriveStorageAdapter folder independence, expired actorTokens, missing refresh_token, supportsAllDrives permissions
+
 ---
 
 ## Content Constraints
@@ -161,3 +177,5 @@ The following failure modes are the most commonly encountered and must appear in
 8. `cli` / `seed`: Re-seeding without `--skip-existing` causes unique constraint violations
 9. `permissions`: Setting `targetRole` without `targetSheetId`
 10. `crud`: Looping `create()` instead of using `createMany()` for bulk inserts
+11. `drive`: Calling `adapter.upload()` without configuring `storage` in `createSheetAdapter` (throws `SchemaError`)
+12. `drive`: Discarding `refresh_token` from `getTokens()` — actor-owned sheet creation fails after 1 hour

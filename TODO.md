@@ -1087,3 +1087,174 @@ Discovered while building the bEasy admin portal. Severity ratings from develope
 - [x] Add `schemasDir?: string` to `SheetDBConfig` in `types.ts`
 - [x] Update `loadSchemasForActor` in `sync.ts` to accept and apply the schemas root path
 - [x] Apply same fix to the schema-load loop in `mock-users.ts`
+
+---
+
+## Phase 8: Drive Architecture & File Upload (bEasy feedback — 2026-06-19)
+
+Architectural gaps discovered while building a real app on top of the package. Affects every project using `createUserSheet`, Google Drive organisation, or file uploads.
+
+### 8.1 Actor-owned sheets — sheets should live in the actor's Drive, not the admin's (High)
+
+**Problem**: `createUserSheet()` always uses admin OAuth tokens, so every user sheet is created inside the **admin's Google Drive**. The admin's 15 GB quota is consumed by all users, and one expired admin token brings the entire backend down.
+
+**Requested behaviour**: Pass `actorTokens` (the tokens returned from the actor's own Google login) to `createUserSheet`. The package creates the spreadsheet in the actor's Drive using those tokens, then shares with the admin. Actor bears their own storage cost; admin only holds the `actor_sheet_id` reference.
+
+API change — `createUserSheet` now accepts an options object instead of a positional `extraFields`:
+
+```ts
+await adapter.createUserSheet(userId, role, email, {
+  actorTokens: { access_token, refresh_token, expiry_date },
+  extraFields: { full_name: 'Alice', auth_provider: 'google' },
+})
+```
+
+Implementation checklist:
+
+- [x] Define `OAuthTokens` interface in `types.ts`
+- [x] Define `CreateUserSheetOptions` interface (`actorTokens?`, `extraFields?`) in `types.ts`
+- [x] Add `credentials` field to `SheetAdapter` (needed to instantiate actor `SheetClient`)
+- [x] Update `createUserSheet` signature: 4th param becomes `options?: CreateUserSheetOptions`
+- [x] When `actorTokens` provided: create `actorClient = new SheetClient(credentials, actorTokens)`, call `actorClient.createSpreadsheet(...)`, share with admin via `actorClient.shareWithUser`
+- [x] When no `actorTokens`: fall back to current admin-client behaviour (backward compatible)
+- [x] Tests: actor-owned sheet uses actor client, admin fallback still works, extraFields still passed through
+
+---
+
+### 8.2 Folder and subfolder organisation for Drive (Medium)
+
+**Problem**: Every sheet lands at the root of the owning Drive with no grouping. 20 users across 3 roles = a dumped Drive root with no visual structure.
+
+**Requested behaviour**: `driveFolder` config in `SheetAdapterConfig` specifies a root folder name and per-role subfolder names. The package creates the folders if they don't exist, then passes the folder ID as `parents` when creating sheets.
+
+```ts
+// sheet-db.config.ts
+driveFolder: {
+  root: 'bEasy Staging',
+  subfolders: { admin: 'Admin Data', seller: 'Sellers', cleaner: 'Cleaners' },
+}
+```
+
+Result:
+```
+My Drive/
+└── bEasy Staging/
+    ├── Admin Data/  (admin sheet)
+    ├── Sellers/     (seller-* sheets)
+    └── Cleaners/    (cleaner-* sheets)
+```
+
+Implementation checklist:
+
+- [x] Define `DriveFolderConfig` interface (`root: string`, `subfolders?: Record<string, string>`) in `types.ts`
+- [x] Add `driveFolder?: DriveFolderConfig` to `SheetAdapterConfig`
+- [x] Add `findOrCreateFolder(name, parentId?, sharedDriveId?)` to `SheetClient` using Drive API `files.create` with `mimeType: 'application/vnd.google-apps.folder'`
+- [x] Change `SheetClient.createSpreadsheet` to use Drive `files.create` with `parents` and `supportsAllDrives` support
+- [x] Add `_folderCache: Map<string, string>` to `SheetAdapter`
+- [x] Add `resolveFolderForRole(role, client)` helper: resolves root folder, then role subfolder, caches result
+- [x] Call `resolveFolderForRole` in `createUserSheet` before creating the spreadsheet
+- [x] `mock-users` and `sync` respect `driveFolder` when configured
+- [x] Tests: folder is created when `driveFolder` configured, subsequent calls use cache, no folder created when config omitted
+
+---
+
+### 8.3 Pluggable file upload — `StorageAdapter` interface + built-in `DriveStorageAdapter` (High)
+
+**Problem**: No built-in file upload pattern. Every project stores URLs in `string()` columns but with no consistency and no way to upload through the SDK.
+
+**Requested behaviour**: `StorageAdapter` interface + built-in `DriveStorageAdapter`. User passes `storage` to `createSheetAdapter`; swapping providers (S3, GCS, Cloudinary) requires only changing the `storage` value — no other code changes.
+
+```ts
+// Built-in Drive upload
+const adapter = createSheetAdapter({
+  ...,
+  storage: new DriveStorageAdapter({ folder: 'uploads' }),
+})
+
+const url = await adapter.upload(buffer, {
+  filename: 'product.jpg',
+  mimeType: 'image/jpeg',
+  folder: 'uploads/products',  // optional override
+  public: true,
+})
+// url: 'https://drive.google.com/uc?id=FILE_ID'
+
+// Delete
+await adapter.deleteFile(url)
+```
+
+`DriveStorageAdapter` is injected with the adapter's own `SheetClient` at construction time — caller does not repeat credentials.
+
+Implementation checklist:
+
+- [x] Define `UploadOptions` interface (`filename`, `mimeType`, `folder?`, `public?`) in `types.ts`
+- [x] Define `StorageAdapter` interface (`upload(Buffer, UploadOptions): Promise<string>`, `delete(url): Promise<void>`) in `types.ts`
+- [x] Add `uploadFile(buffer, filename, mimeType, folderId?, makePublic?)` to `SheetClient` using Drive API `files.create` with multipart upload
+- [x] Add `deleteFile(fileId)` to `SheetClient`
+- [x] Create `src/adapter/driveStorageAdapter.ts` — `DriveStorageAdapter` class implementing `StorageAdapter`
+- [x] `DriveStorageAdapter` exposes `_setClient(client)` for adapter injection (avoids repeating credentials)
+- [x] Add `storage?: StorageAdapter` to `SheetAdapterConfig`
+- [x] In `SheetAdapter` constructor: inject `this.client` into `DriveStorageAdapter` if `_setClient` is present
+- [x] Add `adapter.upload(file, options)` — delegates to `this.storage.upload()`; throws `SchemaError` if no storage configured
+- [x] Add `adapter.deleteFile(url)` — delegates to `this.storage.delete()`
+- [x] Export `DriveStorageAdapter` and `StorageAdapter`, `UploadOptions` from `src/index.ts`
+- [x] Tests: upload delegates to storageAdapter, deleteFile delegates, throws when no storage configured
+
+---
+
+### 8.4 Per-actor token lifecycle — `TokenStore` interface (High)
+
+**Problem**: Single `.sheet-db-tokens.json` for all calls. One expired token = full outage. No hook for per-user token rotation.
+
+**Requested behaviour**: `TokenStore` interface. Caller provides a store (Redis, DB, file-per-actor). Adapter calls `tokenStore.get(userId)` in `createUserSheet` as a fallback when `actorTokens` is not passed directly — useful when the caller can't pass tokens at call-site but has stored them after the login flow.
+
+```ts
+const adapter = createSheetAdapter({
+  ...,
+  tokenStore: myDatabaseTokenStore,
+})
+```
+
+Implementation checklist:
+
+- [x] Define `TokenStore` interface (`get(actorId): Promise<OAuthTokens | null>`, `set(actorId, tokens): Promise<void>`) in `types.ts`
+- [x] Add `tokenStore?: TokenStore` to `SheetAdapterConfig`
+- [x] Store `tokenStore` reference in `SheetAdapter`
+- [x] In `createUserSheet`: if `actorTokens` not provided and `tokenStore` is configured, call `await tokenStore.get(userId)` as fallback
+- [x] Export `TokenStore` and `OAuthTokens` from `src/index.ts`
+- [x] Tests: tokenStore.get called when no actorTokens passed, actorTokens takes priority over tokenStore
+
+---
+
+### 8.5 Shared Drive (Google Workspace) support (Medium)
+
+**Problem**: `spreadsheets.create` with no `supportsAllDrives` fails on Google Workspace Shared Drives. Teams can't use Shared Drives for centralised staging data.
+
+**Requested behaviour**: Optional `sharedDriveId` in `SheetAdapterConfig`. All sheet creation passes `supportsAllDrives: true` and places sheets in the Shared Drive root (or Drive folder when `driveFolder` is also set).
+
+```ts
+const adapter = createSheetAdapter({
+  ...,
+  sharedDriveId: process.env.SHARED_DRIVE_ID,
+})
+```
+
+Implementation checklist:
+
+- [x] Add `sharedDriveId?: string` to `SheetAdapterConfig`
+- [x] Store `sharedDriveId` in `SheetAdapter`
+- [x] Pass `sharedDriveId` to `createSpreadsheet` → Drive `files.create` uses `supportsAllDrives: true` and sets `parents: [sharedDriveId]` when no folder configured
+- [x] Pass `sharedDriveId` to `findOrCreateFolder` for folder lookup in Shared Drive
+- [x] Tests: sharedDriveId passed through to client createSpreadsheet call
+
+---
+
+### Summary table
+
+| # | Feature | Impact | Complexity | Status |
+|---|---------|--------|------------|--------|
+| 8.1 | Actor-owned sheets | High | High | [ ] |
+| 8.2 | Drive folder organisation | Medium | Low | [ ] |
+| 8.3 | Pluggable file upload (DriveStorageAdapter) | High | Medium | [ ] |
+| 8.4 | TokenStore per-actor lifecycle | High | Medium | [ ] |
+| 8.5 | Shared Drive support | Medium | Low | [ ] |

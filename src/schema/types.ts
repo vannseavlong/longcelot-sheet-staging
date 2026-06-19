@@ -86,3 +86,47 @@ export interface DeleteOptions {
 }
 
 export type FKResolver = (tableName: string, columnName: string, value: unknown) => Promise<boolean>;
+
+// ── Drive / Auth types ────────────────────────────────────────────────────────
+
+export interface OAuthTokens {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  expiry_date?: number | null;
+  id_token?: string | null;
+  token_type?: string | null;
+  scope?: string | null;
+}
+
+export interface TokenStore {
+  get(actorId: string): Promise<OAuthTokens | null>;
+  set(actorId: string, tokens: OAuthTokens): Promise<void>;
+}
+
+export interface DriveFolderConfig {
+  /** Folder name at the root of My Drive (or Shared Drive when sharedDriveId is set). Created if missing. */
+  root: string;
+  /** Map of actor role → subfolder name inside root. Falls back to the role name when omitted. */
+  subfolders?: Record<string, string>;
+}
+
+export interface UploadOptions {
+  filename: string;
+  mimeType: string;
+  /** Subfolder path relative to driveFolder.root (or Drive root). Created if missing. */
+  folder?: string;
+  /** When true, sets a Drive permission of type 'anyone', role 'reader'. */
+  public?: boolean;
+}
+
+export interface StorageAdapter {
+  upload(file: Buffer, options: UploadOptions): Promise<string>;
+  delete(url: string): Promise<void>;
+}
+
+export interface CreateUserSheetOptions {
+  /** OAuth tokens from the actor's own Google login. When provided, the sheet is created in the actor's Drive. */
+  actorTokens?: OAuthTokens;
+  /** Extra fields spread into the users table create() call. */
+  extraFields?: Record<string, unknown>;
+}
