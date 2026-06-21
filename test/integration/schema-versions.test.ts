@@ -144,7 +144,7 @@ describe('onSchemaMismatch: warn', () => {
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     await ctx.table('courses').findMany();
 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Schema mismatch'));
@@ -164,7 +164,7 @@ describe('onSchemaMismatch: error', () => {
     const hashV1 = computeSchemaHash(courseSchema);
     await adapter.upsertSchemaVersion(USER_SHEET, 'courses', hashV1, 2);
 
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     await expect(ctx.table('courses').findMany()).rejects.toBeInstanceOf(SchemaMismatchError);
   });
 
@@ -179,7 +179,7 @@ describe('onSchemaMismatch: error', () => {
     const currentHash = computeSchemaHash(courseSchemaV2);
     await adapter.upsertSchemaVersion(USER_SHEET, 'courses', currentHash, 3);
 
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     await expect(ctx.table('courses').findMany()).resolves.toBeDefined();
   });
 
@@ -192,7 +192,7 @@ describe('onSchemaMismatch: error', () => {
     adapter.registerSchema(courseSchema);
     // No version stored at all
 
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     await expect(ctx.table('courses').findMany()).rejects.toBeInstanceOf(SchemaMismatchError);
   });
 });
@@ -211,7 +211,7 @@ describe('onSchemaMismatch: auto-sync', () => {
     const hashV1 = computeSchemaHash(courseSchema);
     await adapter.upsertSchemaVersion(USER_SHEET, 'courses', hashV1, 2);
 
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     // Should not throw — auto-sync handles it
     await expect(ctx.table('courses').findMany()).resolves.toBeDefined();
 
@@ -232,7 +232,7 @@ describe('onSchemaMismatch: auto-sync', () => {
     await adapter.upsertSchemaVersion(USER_SHEET, 'courses', currentHash, 3);
 
     const addSheetSpy = jest.spyOn(client, 'addSheet');
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     await ctx.table('courses').findMany();
 
     // syncSchema was not triggered — no addSheet calls for 'courses'
@@ -260,7 +260,7 @@ describe('Admin role bypasses schema version checks', () => {
     // No version stored → if check ran for admin, it would throw
     // But admin bypasses the check entirely
 
-    const ctx = adapter.withContext({ userId: 'admin1', role: 'admin', actorSheetId: ADMIN_SHEET });
+    const ctx = adapter.withContext({ userId: 'admin1', actor: 'admin', actorSheetId: ADMIN_SHEET });
     await expect(ctx.table('users').findMany()).resolves.toBeDefined();
   });
 });
@@ -282,7 +282,7 @@ describe('Schema check promise is shared across table() calls', () => {
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const ctx = adapter.withContext({ userId: 'u1', role: 'student', actorSheetId: USER_SHEET });
+    const ctx = adapter.withContext({ userId: 'u1', actor: 'student', actorSheetId: USER_SHEET });
     // Both calls share the same pre-flight Promise
     await ctx.table('courses').findMany();
     await ctx.table('courses').findMany();

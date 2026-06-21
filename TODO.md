@@ -894,6 +894,18 @@ CREATE TABLE users (
 - [ ] Audit logs
 - [ ] Row-level permissions
 
+### Phase 9 — CLI Naming, Docs Alignment & Dev/Prod Parity (2026-06-21)
+
+- [x] 9.1 Rename `migrate` → `export-data` (keep deprecated alias); update CLI, README
+- [x] 9.3 Add "Which export command do I need?" decision table to README
+- [x] 9.4 Add `export-data --all-users [--dry-run]` — aggregate all user-sheet data for bulk SQL migration
+- [x] 9.5 Rename `withContext({ role })` → `withContext({ actor })` with deprecation alias; add "Actors vs Roles" section to README
+- [x] 9.6 Document dev/prod parity gap in README
+- [ ] 9.1 Update `CHANGELOG.md` with breaking change note for `migrate` rename
+- [ ] 9.2 Align API.md on `export --prisma/--sql` (remove contradictions vs README)
+- [ ] 9.3 Mirror decision table in API.md under "Migration scenarios"
+- [ ] 9.5 Update `API.md` `UserContext` type definition + update `Docs/architecture.md`
+
 ---
 
 ## Documentation Updates Required
@@ -1258,3 +1270,139 @@ Implementation checklist:
 | 8.3 | Pluggable file upload (DriveStorageAdapter) | High | Medium | [ ] |
 | 8.4 | TokenStore per-actor lifecycle | High | Medium | [ ] |
 | 8.5 | Shared Drive support | Medium | Low | [ ] |
+
+---
+
+## Phase 9: CLI Naming, Docs Alignment & Dev/Prod Parity (bEasy feedback — 2026-06-21)
+
+Discovered while wiring the bEasy RBAC system end-to-end and evaluating the production migration story.
+
+---
+
+### 9.1 `migrate` command is misnamed — rename to `export-data` (High)
+
+**Problem**: `sheet-db migrate` generates a script that reads row data and stubs an `insertRow()` call. In the industry, "migrate" universally means schema changes only (DDL). Every developer coming from Prisma Migrate, Rails, Flyway, or Liquibase will expect DDL output, not a data copy script. Moving row data is called ETL, data export, or data import — not migration.
+
+**Fix**: Rename the command. Keep both capabilities but with names that reflect what they do.
+
+| Current | Renamed to | What it does |
+|---|---|---|
+| `sheet-db migrate` | `sheet-db export-data` | Generates script that reads row data from Sheets and stubs target DB inserts |
+| `sheet-db export --prisma/--sql` | Keep as-is | Exports table structure (DDL / Prisma schema) |
+
+Implementation checklist:
+
+- [x] Rename `migrate` command file to `export-data.ts` in `src/cli/`
+- [x] Update CLI entry point to register `export-data` instead of `migrate`
+- [x] Keep `migrate` as a deprecated alias with a warning: `"migrate is deprecated — use export-data instead"`
+- [x] Update `README.md` migration section to use `export-data`
+- [x] Update `--help` output for the renamed command
+- [x] Tests: renamed command runs, deprecated alias emits warning
+- [ ] Update `API.md` command reference (rename section, update examples)
+- [ ] Update `CHANGELOG.md` with breaking change note
+
+---
+
+### 9.2 README and API.md contradict each other on `export --prisma/--sql` (Medium)
+
+**Problem**: `README.md` marks `export --prisma` and `export --sql` as "coming soon". `API.md` documents them as fully available with examples. A developer reading README thinks the feature doesn't exist and looks for a workaround.
+
+**Fix**: Align both documents to reflect actual implementation state.
+
+Implementation checklist:
+
+- [x] Audit `README.md` Migration Path section — remove all "coming soon" markers for already-implemented commands
+- [ ] Audit `API.md` — confirm `export --prisma` and `export --sql` examples match actual CLI behaviour
+- [ ] Add a single source-of-truth note in `README.md`: "For full command reference, see [API.md](./API.md)"
+- [ ] If any `export` sub-flags are genuinely unimplemented, mark them `[planned]` consistently in both files
+
+---
+
+### 9.3 No clear docs distinction between schema-only vs schema+data export (High)
+
+**Problem**: The "Migration Path" section mixes schema export and data export under one heading. Projects going to production fall into two camps — those that want structure only and those that need to carry their staging data forward — but the docs don't guide either path clearly.
+
+**Fix**: Add a decision table / decision tree to `README.md`.
+
+Implementation checklist:
+
+- [x] Add "Which export command do I need?" section to `README.md` with a decision table
+- [x] Add brief prose explaining the two migration profiles (structure-only vs full data carry-over)
+- [ ] Mirror the same table in `API.md` under a "Migration scenarios" sub-section
+
+---
+
+### 9.4 `export-data --all-users` missing — blocks full multi-user data migration (High)
+
+**Problem**: `sheet-db migrate` (data export) only covers the admin sheet. In the per-user-sheet model, staging data is spread across individual actor sheets (`actor_sheet_id`). There is no automated way to gather all user data for a bulk insert into a production SQL DB.
+
+**Fix**: Add `--all-users` flag to `export-data`.
+
+```bash
+sheet-db export-data                    # admin sheet only (current behaviour)
+sheet-db export-data --all-users        # admin + all registered user sheets
+sheet-db export-data --all-users --dry-run  # preview without writing
+```
+
+Implementation checklist:
+
+- [x] Add `--all-users` flag to the (renamed) `export-data` command
+- [x] On `--all-users`: read all rows from admin `users` table to collect `actor_sheet_id` values
+- [x] For each actor sheet, read all registered tables and collect rows
+- [x] Generated script aggregates rows per user, annotated with `user_id` FK so target DB associations are correct
+- [x] `--dry-run`: print summary of what would be exported (N users, N tables, N rows) without writing the script
+- [x] Tests: admin-only export, all-users export, dry-run output
+- [ ] Handle Google Sheets API rate limits with exponential backoff in generated script (optional hardening)
+
+---
+
+### 9.5 Actor vs Role conceptual conflation in docs and API (High)
+
+**Problem**: The package uses `role:` as the actor identifier in `withContext()`, but application-level RBAC roles are also called "roles". Developers building RBAC naturally reach for the package's `role` field expecting it to be dynamic — it isn't, which is only discovered after building around it.
+
+| Concept | What it controls | Dynamic? |
+|---|---|---|
+| **Actor** | WHERE data is stored (which Google Sheet / table schemas) | No — defined in config at deploy time |
+| **App RBAC Role** | WHAT a user can do (read orders, edit products) | Yes — rows in `roles` + `role_permissions` tables |
+
+**Fix**: Rename the API field and add explanatory docs.
+
+Implementation checklist:
+
+- [x] Rename `withContext({ role })` → `withContext({ actor })` in `UserContext` type (with backward-compatible `role` alias + deprecation warning at runtime)
+- [x] Update all internal references to `context.role` → `context.actor` (via NormalisedContext)
+- [x] Add "Actors vs Application Roles" section to `README.md` explaining the distinction
+- [x] Update all `withContext` examples in README to use `actor:` instead of `role:`
+- [x] Tests: both `actor` and deprecated `role` field work; deprecation warning logged when `role` used
+- [ ] Add the same section to `Docs/architecture.md`
+- [ ] Update `API.md` type definitions (`UserContext`) to reflect rename
+
+---
+
+### 9.6 Dev/prod parity gap — one shared dev sheet vs per-user prod sheets (Medium)
+
+**Problem**: `sheet-db.config.ts` maps each actor type to one env var (`DEV_OPERATION_SHEET_ID`). All operation users in dev share one sheet. But `createUserSheet()` creates individual sheets per user in production. Bugs that only appear with isolated sheets (data isolation, schema version per user) are invisible in dev.
+
+**Fix**: Document the gap explicitly and optionally add a multi-sheet dev mode.
+
+Implementation checklist:
+
+- [x] Add "Dev vs Production data model" section to `README.md` explaining the difference
+- [ ] In `mock-users` output, print a note: "Note: dev uses shared actor sheets. Production creates one sheet per user via createUserSheet()."
+- [ ] (Optional) Add `--multi-sheet` flag to `mock-users` that creates N separate actor sheets (one per mock user) to simulate production topology
+- [ ] Tests (if `--multi-sheet` implemented): N sheets created, each with correct schema headers
+
+---
+
+### Summary table
+
+| # | Issue | Type | Impact |
+|---|-------|------|--------|
+| 9.1 | `migrate` misnamed — rename to `export-data` | Naming / UX | High |
+| 9.2 | README and API.md contradict on `export --prisma/--sql` | Docs bug | Medium |
+| 9.3 | No clear schema-only vs schema+data export guidance | Docs / UX | High |
+| 9.4 | `export-data --all-users` missing | Missing feature | High |
+| 9.5 | Actor vs Role conceptual conflation | Docs / API naming | High |
+| 9.6 | Dev/prod parity gap (shared dev sheet vs per-user prod) | Architecture / DX | Medium |
+
+_Last updated: 2026-06-21_

@@ -80,7 +80,7 @@ describe('same-actor access', () => {
     const { adapter } = makeAdapter();
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
     });
     expect(() => ctx.table('teachers')).not.toThrow();
@@ -92,7 +92,7 @@ describe('same-actor access', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       // No targetRole / targetSheetId
     });
@@ -109,7 +109,7 @@ describe('asActor() helper', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
     });
     const crossCtx = ctx.asActor('student', 'student-sheet-id');
@@ -131,7 +131,7 @@ describe('cross-actor access with permission', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -147,7 +147,7 @@ describe('cross-actor access with permission', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -164,7 +164,7 @@ describe('cross-actor access with permission', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -182,7 +182,7 @@ describe('cross-actor access without permission', () => {
     const { adapter } = makeAdapter(); // no permissions
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -196,7 +196,7 @@ describe('cross-actor access without permission', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -210,7 +210,7 @@ describe('cross-actor access without permission', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -224,7 +224,7 @@ describe('cross-actor access without permission', () => {
     });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       // targetSheetId missing
@@ -240,7 +240,7 @@ describe('admin bypass', () => {
     const { adapter } = makeAdapter(); // no permissions
     const ctx = adapter.withContext({
       userId: 'admin_001',
-      role: 'admin',
+      actor: 'admin',
       actorSheetId: 'admin-sheet-id',
     });
     // Admin context uses adminSheetId for student tables
@@ -252,7 +252,7 @@ describe('admin bypass', () => {
     const { adapter } = makeAdapter();
     const ctx = adapter.withContext({
       userId: 'admin_001',
-      role: 'admin',
+      actor: 'admin',
       actorSheetId: 'admin-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -271,7 +271,7 @@ describe('CRUD routing to correct sheet', () => {
     });
     return adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
       targetRole: 'student',
       targetSheetId: 'student-sheet-id',
@@ -350,7 +350,7 @@ describe('CRUD routing to correct sheet', () => {
     const { adapter } = makeAdapter({ client });
     const ctx = adapter.withContext({
       userId: 'teacher_001',
-      role: 'teacher',
+      actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
     });
     await ctx.table('teachers').findMany();

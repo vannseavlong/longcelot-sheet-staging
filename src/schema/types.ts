@@ -47,7 +47,18 @@ export interface ActorPermission {
 
 export interface UserContext {
   userId: string;
-  role: string;
+  /**
+   * The actor (data domain) this context operates on — e.g. 'admin', 'seller', 'student'.
+   * Maps to which Google Sheet and table schemas are used.
+   * Preferred over the deprecated `role` field.
+   */
+  actor?: string;
+  /**
+   * @deprecated Use `actor` instead. `role` conflates the package's actor/data-domain concept
+   * with application-level RBAC roles, which are a separate concern.
+   * Still accepted for backward compatibility; a console.warn is emitted when used.
+   */
+  role?: string;
   actorSheetId?: string;
   targetRole?: string;
   targetSheetId?: string;

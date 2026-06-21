@@ -18,6 +18,29 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [Unreleased] — Phase 9 (CLI naming, docs alignment, actor/role API)
+
+### Added
+
+- **`sheet-db export-data`** — new CLI command replacing `sheet-db migrate`. Generates an `export-data.js` script that reads row data from Google Sheets and stubs an `insertRow()` call for the target DB. Keeps full backward compatibility: `sheet-db migrate` still works but emits a deprecation warning.
+- **`sheet-db export-data --all-users`** — extends data export to cover every registered user sheet. Reads all `actor_sheet_id` values from the admin `users` table and generates a per-user loop in the script, with `userId` passed to `insertRow` for correct FK association in the target DB.
+- **`sheet-db export-data --dry-run`** — previews what would be exported without writing any files.
+- **`UserContext.actor`** — new preferred field on `UserContext` for the actor/data-domain identifier. Replaces the misleadingly named `role` field.
+
+### Changed
+
+- **`UserContext.role` is deprecated** — the `role` field conflates the package's data-domain concept (which Google Sheet / schemas to use) with application-level RBAC roles (what a user is allowed to do). Renamed to `actor`. Both fields are accepted; passing only `role` emits a `console.warn` deprecation notice and still works. Update call sites to `withContext({ actor: '...' })`.
+- **All internal `withContext` call sites** updated to `actor:` in CLI commands (`seed`, `sync`, `mock-users`) and adapter helper (`asActor`).
+- **README — Migration Path section** rewritten: removed "coming soon" labels, added "Which export command do I need?" decision table, added "Actors vs Application Roles" comparison table, added "Dev vs Production data model" note.
+- **API.md** — `withContext()` and all cross-actor examples updated to `actor:`, `UserContext` type updated, `sheet-db migrate` section replaced with `sheet-db export-data`, migration scenarios table added.
+
+### Deprecated
+
+- **`sheet-db migrate`** — renamed to `sheet-db export-data`. The alias is kept and will be removed in a future minor release. Update your scripts and CI pipelines.
+- **`UserContext.role`** — use `actor` instead. Will be removed in a future minor release.
+
+---
+
 ## [0.1.19] — 2026-06-19
 
 ### Added

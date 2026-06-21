@@ -222,7 +222,8 @@ Creates a new adapter instance with user context. Optionally starts an async sch
 ```typescript
 {
   userId: string;
-  role: string;
+  actor: string;         // preferred — the data domain (e.g. 'admin', 'seller', 'student')
+  role?: string;         // @deprecated — use actor instead (accepted for backward compat, emits console.warn)
   actorSheetId?: string;
   // Cross-actor fields (see Cross-Actor Operations below)
   targetRole?: string;
@@ -237,7 +238,7 @@ Creates a new adapter instance with user context. Optionally starts an async sch
 ```typescript
 const userContext = adapter.withContext({
   userId: 'user_123',
-  role: 'student',
+  actor: 'student',      // preferred
   actorSheetId: 'sheet-id-xyz',
 });
 ```
@@ -259,7 +260,7 @@ Convenience method — clones the current context and sets cross-actor fields. R
 // Teacher accessing a student's sheet
 const teacherCtx = adapter.withContext({
   userId: 'teacher_001',
-  role: 'teacher',
+  actor: 'teacher',
   actorSheetId: 'teacher-sheet-id',
 });
 const studentCtx = teacherCtx.asActor('student', 'student-sheet-id-123');
@@ -696,19 +697,35 @@ npx sheet-db export --sql
 npx sheet-db export --prisma --sql --output ./migration
 ```
 
-### `sheet-db migrate [--table <name>] [--output <dir>] [--dry-run]`
+### `sheet-db export-data [--table <name>] [--all-users] [--output <dir>] [--dry-run]`
 
-Generates a `migrate.js` script that reads every table from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client to move data.
+Generates an `export-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
 
-- `--table <name>` — migrate a single table only
+> **Actors vs RBAC roles** — see [Actors vs Application Roles](#actors-vs-application-roles) below.
+
+**Flags:**
+- `--table <name>` — export a single table only
+- `--all-users` — also reads every registered user's `actor_sheet_id` from the admin `users` table and exports their actor sheets. The generated script includes a per-user loop with `userId` passed to `insertRow` so target DB rows can be associated with the correct user FK.
 - `--output <dir>` — output directory (default: current directory)
-- `--dry-run` — preview migration plan without writing any files
+- `--dry-run` — preview export plan without writing any files
 
 ```bash
-npx sheet-db migrate
-npx sheet-db migrate --table bookings
-npx sheet-db migrate --dry-run
+npx sheet-db export-data
+npx sheet-db export-data --all-users
+npx sheet-db export-data --all-users --dry-run
+npx sheet-db export-data --table bookings
 ```
+
+> **Deprecated alias**: `sheet-db migrate` still works but emits a deprecation warning. Rename your scripts to `sheet-db export-data`. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes; this command moves row data.
+
+### Migration scenarios
+
+| Goal | Command |
+|------|---------|
+| Copy table structure only (schema / DDL) | `sheet-db export --prisma` or `--sql` |
+| Copy structure + admin sheet row data | `sheet-db export-data` |
+| Copy structure + all user-sheet row data | `sheet-db export-data --all-users` |
+| Preview export plan without writing files | add `--dry-run` to either command |
 
 ### `sheet-db doctor`
 
@@ -744,7 +761,7 @@ const adapter = createSheetAdapter({
 // Option A: withContext with targetRole + targetSheetId
 const ctx = adapter.withContext({
   userId: 'teacher_001',
-  role: 'teacher',
+  actor: 'teacher',
   actorSheetId: 'teacher-sheet-id',
   targetRole: 'student',
   targetSheetId: 'student-sheet-id-123',
@@ -752,7 +769,7 @@ const ctx = adapter.withContext({
 
 // Option B: asActor() shorthand
 const ctx = adapter
-  .withContext({ userId: 'teacher_001', role: 'teacher', actorSheetId: 'teacher-sheet-id' })
+  .withContext({ userId: 'teacher_001', actor: 'teacher', actorSheetId: 'teacher-sheet-id' })
   .asActor('student', 'student-sheet-id-123');
 
 // All CRUD operations now target the student sheet
@@ -814,12 +831,24 @@ interface ColumnDefinition {
 ```typescript
 interface UserContext {
   userId: string;
-  role: string;
+  /** Preferred. The data domain (actor) for this operation — e.g. 'admin', 'seller', 'student'. */
+  actor?: string;
+  /** @deprecated Use actor instead. Accepted for backward compat; emits console.warn when used. */
+  role?: string;
   actorSheetId?: string;
   targetRole?: string;      // cross-actor: which actor type to access
   targetSheetId?: string;   // cross-actor: the target actor's sheet ID
 }
 ```
+
+> **actor vs role**: `actor` is the sheet-db concept of a *data domain* (which Google Sheet, which schemas). It is **not** an application-level RBAC role. If your app has dynamic permissions (admin/manager/viewer), build those in a `roles` + `role_permissions` table and enforce them in your own middleware — sheet-db intentionally does not provide RBAC.
+
+### Actors vs Application Roles
+
+| Concept | Controls | Dynamic? | Where defined |
+|---------|----------|----------|---------------|
+| **Actor** (`actor:`) | Which Google Sheet + table schemas to use | No — fixed in `sheet-db.config.ts` | Config file |
+| **App RBAC role** | What a user is allowed to do in your app | Yes — rows in your app's DB | Your app layer |
 
 ### `ActorPermission`
 

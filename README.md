@@ -152,7 +152,7 @@ const bookings = await userContext.table('bookings').findMany({
 
 ### Actors
 
-Actors are user roles that determine where data is stored. Each actor maps to a sheet ID via an environment variable:
+Actors are **data domains** — they determine *where* data is stored (which Google Sheet and which table schemas apply). Each actor maps to a sheet ID via an environment variable:
 
 ```typescript
 // sheet-db.config.ts
@@ -174,6 +174,26 @@ DEV_SELLER_SHEET_ID=1GHIyourDevSellerSheetId  # optional for local dev
 - **user / seller**: Each actor gets a personal sheet at runtime; `DEV_*_SHEET_ID` values let you sync schemas during development without registering real users
 
 `sheet-db init` scaffolds all env vars automatically based on the actors you define.
+
+### Actors vs Application Roles
+
+These two concepts are distinct — confusing them leads to wrong architecture decisions:
+
+| Concept | What it controls | Dynamic? | Where defined |
+|---------|-----------------|----------|---------------|
+| **Actor** | *Where* data is stored (which Google Sheet, which schemas) | No — fixed in `sheet-db.config.ts` | Config file |
+| **App RBAC role** | *What* a user can do (read orders, edit products, etc.) | Yes — rows in `roles` / `role_permissions` tables | Your app's DB layer |
+
+The `actor` field in `withContext()` is the sheet-db actor concept, not an RBAC role. If you need fine-grained permissions (e.g. "manager can approve but not delete"), build a `roles` + `role_permissions` table in the admin sheet and enforce it in your application layer — sheet-db intentionally does not provide RBAC.
+
+### Dev vs Production data model
+
+In development, each actor type shares **one** sheet (`DEV_SELLER_SHEET_ID` for all sellers). In production, `createUserSheet()` creates **one sheet per registered user**. This means:
+
+- Some bugs that only appear with per-user data isolation are invisible in dev.
+- Use `sheet-db mock-users` to create separate actor sheets that mirror the production topology for more realistic local testing.
+
+> **Tip**: Add a "Dev vs Production" section to your own `README.md` noting which tests cover per-user-sheet scenarios.
 
 ### Schema DSL
 
@@ -253,9 +273,10 @@ Every operation requires context:
 ```typescript
 const context = adapter.withContext({
   userId: 'user_123',
-  role: 'user',
+  actor: 'user',       // preferred — maps to the actor data domain
   actorSheetId: 'sheet-id',
 });
+// Note: role: is accepted for backward compatibility but deprecated in favour of actor:
 ```
 
 Permissions are enforced automatically:
@@ -657,17 +678,39 @@ When you're ready for production:
 3. Update CRUD calls (minimal changes)
 4. No logic trapped in Sheets
 
-We are building this adapter with a strict schema constraint so that graduating to production is effortless. By keeping logic in JS and using standard Data Types, your TS definitions can be directly ported over to a Prisma `schema.prisma` file later.
+### Which export command do I need?
 
-**Upcoming CLI for migration**:
+| Goal | Command |
+|------|---------|
+| Copy table structure only (schema / DDL) | `sheet-db export --prisma` or `--sql` |
+| Copy structure + admin sheet row data | `sheet-db export-data` |
+| Copy structure + all user-sheet row data | `sheet-db export-data --all-users` |
+| Preview export plan without writing files | add `--dry-run` to either command |
+
+### Schema export (structure only)
 
 ```bash
-# Export schemas to Prisma (coming soon)
+# Export to Prisma schema
 npx sheet-db export --prisma --output ./prisma
 
-# Export schemas to SQL DDL (coming soon)
+# Export to SQL DDL (CREATE TABLE statements)
 npx sheet-db export --sql --output ./migrations
 ```
+
+### Data export (row data → production DB)
+
+```bash
+# Admin sheet only
+npx sheet-db export-data
+
+# Admin sheet + all registered user sheets
+npx sheet-db export-data --all-users
+
+# Preview without writing
+npx sheet-db export-data --all-users --dry-run
+```
+
+`export-data` generates a `export-data.js` script. Replace the `insertRow()` stub with your real DB client (Prisma, Sequelize, etc.) and run it once.
 
 ```typescript
 // Development (Sheets)
@@ -677,11 +720,7 @@ const adapter = createSheetAdapter({ ... });
 const adapter = createSQLAdapter({ ... });
 ```
 
-**Data migration workflow**:
-1. Export your schemas using `sheet-db export` (coming soon)
-2. Fetch all data from Sheets using the adapter: `await adapter.table('x').findMany()`
-3. Insert data into your production database
-4. Swap the adapter in your code
+> **Note**: `sheet-db migrate` is deprecated — use `sheet-db export-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes. `export-data` correctly names what this command does: move row data.
 
 ## ⚡ Performance
 

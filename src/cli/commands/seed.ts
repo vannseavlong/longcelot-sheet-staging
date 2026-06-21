@@ -110,7 +110,7 @@ export async function seedCommand(seedFile: string, opts?: SeedOptions) {
   }
 
   // Use admin context for seeding
-  const adapterWithContext = adapter.withContext({ userId: 'seed-cli', role: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! });
+  const adapterWithContext = adapter.withContext({ userId: 'seed-cli', actor: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! });
 
   const isSkipExisting = opts?.skipExisting ?? false;
   const isUpsert = opts?.upsert ?? false;
@@ -183,7 +183,7 @@ export async function seedCommand(seedFile: string, opts?: SeedOptions) {
 
     for (const user of users) {
       if (!user.actor_sheet_id) continue;
-      const targetAdapter = adapter.withContext({ userId: 'seed-cli', role: 'admin', actorSheetId: user.actor_sheet_id as string });
+      const targetAdapter = adapter.withContext({ userId: 'seed-cli', actor: 'admin', actorSheetId: user.actor_sheet_id as string });
 
       for (const [tableName, records] of Object.entries(seedData)) {
         if (!Array.isArray(records)) continue;

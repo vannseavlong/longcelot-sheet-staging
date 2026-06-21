@@ -12,6 +12,16 @@ import {
   UploadOptions,
   CreateUserSheetOptions,
 } from '../schema/types';
+
+// Internal context type — always has both actor and role set (normalised by withContext).
+interface NormalisedContext {
+  userId: string;
+  actor: string;
+  role: string;
+  actorSheetId?: string;
+  targetRole?: string;
+  targetSheetId?: string;
+}
 import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
 import { SchemaMismatchError } from '../errors/SchemaMismatchError';
@@ -58,7 +68,7 @@ export class SheetAdapter {
   private credentials: { clientId: string; clientSecret: string; redirectUri: string };
   private adminSheetId: string;
   private schemas: Map<string, TableSchema> = new Map();
-  private context?: UserContext;
+  private context?: NormalisedContext;
   private onSchemaMismatch?: SchemaMismatchBehaviour;
   private permissions?: Record<string, ActorPermission>;
   private driveFolder?: DriveFolderConfig;
@@ -100,12 +110,35 @@ export class SheetAdapter {
   }
 
   withContext(context: UserContext): SheetAdapter {
+    // Normalise actor/role: prefer `actor`, fall back to deprecated `role` with a warning.
+    let actorValue: string;
+    if (context.actor) {
+      actorValue = context.actor;
+    } else if (context.role) {
+      console.warn(
+        '[sheet-db] UserContext.role is deprecated — use actor instead. ' +
+        'See: https://github.com/longcelot/sheet-db#actors-vs-application-roles'
+      );
+      actorValue = context.role;
+    } else {
+      throw new Error('[sheet-db] withContext() requires either actor or role in UserContext');
+    }
+
+    const normalised: NormalisedContext = {
+      userId: context.userId,
+      actor: actorValue,
+      role: actorValue,
+      actorSheetId: context.actorSheetId,
+      targetRole: context.targetRole,
+      targetSheetId: context.targetSheetId,
+    };
+
     const newAdapter = Object.create(this) as SheetAdapter;
-    newAdapter.context = context;
+    newAdapter.context = normalised;
     newAdapter._pendingSchemaCheck = undefined;
 
-    if (this.onSchemaMismatch && context.actorSheetId && context.role !== 'admin') {
-      newAdapter._pendingSchemaCheck = newAdapter._doSchemaVersionCheck(context);
+    if (this.onSchemaMismatch && normalised.actorSheetId && normalised.role !== 'admin') {
+      newAdapter._pendingSchemaCheck = newAdapter._doSchemaVersionCheck(normalised);
     }
 
     return newAdapter;
@@ -115,7 +148,14 @@ export class SheetAdapter {
     if (!this.context) {
       throw new PermissionError('Context required before calling asActor()', undefined);
     }
-    return this.withContext({ ...this.context, targetRole, targetSheetId });
+    // Pass actor: (not role:) so withContext does not emit a deprecation warning.
+    return this.withContext({
+      userId: this.context.userId,
+      actor: this.context.actor,
+      actorSheetId: this.context.actorSheetId,
+      targetRole,
+      targetSheetId,
+    });
   }
 
   table(tableName: string): CRUDOperations {

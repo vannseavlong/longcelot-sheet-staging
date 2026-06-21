@@ -93,7 +93,7 @@ export async function mockUsersCommand(countArg?: string | number) {
   // createUserSheet is an admin operation — requires admin context
   const adminAdapter = adapter.withContext({
     userId: 'mock-cli',
-    role: 'admin',
+    actor: 'admin',
     actorSheetId: adminSheetId,
   });
 

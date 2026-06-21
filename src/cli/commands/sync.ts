@@ -235,7 +235,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
     let actorFailed = 0;
     const syncAdapter = actorCfg.role === 'admin'
       ? adapter
-      : adapter.withContext({ userId: 'sync-cli', role: actorCfg.role, actorSheetId: sheetId });
+      : adapter.withContext({ userId: 'sync-cli', actor: actorCfg.role, actorSheetId: sheetId });
 
     for (const schema of actorSchemas) {
       try {
@@ -288,7 +288,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
 
           const userAdapter = adapter.withContext({
             userId: user.user_id as string,
-            role: user.role as string,
+            actor: user.role as string,
             actorSheetId,
           });
 
