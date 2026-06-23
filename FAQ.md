@@ -1,0 +1,460 @@
+# FAQ — longcelot-sheet-db
+
+Answers to architectural, design, and integration questions collected during development and real-world usage.
+
+---
+
+## Table of Contents
+
+1. [Authentication & OAuth](#1-authentication--oauth)
+2. [Actors vs RBAC Roles](#2-actors-vs-rbac-roles)
+3. [Security Model](#3-security-model)
+4. [Schema Design — Primary Keys & Foreign Keys](#4-schema-design--primary-keys--foreign-keys)
+5. [Schema Versioning & Keeping User Sheets in Sync](#5-schema-versioning--keeping-user-sheets-in-sync)
+6. [Multi-Role Users & Role Promotion](#6-multi-role-users--role-promotion)
+7. [Cross-Actor Access](#7-cross-actor-access)
+8. [Migration to Production](#8-migration-to-production)
+9. [Developer Workflow & CLI](#9-developer-workflow--cli)
+
+---
+
+## 1. Authentication & OAuth
+
+### Can I skip Google OAuth2?
+
+No. OAuth2 is required because the Google Sheets API requires it for all read/write operations. There is no API key or service account shortcut built into this package.
+
+### My app already has its own auth (JWT, sessions). Does adding this package break it?
+
+No. OAuth in sheet-db is strictly for **backend-to-Google-Sheets communication**. Your app's own authentication is completely untouched. You just map your authenticated user to a sheet-db context when you need to access data:
+
+```typescript
+app.get('/courses', async (req, res) => {
+  const user = req.user; // from your JWT / session
+  const ctx = adapter.withContext({
+    userId: user.id,
+    actor: user.actorType,       // 'teacher', 'student', 'parent', etc.
+    actorSheetId: user.sheetId,  // stored in admin users table
+  });
+  res.json(await ctx.table('courses').findMany());
+});
+```
+
+### There are two different OAuth flows in the package — what does each one do?
+
+| Flow | Who triggers it | Scopes | Purpose |
+|---|---|---|---|
+| **Admin Sheets token** | You, once, at project setup | `spreadsheets`, `drive.file` | Backend reads/writes all Google Sheets via Sheets API |
+| **User login token** | Each end user at login (Google Sign-In) | `openid email profile` | Proves who the user is — no sheet access whatsoever |
+
+The user login token is discarded after identity is confirmed. Your app issues its own JWT (via NextAuth or similar). The admin Sheets token is what actually touches the data on every CRUD call.
+
+### Does the admin OAuth token expire? How is rotation handled?
+
+Yes — Google access tokens expire in **1 hour**. The `googleapis` library handles rotation automatically:
+
+```
+Your API call → googleapis OAuth2Client
+                    ↓
+           access_token expired?  yes
+                    ↓
+           use refresh_token → silently get new access_token
+                    ↓
+           Google Sheets API call succeeds
+```
+
+The `refresh_token` is long-lived and does not expire unless explicitly revoked by the user in their Google account settings. You never handle this manually.
+
+### When a student or teacher logs in with Google OAuth, do they use the admin token to access their own sheet?
+
+Yes — in the default setup, **every CRUD call from every user goes through the admin OAuth token**. Here is why:
+
+- `createUserSheet()` creates each user's personal sheet **inside the admin's Google Drive**
+- The admin account owns those sheets, so the admin token has full access to all of them
+- The user's Google login token has `openid email profile` scopes only — it has zero access to Google Sheets API
+
+The user's token is used exactly once: to verify their identity at login. After that your backend issues them a JWT and the Google token is no longer needed.
+
+**Exception:** If you use `actorTokens` in `createUserSheet()`, the sheet is created in the user's own Google Drive instead. In that case you need to store and manage the user's tokens via `TokenStore` and the adapter will use them for that user's sheet operations.
+
+---
+
+## 2. Actors vs RBAC Roles
+
+### What is an "actor"? How is it different from an application role?
+
+| Concept | Controls | Dynamic? | Defined where |
+|---|---|---|---|
+| **Actor** | *Where* data is stored — which Google Sheet, which table schemas apply | No — fixed at deploy time in `sheet-db.config.ts` | Config file |
+| **App RBAC role** | *What* a user is allowed to do (grade students, approve enrollment, view reports) | Yes — rows in your `roles` / `role_permissions` table | Your app's DB layer |
+
+**Wrong mental model:** actor = permission level
+**Correct mental model:** actor = storage domain / data namespace
+
+Example for a school management app:
+```
+Actor "admin"   → one central sheet (users registry, class schedules, enrollment records)
+Actor "teacher" → one personal sheet per teacher (their classes, grade books, lesson plans)
+Actor "student" → one personal sheet per student (their grades, attendance, assignments)
+Actor "parent"  → one personal sheet per parent (their children's info, communications)
+```
+
+The fact that the admin panel has sub-roles like registrar / librarian / coordinator is irrelevant to sheet-db. Those are RBAC roles — stored in a `roles` table inside the admin sheet and enforced in your middleware. Sheet-db just stores and retrieves the rows.
+
+### My system needs dynamic roles at runtime. Can I create actor schemas dynamically?
+
+No. Actor schemas are static TypeScript files compiled at build time. You cannot add a new table schema while the app is running.
+
+Dynamic permissions belong entirely in your application layer:
+
+```typescript
+// roles table in admin sheet: role_id | user_id | role_name | permissions
+// Admin panel sub-roles: registrar, librarian, coordinator
+function requirePermission(permission: string) {
+  return async (req, res, next) => {
+    const ctx = adapter.withContext({ userId: 'system', actor: 'admin', actorSheetId: ADMIN_SHEET_ID });
+    const userRole = await ctx.table('roles').findOne({ where: { user_id: req.user.id } });
+    if (!userRole?.permissions?.includes(permission)) return res.status(403).json({ error: 'Forbidden' });
+    next();
+  };
+}
+```
+
+Sheet-db stores and retrieves the `roles` table data. Your app enforces it.
+
+### Why do we need `user_id` if every user already has a `sheet_id`?
+
+| Field | Purpose | Survives migration to SQL? |
+|---|---|---|
+| `sheet_id` | Physical storage location in Google Drive | No — meaningless outside Google Sheets |
+| `user_id` | Logical domain identity — your app's true primary key | Yes — becomes `PRIMARY KEY` in your SQL tables |
+
+When you migrate to PostgreSQL or MySQL, `sheet_id` is simply not included in the export. `user_id` ties your entire system together across all tables and services and survives the transition to any database.
+
+---
+
+## 3. Security Model
+
+### All admin-type users (admin, registrar, librarian) share one central sheet. If a registrar gets the Sheet ID, can they see all admin data?
+
+**Only if the Google Sheet is shared with their personal Google account — and it should never be.**
+
+The admin sheet is private on Google Drive. Only the Google account that owns it (your service account or admin Gmail) can open it. A registrar who pastes the Sheet ID into their browser sees a "You need access" page — the same as knowing a private file URL without credentials.
+
+Your staff interact with the system exclusively through your web app. The Sheet ID and admin OAuth token never appear in any client-side code.
+
+The threat model is identical to any backend database: if someone gets your database password they can read your DB. The protection is the same: secure your credentials, never expose them client-side.
+
+### Can I enforce that a librarian cannot see registrar data, even within my own backend?
+
+Sheet-db does **not** provide row-level or column-level security within a sheet. All admin-actor data lives in one sheet. Your options:
+
+| Option | Trade-off |
+|---|---|
+| Enforce RBAC in your API layer (recommended for staging) | All sub-roles see the same sheet but your API only returns what their role allows |
+| Split `admin` into multiple actors (`admin-registrar`, `admin-library`) | Each gets its own sheet — more isolation, more complexity, not the intended design |
+| Column encryption before writing sensitive values | Protects data at rest but adds read/write complexity |
+| Graduate to a production database (PostgreSQL RLS) | First-class row/column-level security — the right answer for production |
+
+For a staging or MVP environment, enforcing RBAC at the API layer is the right call. The full isolation concern belongs to production.
+
+### How do I enforce RBAC between registrar, librarian, and admin users in my API?
+
+```typescript
+// Your middleware reads a roles table from the admin sheet
+app.get('/api/grades', requireRole(['admin', 'registrar']), async (req, res) => {
+  const ctx = adapter.withContext({ userId: 'system', actor: 'admin', actorSheetId: ADMIN_SHEET_ID });
+  res.json(await ctx.table('grades').findMany());
+});
+
+app.post('/api/enrollments/assign', requireRole(['admin', 'registrar']), async (req, res) => {
+  // Only admin and registrar reach here
+});
+```
+
+Sheet-db provides the data storage. Your Express / NestJS / Next.js middleware provides the access control.
+
+---
+
+## 4. Schema Design — Primary Keys & Foreign Keys
+
+### How does `primary()` work?
+
+- Only one `primary()` column allowed per table — throws `SchemaError` if violated
+- For `string()` columns: auto-generates a nanoid on `create()` if no value supplied
+- For `number()` columns: developer must supply the value
+- Implicitly `required()` + `unique()` — no need to chain them explicitly
+- On `update()`: PK column is silently stripped from the data (readonly)
+
+```typescript
+columns: {
+  enrollment_id: string().primary(), // auto-generated nanoid on create
+  score_no:      number().primary(), // developer must supply
+}
+```
+
+### How does `ref()` work for foreign key validation?
+
+```typescript
+columns: {
+  user_id: string().ref('users.user_id'), // FK — validated against users table
+}
+```
+
+On `create()` and `update()`, sheet-db reads the referenced table and checks the value exists. Throws `ValidationError` if not:
+
+```
+FK violation: users.user_id 'u_999' does not exist
+```
+
+Rules:
+- Both the referenced table and column must be registered on the same adapter instance
+- Circular references are detected at `registerSchema()` time (throws `SchemaError`)
+- Skip per-call for bulk seeding: `table.create(data, { skipFKValidation: true })`
+
+---
+
+## 5. Schema Versioning & Keeping User Sheets in Sync
+
+### How do I ensure all registered user sheets get the latest schema after I update it?
+
+Two-layer guarantee:
+
+**Layer 1 — Runtime detection via schema hash**
+
+On every `withContext()` call for a non-admin user, sheet-db computes a SHA-256 hash of the current schema and compares it against the hash stored in the built-in `schema_versions` admin table. Configure the mismatch behaviour:
+
+```typescript
+createSheetAdapter({ onSchemaMismatch: 'warn' })      // log to stderr, continue (default)
+createSheetAdapter({ onSchemaMismatch: 'error' })     // throw SchemaMismatchError
+createSheetAdapter({ onSchemaMismatch: 'auto-sync' }) // sync the actor sheet before proceeding
+```
+
+**Layer 2 — Bulk push via CLI**
+
+```bash
+npx sheet-db sync --all-users           # push schema changes to every registered user sheet
+npx sheet-db sync --all-users --dry-run # preview what would change without writing
+```
+
+Reads all `actor_sheet_id` values from the admin `users` table, diffs row-1 headers against the current schema, appends any missing columns (additive only — never deletes existing data), and updates `schema_versions` records. Uses exponential backoff (1s → 32s) to handle Google Sheets API rate limits.
+
+### How should I structure `.env` for multiple actor types?
+
+One `DEV_*_SHEET_ID` per non-admin actor for local development:
+
+```env
+ADMIN_SHEET_ID=1ABC...
+DEV_TEACHER_SHEET_ID=1DEF...
+DEV_STUDENT_SHEET_ID=1GHI...
+DEV_PARENT_SHEET_ID=1JKL...
+```
+
+```typescript
+// sheet-db.config.ts
+actors: [
+  { role: 'admin',   sheetIdEnv: 'ADMIN_SHEET_ID' },
+  { role: 'teacher', sheetIdEnv: 'DEV_TEACHER_SHEET_ID' },
+  { role: 'student', sheetIdEnv: 'DEV_STUDENT_SHEET_ID' },
+  { role: 'parent',  sheetIdEnv: 'DEV_PARENT_SHEET_ID' },
+]
+```
+
+`sheet-db init` scaffolds all of these automatically based on the actors you define. In production the `DEV_*` vars are not set — each registered user gets their own personal sheet via `createUserSheet()`.
+
+### What is the dev vs production data model difference?
+
+| | Development | Production |
+|---|---|---|
+| Actor sheets | One shared sheet per actor type (`DEV_STUDENT_SHEET_ID` used by all students) | One personal sheet per registered user (via `createUserSheet()`) |
+| Data isolation | All dev users share one sheet | Each user's data is physically isolated |
+| Bugs visible | Only shared-sheet bugs appear | Per-user isolation bugs become visible |
+
+Use `sheet-db mock-users` to create separate actor sheets locally that mirror the production topology for more realistic testing.
+
+---
+
+## 6. Multi-Role Users & Role Promotion
+
+### What if a user has multiple roles? (e.g., someone is both a teacher and a parent)
+
+The current design assumes one actor per user. For multi-role users you need to call `createUserSheet()` once per actor type they belong to and store both `actor_sheet_id` values in the admin `users` table (as separate rows or additional columns). When accessing data, switch context based on which actor domain you need.
+
+This is not a built-in feature — it requires application-level logic.
+
+### What if a user gets promoted from one role to another? (e.g., student → teacher)
+
+This is a real constraint of the per-actor-sheet model. Options:
+
+| Option | What happens | When to use |
+|---|---|---|
+| Leave both sheets | Old sheet stays (data preserved). New sheet created for new actor. | Old data is still needed for historical records |
+| Archive the old row | Soft-delete old `users` row, create new one for the new actor | Old data becomes a historical record |
+| Don't model it as separate actors | Store all these users in one actor with a `role` column | When role changes are frequent business events |
+
+If role promotion is a common business event in your system, reconsider whether the two role types truly need separate actor sheets or whether they should just be an RBAC role column within the same actor.
+
+---
+
+## 7. Cross-Actor Access
+
+### How does cross-actor access work? (e.g., teacher accessing student data)
+
+Configure a permission matrix when creating the adapter, then use `asActor()` to switch target:
+
+```typescript
+const adapter = createSheetAdapter({
+  permissions: {
+    teacher: {
+      canAccess: ['student'],
+      tables: ['scores', 'attendance'], // omit to allow all tables
+    },
+  },
+});
+
+const teacherCtx = adapter.withContext({
+  userId: 'teacher_001',
+  actor: 'teacher',
+  actorSheetId: 'teacher-sheet-id',
+});
+
+// Switch to student's sheet
+const studentCtx = teacherCtx.asActor('student', 'student-sheet-id-123');
+await studentCtx.table('scores').create({ student_id: 'stu_456', score: 95 });
+const scores = await studentCtx.table('scores').findMany({ where: { student_id: 'stu_456' } });
+```
+
+Permission rules:
+
+| Scenario | Result |
+|---|---|
+| Same actor access | Always allowed |
+| Admin access | Bypasses all permission checks |
+| Cross-actor — role in `canAccess` list | Allowed |
+| Cross-actor — role not in `permissions` | `PermissionError` |
+| Cross-actor — table not in `tables` list | `PermissionError` |
+| Cross-actor — `targetSheetId` missing | `PermissionError` |
+
+### Can I join tables across actor sheets?
+
+Not yet — planned as `adapter.join()`:
+
+```typescript
+// Future API — not yet implemented
+const results = await adapter
+  .withContext({ userId: 'teacher_001', actor: 'teacher', actorSheetId: '...' })
+  .join({
+    from: 'scores',
+    to: 'students',
+    on: { from: 'student_id', to: 'student_id' },
+    select: ['scores.*', 'students.name', 'students.email'],
+  });
+```
+
+The implementation will run parallel queries to both actor sheets and perform an in-memory join in JavaScript.
+
+---
+
+## 8. Migration to Production
+
+### What is the migration path from Google Sheets to a production database?
+
+```
+longcelot-sheet-db (dev/staging)
+    ↓  npx sheet-db export --prisma / --sql
+    ↓  npx sheet-db export-data --all-users
+MySQL / PostgreSQL + Prisma / Sequelize (production)
+```
+
+Every schema maps cleanly to SQL tables. The code swap is minimal:
+1. Replace `createSheetAdapter` with your SQL adapter
+2. Update CRUD calls (same method names — `create`, `findMany`, `update`, `delete`)
+3. No business logic is trapped in Google Sheets
+
+### Which export command do I need?
+
+| Goal | Command |
+|---|---|
+| Copy table structure only (DDL / schema) | `sheet-db export --prisma` or `sheet-db export --sql` |
+| Copy structure + admin sheet row data | `sheet-db export-data` |
+| Copy structure + all user-sheet row data | `sheet-db export-data --all-users` |
+| Preview export plan without writing files | Add `--dry-run` to either command |
+
+### Why is the command called `export-data` and not `migrate`?
+
+In standard tooling (Prisma Migrate, Rails, Flyway, Liquibase), "migrate" means schema-only DDL changes. `export-data` correctly names what the command actually does: read row data from Google Sheets and generate an insertion script. The old `sheet-db migrate` alias still works but emits a deprecation warning.
+
+---
+
+## 9. Developer Workflow & CLI
+
+### After installing the package, what do I need to do?
+
+```bash
+# 1. Initialise project (creates config + schemas directory + .env)
+npx sheet-db init
+
+# 2. Fill in Google OAuth credentials in .env
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
+ADMIN_SHEET_ID=...
+
+# 3. Define your schemas in schemas/ directory, or use the interactive generator
+npx sheet-db generate enrollments
+
+# 4. Sync schemas to Google Sheets (creates tabs and headers)
+npx sheet-db sync
+
+# 5. Use the adapter in your backend code
+```
+
+### How does `sheet-db sync` work for multiple actors?
+
+`sync` iterates every actor defined in `sheet-db.config.ts` and prints a status table:
+
+```
+Actor   │ Sheet ID                   │ Tables │ Status
+────────┼────────────────────────────┼────────┼────────────
+admin   │ 1ABCyourAdminSheetId       │ 3      │ ✅ synced
+teacher │ 1DEFyourTeacherSheetId     │ 5      │ ✅ synced
+student │ 1GHIyourStudentSheetId     │ 6      │ ✅ synced
+parent  │ (not set)                  │ 2      │ ⚠ skipped
+```
+
+Actors whose `DEV_*_SHEET_ID` env var is not set are skipped with a warning (non-fatal). Sync is additive — it creates missing tabs and appends missing column headers but never deletes existing data.
+
+### What CLI commands are available?
+
+| Command | What it does |
+|---|---|
+| `sheet-db init` | Scaffold config, `.env`, schemas directory |
+| `sheet-db init --integrate` | Merge into existing project without overwriting files |
+| `sheet-db generate <name>` | Interactive schema generator |
+| `sheet-db sync` | Sync all actor schemas to Google Sheets |
+| `sheet-db sync --all-users` | Also push schema changes to every registered user sheet |
+| `sheet-db sync --all-users --dry-run` | Preview `--all-users` changes without applying |
+| `sheet-db sync --token-file <path>` | CI/CD: load pre-stored tokens file, skip interactive OAuth |
+| `sheet-db validate` | Validate all schema files for errors |
+| `sheet-db seed <file>` | Seed data from a JS/TS file |
+| `sheet-db seed <file> --skip-existing` | Skip rows where a unique column already matches |
+| `sheet-db seed <file> --upsert` | Update on unique conflict instead of throwing |
+| `sheet-db seed <file> --all-actors` | Distribute seed data to all registered user sheets |
+| `sheet-db mock-users [count]` | Create mock Google Sheets for dev/testing (default: 3) |
+| `sheet-db export --prisma` | Export schemas to `schema.prisma` |
+| `sheet-db export --sql` | Export schemas to SQL `CREATE TABLE` DDL |
+| `sheet-db export-data` | Generate data export script (admin sheet) |
+| `sheet-db export-data --all-users` | Generate data export script (admin + all user sheets) |
+| `sheet-db export-data --all-users --dry-run` | Preview export plan without writing files |
+| `sheet-db doctor` | Health check: env vars, config, OAuth tokens, schema directory |
+| `sheet-db status` | Show actors, env var values, OAuth state, all registered tables |
+
+### How do I use `sheet-db sync` in a CI/CD pipeline without interactive OAuth?
+
+```bash
+# Store tokens as a CI secret, inject at build time
+echo "$SHEET_DB_TOKENS" > /tmp/tokens.json
+npx sheet-db sync --token-file /tmp/tokens.json
+```
+
+The `--token-file` flag loads a pre-stored tokens JSON file and skips the interactive browser OAuth prompt entirely.
