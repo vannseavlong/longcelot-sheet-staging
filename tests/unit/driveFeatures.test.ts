@@ -351,3 +351,31 @@ describe('Feature 8.3 — StorageAdapter and adapter.upload()', () => {
     expect(mock.deleteFileCalls.length).toBe(0);
   });
 });
+
+// ── Phase 10.2 — Sheet formatting & UX ───────────────────────────────────────
+
+describe('Phase 10.2 — createUserSheet applies sheet formatting', () => {
+  test('formatSheet is called for each user table created', async () => {
+    const { mock, adminAdapter } = makeAdapter();
+
+    await adminAdapter.createUserSheet('user1', 'seller', 'seller@test.com');
+
+    const productsCall = mock.formatSheetCalls.find((c) => c.sheetName === 'products');
+    expect(productsCall).toBeDefined();
+    expect(productsCall?.options.columnCount).toBe(3); // product_id, name, _id
+    expect(productsCall?.options.headerColor).toBe('#E8F0FE');
+    expect(productsCall?.options.freezeHeader).toBe(true);
+  });
+
+  test('sheetStyle config on createSheetAdapter is honoured', async () => {
+    const { mock, adminAdapter } = makeAdapter({
+      sheetStyle: { headerColor: '#123456', freezeFirstColumn: true },
+    });
+
+    await adminAdapter.createUserSheet('user1', 'seller', 'seller@test.com');
+
+    const productsCall = mock.formatSheetCalls.find((c) => c.sheetName === 'products');
+    expect(productsCall?.options.headerColor).toBe('#123456');
+    expect(productsCall?.options.freezeFirstColumn).toBe(true);
+  });
+});

@@ -287,6 +287,8 @@
 - `DriveStorageAdapter` + `StorageAdapter` interface + `adapter.upload()` / `adapter.deleteFile()`
 - `export-data` (renamed from `migrate`) with `--all-users` and `--dry-run`
 - `withContext({ actor })` rename with `role` deprecation alias
+- `ActorConfig.role` → `name`, `UserContext.targetRole` → `targetActor` (both with deprecation aliases)
+- Automatic sheet formatting: auto-fit columns, header fill/freeze, boolean/enum data validation dropdowns, `sheetStyle` config
 
 ### To Do ⏳
 
@@ -302,6 +304,31 @@
 
 ---
 
+## Phase 10: Developer-Reported Improvements (2026-06-25 feedback)
+
+### 10.1 Actor Config Field Naming — closes out 9.5
+
+- [x] `ActorConfig.role` → `name` (`sheet-db.config.ts` actor entries), `role` kept as deprecated alias with `console.warn`
+- [x] `UserContext.targetRole` → `targetActor`, `targetRole` kept as deprecated alias with `console.warn`
+- [x] Add shared `resolveActorName()` helper to dedupe the `name ?? role` fallback used across CLI commands
+- [x] Update `init` scaffold to write `name:` in generated `sheet-db.config.ts`
+- [x] Update `sync`, `mock-users`, `seed`, `generate`, `status`, `validate`, `export`, `export-data` to read `name` with `role` fallback
+- [x] `asActor()` internal parameter renamed `targetActor` for consistency (no signature break — positional arg)
+- [x] Tests: `name` preferred, deprecated `role`/`targetRole` aliases still work and warn, `asActor()` cross-actor flow unaffected
+- [x] Docs: README.md, API.md, Docs/developerGuide.md, skills/core, skills/cli, skills/permissions updated to `name:` / `targetActor`
+
+### 10.2 Sheet Formatting & UX
+
+- [x] Auto-fit column width via `autoResizeDimensions` after every header write (new tab or appended columns)
+- [x] Header row background fill (`repeatCell`) with built-in default color, overridable via `sheetStyle.headerColor`
+- [x] Freeze header row by default (`sheetStyle.freezeHeader`, default `true`) and optional first column (`sheetStyle.freezeFirstColumn`, default `false`)
+- [x] Data validation dropdowns for `boolean()` (`BOOLEAN` rule) and `string().enum([...])` (`ONE_OF_LIST` rule) columns, applied alongside header formatting
+- [x] Wire `sheetStyle?: SheetStyleConfig` into `SheetAdapterConfig`
+- [x] Tests: header fill applied, freeze applied, auto-resize requested, boolean/enum validation rules generated correctly, no formatting calls when nothing changed
+- [x] Docs: README.md / API.md `sheetStyle` config section, FAQ.md #10
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables
@@ -311,6 +338,8 @@
 - [x] Docs/overview.md: OAuth requirement, roadmap items
 - [x] Docs/developerGuide.md: OAuth config, integration workflow
 - [x] Docs/apiReference.md: deleted — consolidated into root API.md
-- [ ] API.md: `UserContext` type rename, Migration scenarios table, `export-data` command reference alignment
+- [x] API.md: `UserContext` type rename (`targetActor`), `ActorConfig` rename (`name`), `SheetStyleConfig` added
+- [x] Docs/architecture.md: Actors vs Application Roles section
+- [x] FAQ.md: actor field naming incident write-up (#2), Sheet Formatting & Data Validation section (#10)
 - [ ] CHANGELOG.md: breaking change note for `migrate` → `export-data`
-- [ ] Docs/architecture.md: Actors vs Application Roles section
+- [ ] API.md: Migration scenarios table, `export-data` command reference alignment

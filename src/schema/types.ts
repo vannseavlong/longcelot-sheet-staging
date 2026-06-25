@@ -25,7 +25,17 @@ export interface TableSchema {
 }
 
 export interface ActorConfig {
-  role: string;
+  /**
+   * The actor's identifier — e.g. 'admin', 'seller', 'student'. Matches `TableSchema.actor`.
+   * Preferred over the deprecated `role` field.
+   */
+  name?: string;
+  /**
+   * @deprecated Use `name` instead. `role` conflates the package's actor/data-domain concept
+   * with application-level RBAC roles, which are a separate concern.
+   * Still accepted for backward compatibility; a console.warn is emitted when used.
+   */
+  role?: string;
   sheetIdEnv: string;
 }
 
@@ -37,6 +47,15 @@ export interface SheetDBConfig {
   actors: ActorConfig[];
   onSchemaMismatch?: SchemaMismatchBehaviour;
   schemasDir?: string;
+}
+
+export interface SheetStyleConfig {
+  /** Hex color (e.g. '#E8F0FE') applied to the header row background. Falls back to a built-in default. */
+  headerColor?: string;
+  /** Freeze the header row. Default: true. */
+  freezeHeader?: boolean;
+  /** Freeze the first column. Default: false. */
+  freezeFirstColumn?: boolean;
 }
 
 export interface ActorPermission {
@@ -60,6 +79,15 @@ export interface UserContext {
    */
   role?: string;
   actorSheetId?: string;
+  /**
+   * Cross-actor: which actor's sheet to operate on.
+   * Preferred over the deprecated `targetRole` field.
+   */
+  targetActor?: string;
+  /**
+   * @deprecated Use `targetActor` instead. Still accepted for backward compatibility;
+   * a console.warn is emitted when used.
+   */
   targetRole?: string;
   targetSheetId?: string;
 }

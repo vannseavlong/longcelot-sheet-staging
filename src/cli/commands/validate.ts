@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { TableSchema, ColumnDefinition } from '../../schema/types';
+import { resolveActorName } from '../../utils/actorConfig';
 
 export async function validateCommand() {
   console.log(chalk.blue.bold('🔍 Validating schemas...\n'));
@@ -19,10 +20,10 @@ export async function validateCommand() {
   const tableNames = new Set<string>();
   const schemasDir = path.join(process.cwd(), 'schemas');
 
-  const actorRoles: string[] = config.actors.map((a: { role: string }) => a.role);
+  const actorRoles: string[] = config.actors.map((a: { name?: string; role?: string } | string) => resolveActorName(a));
 
   for (const actorCfg of config.actors) {
-    const actor = actorCfg.role ?? actorCfg;
+    const actor = resolveActorName(actorCfg);
     const actorDir = path.join(schemasDir, actor);
 
     if (!fs.existsSync(actorDir)) {

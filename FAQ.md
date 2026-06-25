@@ -15,6 +15,7 @@ Answers to architectural, design, and integration questions collected during dev
 7. [Cross-Actor Access](#7-cross-actor-access)
 8. [Migration to Production](#8-migration-to-production)
 9. [Developer Workflow & CLI](#9-developer-workflow--cli)
+10. [Sheet Formatting & Data Validation](#10-sheet-formatting--data-validation)
 
 ---
 
@@ -100,6 +101,22 @@ Actor "parent"  → one personal sheet per parent (their children's info, commun
 ```
 
 The fact that the admin panel has sub-roles like registrar / librarian / coordinator is irrelevant to sheet-db. Those are RBAC roles — stored in a `roles` table inside the admin sheet and enforced in your middleware. Sheet-db just stores and retrieves the rows.
+
+### I read this exact FAQ entry and still modeled RBAC sub-roles as separate actors. Why?
+
+This happened in practice: a team modeled three admin-portal sub-roles (`operation`, `finance`, `marketing`) as three separate actors — each with its own `DEV_*_SHEET_ID` and `sheet-db.config.ts` entry — instead of as rows in a `roles`/`role_permissions` table inside one `admin` actor. They had already read this FAQ section before writing the code.
+
+The root cause wasn't the docs — it was the field name. Every actor-config entry and every `withContext()` call read `role: 'operation'`, which looks exactly like an RBAC role assignment at the moment of writing the code. Autocomplete and type hints show the field name, not the prose explaining what it means.
+
+The fix: the field itself no longer says `role` anywhere in the actor-identity path —
+
+| Location | Old (deprecated alias, still works + warns) | Current |
+|---|---|---|
+| `ActorConfig` (`sheet-db.config.ts`) | `role: string` | `name: string` |
+| `UserContext` (`withContext()`) | `role: string` | `actor: string` |
+| `UserContext` cross-actor target | `targetRole: string` | `targetActor: string` |
+
+If you're tempted to add a new actor whose name looks like an RBAC sub-role (`operation`, `finance`, `viewer`, `editor`...), that's the signal to stop and build a `roles` table inside an existing actor instead.
 
 ### My system needs dynamic roles at runtime. Can I create actor schemas dynamically?
 
@@ -253,10 +270,10 @@ DEV_PARENT_SHEET_ID=1JKL...
 ```typescript
 // sheet-db.config.ts
 actors: [
-  { role: 'admin',   sheetIdEnv: 'ADMIN_SHEET_ID' },
-  { role: 'teacher', sheetIdEnv: 'DEV_TEACHER_SHEET_ID' },
-  { role: 'student', sheetIdEnv: 'DEV_STUDENT_SHEET_ID' },
-  { role: 'parent',  sheetIdEnv: 'DEV_PARENT_SHEET_ID' },
+  { name: 'admin',   sheetIdEnv: 'ADMIN_SHEET_ID' },
+  { name: 'teacher', sheetIdEnv: 'DEV_TEACHER_SHEET_ID' },
+  { name: 'student', sheetIdEnv: 'DEV_STUDENT_SHEET_ID' },
+  { name: 'parent',  sheetIdEnv: 'DEV_PARENT_SHEET_ID' },
 ]
 ```
 
@@ -318,7 +335,7 @@ const teacherCtx = adapter.withContext({
   actorSheetId: 'teacher-sheet-id',
 });
 
-// Switch to student's sheet
+// Switch to student's sheet — asActor() sets targetActor under the hood
 const studentCtx = teacherCtx.asActor('student', 'student-sheet-id-123');
 await studentCtx.table('scores').create({ student_id: 'stu_456', score: 95 });
 const scores = await studentCtx.table('scores').findMany({ where: { student_id: 'stu_456' } });
@@ -458,3 +475,38 @@ npx sheet-db sync --token-file /tmp/tokens.json
 ```
 
 The `--token-file` flag loads a pre-stored tokens JSON file and skips the interactive browser OAuth prompt entirely.
+
+---
+
+## 10. Sheet Formatting & Data Validation
+
+### Does sheet-db do anything to make the raw Google Sheet readable, or is it just plain cell writes?
+
+Every tab created or extended by `sync` / `syncSchema()` / `createUserSheet()` is formatted automatically — no config needed:
+
+- **Auto-fit columns** — header and data columns are resized to fit their content, so long values (emails, JSON-array columns, long enum strings) aren't visually truncated.
+- **Header row styling** — a light fill color is applied to row 1, and the header row is frozen by default so it stays visible while scrolling.
+- **Data validation dropdowns** — `boolean()` columns get a native checkbox; `string().enum([...])` columns get a dropdown restricted to the declared values.
+
+This runs whenever headers are written (new tab creation, or new columns appended by `sync`) — not on every no-op sync, to avoid unnecessary Google Sheets API calls.
+
+### Can I customize the header color or freeze the first column too?
+
+Yes, via `sheetStyle` on `createSheetAdapter()`:
+
+```typescript
+const adapter = createSheetAdapter({
+  // ...
+  sheetStyle: {
+    headerColor: '#E8F0FE',   // optional — this is also the built-in default
+    freezeHeader: true,       // default: true
+    freezeFirstColumn: false, // default: false
+  },
+});
+```
+
+Auto-fit column width and boolean/enum data validation are always applied and are not configurable — they have no downside to leaving on.
+
+### If I manually type an invalid value into a dropdown-restricted cell anyway, what happens?
+
+The Sheets-native dropdown is a UI guard, not a hard constraint — `setDataValidation` is applied with `strict: true`, which makes Google Sheets reject the edit with an in-cell warning. It does not replace SDK-level validation: `create()`/`update()` calls through the adapter still validate `enum()`/`boolean()` values independently, since the dropdown only protects against *manual* edits made directly in the spreadsheet UI.

@@ -57,7 +57,7 @@ export async function initCommand(options: { integrate?: boolean }) {
   const projectName = options.integrate ? defaultProjectName : answers.projectName;
 
   const actorConfigs = answers.actors.map((role: string) => ({
-    role,
+    name: role,
     sheetIdEnv: role === 'admin' ? 'ADMIN_SHEET_ID' : `DEV_${role.toUpperCase()}_SHEET_ID`,
   }));
 

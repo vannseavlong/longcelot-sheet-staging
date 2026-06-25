@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { TableSchema } from '../../schema/types';
+import { resolveActorName } from '../../utils/actorConfig';
 
 export async function statusCommand() {
   console.log(chalk.blue.bold('📊 Sheet-DB Project Status\n'));
@@ -10,7 +11,7 @@ export async function statusCommand() {
 
   interface CLIConfig {
     projectName?: string;
-    actors: Array<{ role: string; sheetIdEnv?: string } | string>;
+    actors: Array<{ name?: string; role?: string; sheetIdEnv?: string } | string>;
   }
   // Load config
   let config: CLIConfig;
@@ -24,9 +25,7 @@ export async function statusCommand() {
   // Project info
   console.log(chalk.bold('Project'));
   console.log(`  Name:    ${config.projectName || chalk.gray('(not set)')}`);
-  const actorRoles: string[] = (config.actors ?? []).map((a: { role?: string } | string) =>
-    typeof a === 'string' ? a : a.role ?? ''
-  );
+  const actorRoles: string[] = (config.actors ?? []).map((a) => resolveActorName(a));
   console.log(`  Actors:  ${actorRoles.join(', ') || chalk.gray('(none)')}`);
   console.log();
 
@@ -39,7 +38,7 @@ export async function statusCommand() {
   ];
   // Show sheet ID env vars per actor
   const actorSheetEnvVars: [string, string | undefined][] = (config.actors ?? []).map(
-    (a: { role?: string; sheetIdEnv?: string } | string) => {
+    (a: { name?: string; role?: string; sheetIdEnv?: string } | string) => {
       const envKey = typeof a === 'string'
         ? (a === 'admin' ? 'ADMIN_SHEET_ID' : `DEV_${a.toUpperCase()}_SHEET_ID`)
         : (a.sheetIdEnv ?? 'ADMIN_SHEET_ID');
@@ -86,7 +85,7 @@ export async function statusCommand() {
   let totalSchemas = 0;
 
   for (const actorEntry of (config.actors || [])) {
-    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
+    const actor = resolveActorName(actorEntry);
     const actorDir = path.join(schemasDir, actor);
     schemasByActor[actor] = [];
 

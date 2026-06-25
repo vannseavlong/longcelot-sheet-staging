@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { TableSchema } from '../../schema/types';
+import { resolveActorName } from '../../utils/actorConfig';
 
 interface ExportDataOptions {
   output?: string;
@@ -11,7 +12,7 @@ interface ExportDataOptions {
 }
 
 function loadSchemas(
-  config: { actors: Array<{ role: string } | string>; schemasDir?: string }
+  config: { actors: Array<{ name?: string; role?: string } | string>; schemasDir?: string }
 ): TableSchema[] {
   const schemas: TableSchema[] = [];
   const schemasRoot = config.schemasDir
@@ -19,7 +20,7 @@ function loadSchemas(
     : path.join(process.cwd(), 'schemas');
 
   for (const actorEntry of config.actors) {
-    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
+    const actor = resolveActorName(actorEntry);
     const actorDir = path.join(schemasRoot, actor);
     if (!fs.existsSync(actorDir)) continue;
 
@@ -192,7 +193,7 @@ export async function exportDataCommand(options: ExportDataOptions) {
 
   require('dotenv').config();
 
-  let config: { actors: Array<{ role: string } | string>; schemasDir?: string };
+  let config: { actors: Array<{ name?: string; role?: string } | string>; schemasDir?: string };
   try {
     config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
   } catch {

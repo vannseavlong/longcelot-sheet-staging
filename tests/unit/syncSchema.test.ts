@@ -1,6 +1,6 @@
 import { SheetAdapter, SheetAdapterConfig } from '../../src/adapter/sheetAdapter';
 import { defineTable } from '../../src/schema/defineTable';
-import { string, number } from '../../src/schema/columnBuilder';
+import { string, number, boolean } from '../../src/schema/columnBuilder';
 
 function makeClient(rowsBySheet: Record<string, string[][]> = {}, sheetNames: string[] = []) {
   return {
@@ -9,6 +9,7 @@ function makeClient(rowsBySheet: Record<string, string[][]> = {}, sheetNames: st
       Promise.resolve(rowsBySheet[sheet] ?? [])
     ),
     writeHeader: jest.fn().mockResolvedValue(undefined),
+    formatSheet: jest.fn().mockResolvedValue(undefined),
     appendRow: jest.fn().mockResolvedValue(undefined),
     appendRows: jest.fn().mockResolvedValue(undefined),
     updateRow: jest.fn().mockResolvedValue(undefined),
@@ -25,9 +26,13 @@ const baseConfig: Omit<SheetAdapterConfig, '_client'> = {
   tokens: {},
 };
 
-function makeAdapter(client: ReturnType<typeof makeClient>) {
+function makeAdapter(
+  client: ReturnType<typeof makeClient>,
+  extra: Partial<SheetAdapterConfig> = {}
+) {
   return new SheetAdapter({
     ...baseConfig,
+    ...extra,
     _client: client,
   } as unknown as SheetAdapterConfig);
 }
@@ -49,6 +54,15 @@ const usersSchemaWithNewCol = defineTable({
     email: string().required(),
     phone: string(),
     age: number(),
+  },
+});
+
+const ordersSchema = defineTable({
+  name: 'orders',
+  actor: 'admin',
+  columns: {
+    status: string().enum(['pending', 'shipped']),
+    paid: boolean(),
   },
 });
 
@@ -168,6 +182,88 @@ describe('syncSchema()', () => {
         'phone',
         'age',
       ]);
+    });
+  });
+
+  describe('sheet formatting (8/9/10 — auto-resize, header style, validation dropdowns)', () => {
+    it('formats the sheet with default style after writing headers on a new tab', async () => {
+      const client = makeClient({}, []);
+      const adapter = makeAdapter(client);
+      adapter.registerSchemas([usersSchema]);
+
+      await adapter.syncSchema(usersSchema);
+
+      expect(client.formatSheet).toHaveBeenCalledWith('admin-sheet-id', 'users', {
+        columnCount: 3, // name, email, _id
+        headerColor: '#E8F0FE',
+        freezeHeader: true,
+        freezeFirstColumn: false,
+        validations: [],
+      });
+    });
+
+    it('does not format the sheet when headers are already in sync (no-op)', async () => {
+      const existingHeaders = ['_id', 'name', 'email'];
+      const client = makeClient(
+        { users: [existingHeaders, ['u1', 'Alice', 'alice@example.com']] },
+        ['users']
+      );
+      const adapter = makeAdapter(client);
+      adapter.registerSchemas([usersSchema]);
+
+      await adapter.syncSchema(usersSchema);
+
+      expect(client.formatSheet).not.toHaveBeenCalled();
+    });
+
+    it('re-formats with the full header set when new columns are appended', async () => {
+      const existingHeaders = ['_id', 'name', 'email'];
+      const client = makeClient(
+        { users: [existingHeaders, ['u1', 'Alice', 'alice@example.com']] },
+        ['users']
+      );
+      const adapter = makeAdapter(client);
+      adapter.registerSchemas([usersSchemaWithNewCol]);
+
+      await adapter.syncSchema(usersSchemaWithNewCol);
+
+      expect(client.formatSheet).toHaveBeenCalledWith('admin-sheet-id', 'users', {
+        columnCount: 5, // name, email, phone, age, _id
+        headerColor: '#E8F0FE',
+        freezeHeader: true,
+        freezeFirstColumn: false,
+        validations: [],
+      });
+    });
+
+    it('builds BOOLEAN/ONE_OF_LIST validation rules for boolean() and enum() columns', async () => {
+      const client = makeClient({}, []);
+      const adapter = makeAdapter(client);
+      adapter.registerSchemas([ordersSchema]);
+
+      await adapter.syncSchema(ordersSchema);
+
+      const [, , options] = client.formatSheet.mock.calls[0];
+      // headers: status, paid, _id (defineTable appends _id last)
+      expect(options.validations).toEqual([
+        { columnIndex: 0, type: 'ONE_OF_LIST', values: ['pending', 'shipped'] },
+        { columnIndex: 1, type: 'BOOLEAN' },
+      ]);
+    });
+
+    it('honours sheetStyle overrides from SheetAdapterConfig', async () => {
+      const client = makeClient({}, []);
+      const adapter = makeAdapter(client, {
+        sheetStyle: { headerColor: '#FFCC00', freezeHeader: false, freezeFirstColumn: true },
+      });
+      adapter.registerSchemas([usersSchema]);
+
+      await adapter.syncSchema(usersSchema);
+
+      const [, , options] = client.formatSheet.mock.calls[0];
+      expect(options.headerColor).toBe('#FFCC00');
+      expect(options.freezeHeader).toBe(false);
+      expect(options.freezeFirstColumn).toBe(true);
     });
   });
 });

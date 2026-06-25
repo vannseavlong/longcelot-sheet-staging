@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
+import { resolveActorName } from '../../utils/actorConfig';
 
 export interface SeedOptions {
   allActors?: boolean;
@@ -74,7 +75,7 @@ export async function seedCommand(seedFile: string, opts?: SeedOptions) {
 
   // Load config and schemas
   interface CLIConfig {
-    actors: Array<{ role: string } | string>;
+    actors: Array<{ name?: string; role?: string } | string>;
   }
   let config: CLIConfig;
   try {
@@ -97,7 +98,7 @@ export async function seedCommand(seedFile: string, opts?: SeedOptions) {
   // Load and register all schemas
   const schemasDir = path.join(process.cwd(), 'schemas');
   for (const actorEntry of config.actors) {
-    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
+    const actor = resolveActorName(actorEntry);
     const actorDir = path.join(schemasDir, actor);
     if (!fs.existsSync(actorDir)) continue;
     const files = fs.readdirSync(actorDir).filter((f) => f.endsWith('.ts'));

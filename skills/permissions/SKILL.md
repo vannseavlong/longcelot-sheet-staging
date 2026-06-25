@@ -12,9 +12,11 @@ metadata:
 By default, every actor can only access their own sheet. Cross-actor access (e.g., a teacher writing to a student's sheet) requires two things:
 
 1. A **permissions matrix** in `SheetAdapterConfig`
-2. A **target context** (`targetRole` + `targetSheetId`) in `withContext()`
+2. A **target context** (`targetActor` + `targetSheetId`) in `withContext()`
 
 Admin is exempt — it bypasses all permission checks automatically.
+
+> `targetRole` (and the bare `role` field on `withContext()`) still work as deprecated aliases for `targetActor`/`actor` — they emit a `console.warn` and are kept for backward compatibility. Use `actor`/`targetActor` in new code; see the `core` skill for why the field was renamed.
 
 ---
 
@@ -54,14 +56,14 @@ interface ActorPermission {
 
 ## 2. Create a Cross-Actor Context
 
-Pass `targetRole` and `targetSheetId` in `withContext()`:
+Pass `targetActor` and `targetSheetId` in `withContext()`:
 
 ```typescript
 const ctx = adapter.withContext({
   userId: 'teacher_001',
-  role: 'teacher',
+  actor: 'teacher',
   actorSheetId: 'teacher-sheet-id',   // teacher's own sheet
-  targetRole: 'student',              // the role being accessed
+  targetActor: 'student',             // the actor being accessed
   targetSheetId: 'student-sheet-id',  // the specific student's sheet
 });
 ```
@@ -71,7 +73,7 @@ Or use the `asActor()` shorthand on an existing context:
 ```typescript
 const teacherCtx = adapter.withContext({
   userId: 'teacher_001',
-  role: 'teacher',
+  actor: 'teacher',
   actorSheetId: 'teacher-sheet-id',
 });
 
@@ -115,15 +117,15 @@ await crossCtx.table('scores').delete({ where: { _id: 'score_xyz' } });
 
 ## 4. Admin Bypass
 
-Admin actors bypass the permission matrix entirely. No `targetRole`/`targetSheetId` configuration needed:
+Admin actors bypass the permission matrix entirely. No `targetActor`/`targetSheetId` configuration needed:
 
 ```typescript
 const adminCtx = adapter.withContext({
   userId: 'admin_001',
-  role: 'admin',
+  actor: 'admin',
   actorSheetId: process.env.ADMIN_SHEET_ID!,
   // optionally add targetSheetId to access a specific user sheet
-  targetRole: 'student',
+  targetActor: 'student',
   targetSheetId: 'any-student-sheet-id',
 });
 
@@ -142,7 +144,7 @@ The target sheet ID must come from your admin `users` table, not be hardcoded:
 // Look up the student's sheet ID first
 const adminCtx = adapter.withContext({
   userId: 'teacher_001',
-  role: 'admin',
+  actor: 'admin',
   actorSheetId: process.env.ADMIN_SHEET_ID!,
 });
 
@@ -162,7 +164,7 @@ const crossCtx = teacherCtx.asActor('student', student!.actor_sheet_id as string
 async function getAllStudentScores(teacherId: string, teacherSheetId: string) {
   const teacherCtx = adapter.withContext({
     userId: teacherId,
-    role: 'teacher',
+    actor: 'teacher',
     actorSheetId: teacherSheetId,
   });
 
@@ -195,12 +197,12 @@ async function getAllStudentScores(teacherId: string, teacherSheetId: string) {
 
 | Scenario | Result |
 |---|---|
-| Same role accessing own tables | ✅ Always allowed |
-| Admin role | ✅ Always allowed (bypasses all checks) |
+| Same actor accessing own tables | ✅ Always allowed |
+| Admin actor | ✅ Always allowed (bypasses all checks) |
 | Cross-actor, no `permissions` configured for the caller | `PermissionError: 'teacher' has no cross-actor permissions configured` |
-| Cross-actor, role not in `canAccess` list | `PermissionError: 'teacher' cannot access 'student' sheets` |
+| Cross-actor, actor not in `canAccess` list | `PermissionError: 'teacher' cannot access 'student' sheets` |
 | Cross-actor, table not in allowed `tables` list | `PermissionError: Table 'profile' is not allowed for 'teacher' → 'student' access` |
-| `targetRole` set but `targetSheetId` missing | `PermissionError: targetSheetId required for cross-actor access` |
+| `targetActor` set but `targetSheetId` missing | `PermissionError: targetSheetId required for cross-actor access` |
 | Non-admin accessing admin tables | `PermissionError` (always blocked) |
 
 ---
@@ -209,6 +211,6 @@ async function getAllStudentScores(teacherId: string, teacherSheetId: string) {
 
 - **Hardcoding `targetSheetId`** — Always fetch it from the admin `users` table at request time. Sheet IDs can change if users reconnect their accounts.
 - **Not registering the target table's schema** — If `scores` is a `student` table, it must be registered via `adapter.registerSchemas()` even when accessed by a teacher context.
-- **Setting `targetRole` without `targetSheetId`** — Both fields are required together. Missing `targetSheetId` always throws a `PermissionError`.
+- **Setting `targetActor` without `targetSheetId`** — Both fields are required together. Missing `targetSheetId` always throws a `PermissionError`.
 - **Expecting `tables: []` to block all tables** — An empty array means the key is present but empty; the runtime checks `perm.tables && !perm.tables.includes(schema.name)`. Pass `tables: ['allowedTable']` with at least one entry, or omit `tables` entirely to allow all tables for that `canAccess` pair.
 - **Admin context accessing non-admin tables** — Admin always goes to `adminSheetId`. To access a user sheet as admin, you must still pass `targetSheetId` (admin bypasses permission checks but still needs the sheet ID to know where to read/write).

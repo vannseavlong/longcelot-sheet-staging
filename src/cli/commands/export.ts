@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { TableSchema, ColumnDefinition } from '../../schema/types';
+import { resolveActorName } from '../../utils/actorConfig';
 
 interface ExportOptions {
   prisma?: boolean;
@@ -103,12 +104,12 @@ export function generateSQLTable(schema: TableSchema): string {
   return lines.join('\n');
 }
 
-function loadSchemas(config: { actors: Array<{ role: string } | string> }): TableSchema[] {
+function loadSchemas(config: { actors: Array<{ name?: string; role?: string } | string> }): TableSchema[] {
   const schemas: TableSchema[] = [];
   const schemasDir = path.join(process.cwd(), 'schemas');
 
   for (const actorEntry of config.actors) {
-    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
+    const actor = resolveActorName(actorEntry);
     const actorDir = path.join(schemasDir, actor);
     if (!fs.existsSync(actorDir)) continue;
 

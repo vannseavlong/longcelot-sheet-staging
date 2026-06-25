@@ -216,9 +216,9 @@ export default {
   projectName: 'my-app',
   superAdminEmail: 'admin@example.com',
   actors: [
-    { role: 'admin',   sheetIdEnv: 'ADMIN_SHEET_ID' },
-    { role: 'student', sheetIdEnv: 'DEV_STUDENT_SHEET_ID' },
-    { role: 'teacher', sheetIdEnv: 'DEV_TEACHER_SHEET_ID' },
+    { name: 'admin',   sheetIdEnv: 'ADMIN_SHEET_ID' },
+    { name: 'student', sheetIdEnv: 'DEV_STUDENT_SHEET_ID' },
+    { name: 'teacher', sheetIdEnv: 'DEV_TEACHER_SHEET_ID' },
   ],
   onSchemaMismatch: 'warn', // 'warn' | 'error' | 'auto-sync'
 } satisfies SheetDBConfig;

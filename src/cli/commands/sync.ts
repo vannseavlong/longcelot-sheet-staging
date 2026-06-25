@@ -6,6 +6,7 @@ import { createSheetAdapter } from '../../adapter/sheetAdapter';
 import { createOAuthManager } from '../../auth/oauth';
 import { TableSchema, ActorConfig } from '../../schema/types';
 import { computeSchemaHash } from '../../utils/schemaHash';
+import { resolveActorName } from '../../utils/actorConfig';
 
 function isRateLimitError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -149,7 +150,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
   }
 
   // Validate admin actor has a sheet ID set
-  const adminActor = config.actors.find((a) => a.role === 'admin');
+  const adminActor = config.actors.find((a) => resolveActorName(a) === 'admin');
   const adminSheetId = adminActor ? process.env[adminActor.sheetIdEnv] : process.env.ADMIN_SHEET_ID;
   if (!adminSheetId) {
     console.error(chalk.red(`❌ Admin sheet ID not set. Add ${adminActor?.sheetIdEnv ?? 'ADMIN_SHEET_ID'} to your .env`));
@@ -163,7 +164,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
   // Collect all schemas across actors
   const allSchemas: TableSchema[] = [];
   for (const actor of config.actors) {
-    allSchemas.push(...loadSchemasForActor(actor.role, schemasRoot));
+    allSchemas.push(...loadSchemasForActor(resolveActorName(actor), schemasRoot));
   }
 
   if (allSchemas.length === 0) {
@@ -216,26 +217,27 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
   console.log(chalk.bold('Syncing actor schemas...\n'));
 
   for (const actorCfg of config.actors) {
-    const sheetId = actorCfg.role === 'admin' ? adminSheetId : process.env[actorCfg.sheetIdEnv];
-    const actorSchemas = allSchemas.filter((s) => s.actor === actorCfg.role);
+    const actorName = resolveActorName(actorCfg);
+    const sheetId = actorName === 'admin' ? adminSheetId : process.env[actorCfg.sheetIdEnv];
+    const actorSchemas = allSchemas.filter((s) => s.actor === actorName);
 
     if (!sheetId) {
-      console.log(chalk.yellow(`  ⚠ ${actorCfg.role}: ${actorCfg.sheetIdEnv} not set — skipping`));
-      statusRows.push({ actor: actorCfg.role, sheetId: '', tables: actorSchemas.length, status: '⚠ skipped' });
+      console.log(chalk.yellow(`  ⚠ ${actorName}: ${actorCfg.sheetIdEnv} not set — skipping`));
+      statusRows.push({ actor: actorName, sheetId: '', tables: actorSchemas.length, status: '⚠ skipped' });
       continue;
     }
 
     if (actorSchemas.length === 0) {
-      console.log(chalk.gray(`  - ${actorCfg.role}: no schemas`));
-      statusRows.push({ actor: actorCfg.role, sheetId, tables: 0, status: '– no schemas' });
+      console.log(chalk.gray(`  - ${actorName}: no schemas`));
+      statusRows.push({ actor: actorName, sheetId, tables: 0, status: '– no schemas' });
       continue;
     }
 
     let actorSynced = 0;
     let actorFailed = 0;
-    const syncAdapter = actorCfg.role === 'admin'
+    const syncAdapter = actorName === 'admin'
       ? adapter
-      : adapter.withContext({ userId: 'sync-cli', actor: actorCfg.role, actorSheetId: sheetId });
+      : adapter.withContext({ userId: 'sync-cli', actor: actorName, actorSheetId: sheetId });
 
     for (const schema of actorSchemas) {
       try {
@@ -250,8 +252,8 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
     }
 
     const status = actorFailed === 0 ? '✅ synced' : `❌ ${actorFailed} failed`;
-    statusRows.push({ actor: actorCfg.role, sheetId, tables: actorSynced, status });
-    console.log(chalk.green(`  ✓ ${actorCfg.role}: ${actorSynced} table(s) synced`));
+    statusRows.push({ actor: actorName, sheetId, tables: actorSynced, status });
+    console.log(chalk.green(`  ✓ ${actorName}: ${actorSynced} table(s) synced`));
   }
 
   // --all-users: push user actor schemas to all registered user sheets

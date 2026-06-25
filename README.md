@@ -131,7 +131,7 @@ adapter.registerSchema(bookingsSchema);
 
 const userContext = adapter.withContext({
   userId: 'user_123',
-  role: 'user',
+  actor: 'user',
   actorSheetId: 'user-sheet-id',
 });
 
@@ -157,11 +157,13 @@ Actors are **data domains** — they determine *where* data is stored (which Goo
 ```typescript
 // sheet-db.config.ts
 actors: [
-  { role: "admin",  sheetIdEnv: "ADMIN_SHEET_ID" },
-  { role: "user",   sheetIdEnv: "DEV_USER_SHEET_ID" },
-  { role: "seller", sheetIdEnv: "DEV_SELLER_SHEET_ID" },
+  { name: "admin",  sheetIdEnv: "ADMIN_SHEET_ID" },
+  { name: "user",   sheetIdEnv: "DEV_USER_SHEET_ID" },
+  { name: "seller", sheetIdEnv: "DEV_SELLER_SHEET_ID" },
 ]
 ```
+
+> `ActorConfig.role` is accepted for backward compatibility but deprecated in favour of `name` — `role` reads as an RBAC role at the exact spot autocomplete shows it, which is the confusion this field exists to prevent. See [Actors vs Application Roles](#actors-vs-application-roles) and [FAQ #2](./FAQ.md#2-actors-vs-rbac-roles).
 
 ```env
 # .env
@@ -185,6 +187,16 @@ These two concepts are distinct — confusing them leads to wrong architecture d
 | **App RBAC role** | *What* a user can do (read orders, edit products, etc.) | Yes — rows in `roles` / `role_permissions` tables | Your app's DB layer |
 
 The `actor` field in `withContext()` is the sheet-db actor concept, not an RBAC role. If you need fine-grained permissions (e.g. "manager can approve but not delete"), build a `roles` + `role_permissions` table in the admin sheet and enforce it in your application layer — sheet-db intentionally does not provide RBAC.
+
+**Field names follow the same rule everywhere actor identity appears** — each was renamed away from `role` because the bare word `role` reads as an RBAC role at the point of writing the code, regardless of what the docs say:
+
+| Location | Preferred field | Deprecated alias (still works, warns) |
+|---|---|---|
+| `sheet-db.config.ts` actor entries | `name` | `role` |
+| `withContext()` | `actor` | `role` |
+| `withContext()` cross-actor target | `targetActor` | `targetRole` |
+
+Modeling RBAC sub-roles (e.g. `operation`, `finance`, `marketing`) as separate actors is the most common version of this mistake — it usually means you need rows in a `roles` / `role_permissions` table inside one actor, not one actor config entry per sub-role.
 
 ### Dev vs Production data model
 
@@ -663,6 +675,27 @@ user-sheet-123
   ├── bookings
   ├── payments
   └── settings
+```
+
+### Sheet Formatting
+
+Every tab created or extended by `sync` / `syncSchema()` / `createUserSheet()` is formatted automatically — no config needed:
+
+- **Auto-fit columns** — header and data columns are resized to fit their content.
+- **Header row styling** — a light fill color, frozen by default so it stays visible while scrolling.
+- **Data validation dropdowns** — `boolean()` columns get a native checkbox; `string().enum([...])` columns get a dropdown of the allowed values. Both guard against invalid manual edits directly in the sheet.
+
+Override the defaults via `sheetStyle` on `createSheetAdapter()`:
+
+```typescript
+const adapter = createSheetAdapter({
+  // ...
+  sheetStyle: {
+    headerColor: '#E8F0FE',   // optional, falls back to this built-in default
+    freezeHeader: true,       // default: true
+    freezeFirstColumn: false, // default: false
+  },
+});
 ```
 
 ## 🎓 Complete Example

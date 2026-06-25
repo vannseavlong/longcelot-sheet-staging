@@ -69,10 +69,13 @@ interface SheetAdapterConfig {
   sharedDriveId?: string;                                 // target a Google Workspace Shared Drive
   tokenStore?: TokenStore;                                // per-actor OAuth token persistence
   storage?: StorageAdapter;                               // file upload provider
+  sheetStyle?: SheetStyleConfig;                          // header color, frozen rows/columns
 }
 ```
 
 For Drive folder organisation, actor-owned sheets, Shared Drive, `TokenStore`, and `StorageAdapter` / `DriveStorageAdapter`, see `skills/drive/SKILL.md`.
+
+> **Actor field naming**: every field that identifies an actor is named `name`/`actor`/`targetActor` — never `role` — because `role` reads as an application RBAC role at the point of writing the code. `sheet-db.config.ts` actor entries use `{ name: 'admin', sheetIdEnv: ... }`; `withContext()` uses `actor:`/`targetActor:`. The old `role`/`targetRole` fields still work as deprecated aliases (emit `console.warn`) but should not be used in new code. Modeling RBAC sub-roles as separate actors is the most common mistake this causes — see `skills/permissions/SKILL.md`.
 
 ---
 
@@ -149,8 +152,8 @@ app.get('/bookings', async (req, res) => {
 
   const ctx = adapter.withContext({
     userId: user.id,
-    role: user.role,             // must match an actor defined in your config
-    actorSheetId: user.sheetId, // Google Sheet ID for this user's role
+    actor: user.actorType,        // must match an actor `name` defined in your config
+    actorSheetId: user.sheetId,   // Google Sheet ID for this user's actor
   });
 
   const bookings = await ctx.table('bookings').findMany();
@@ -190,13 +193,30 @@ Switch context to a different target actor without reconstructing the full conte
 ```typescript
 const teacherCtx = adapter.withContext({
   userId: 'teacher_001',
-  role: 'teacher',
+  actor: 'teacher',
   actorSheetId: 'teacher-sheet-id',
 });
 
 // Switch to access a student's sheet (requires permissions config)
 const crossCtx = teacherCtx.asActor('student', 'student-sheet-id');
 await crossCtx.table('scores').findMany();
+```
+
+---
+
+## Sheet Formatting
+
+Every tab created or extended by `syncSchema()` / `createUserSheet()` is auto-formatted: columns auto-fit to content, the header row gets a fill color and is frozen, and `boolean()`/`enum()` columns get native checkbox/dropdown data validation. No config is required. Override the defaults:
+
+```typescript
+const adapter = createSheetAdapter({
+  // ...
+  sheetStyle: {
+    headerColor: '#E8F0FE',   // optional, this is also the built-in default
+    freezeHeader: true,       // default: true
+    freezeFirstColumn: false, // default: false
+  },
+});
 ```
 
 ---

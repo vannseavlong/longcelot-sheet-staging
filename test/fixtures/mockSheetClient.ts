@@ -16,6 +16,8 @@ export class MockSheetClient {
   uploadFileCalls: Array<{ filename: string; mimeType: string; folderId?: string; makePublic?: boolean }> = [];
   /** Tracks calls to deleteFile */
   deleteFileCalls: string[] = [];
+  /** Tracks calls to formatSheet */
+  formatSheetCalls: Array<{ spreadsheetId: string; sheetName: string; options: any }> = [];
 
   /** Pre-seed a spreadsheet so tests can skip createSpreadsheet */
   seed(spreadsheetId: string, sheetName: string, rows: any[][]) {
@@ -104,6 +106,11 @@ export class MockSheetClient {
 
   async shareWithUser(_spreadsheetId: string, _email: string, _role: string): Promise<void> {
     // no-op in tests
+  }
+
+  async formatSheet(spreadsheetId: string, sheetName: string, options: any): Promise<void> {
+    this._ensureSheet(spreadsheetId, sheetName);
+    this.formatSheetCalls.push({ spreadsheetId, sheetName, options });
   }
 
   /** Helper: get raw rows for assertions */

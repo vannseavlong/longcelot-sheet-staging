@@ -24,7 +24,9 @@ Each skill must be independently useful. An agent reading only one skill must be
 **Must cover:**
 - Installation commands for npm / pnpm / yarn / bun
 - Required environment variables and their purpose
-- `createSheetAdapter()` and full `SheetAdapterConfig` (including `onSchemaMismatch`, `permissions`, `driveFolder`, `sharedDriveId`, `tokenStore`, `storage`)
+- `createSheetAdapter()` and full `SheetAdapterConfig` (including `onSchemaMismatch`, `permissions`, `driveFolder`, `sharedDriveId`, `tokenStore`, `storage`, `sheetStyle`)
+- Actor field naming: `name`/`actor`/`targetActor` (preferred) vs `role`/`targetRole` (deprecated aliases)
+- Sheet formatting defaults: auto-fit columns, header fill + frozen header row, boolean/enum data validation dropdowns
 - `registerSchema()` / `registerSchemas()`
 - `withContext()` and `asActor()` overview
 - `createUserSheet(userId, role, email, options?)` — basic and actor-owned (actorTokens / extraFields)
@@ -94,12 +96,12 @@ Each skill must be independently useful. An agent reading only one skill must be
 - Common mistakes: using wrong OAuth manager, onUser throwing vs returning null, missing frontendUrl protocol
 
 ### permissions
-**Goal**: Agent can configure a cross-actor permission matrix, wire `targetRole`/`targetSheetId` in context, use `asActor()`, and perform cross-actor CRUD including aggregation across multiple user sheets.
+**Goal**: Agent can configure a cross-actor permission matrix, wire `targetActor`/`targetSheetId` in context, use `asActor()`, and perform cross-actor CRUD including aggregation across multiple user sheets.
 
 **Must cover:**
 - `ActorPermission` type (canAccess, tables)
 - `permissions` map in `SheetAdapterConfig`
-- `targetRole` / `targetSheetId` in `UserContext`
+- `targetActor` / `targetSheetId` in `UserContext` (`targetRole` is a deprecated alias)
 - `asActor()` shorthand
 - Full cross-actor CRUD example (create, findMany, update, delete)
 - Admin bypass behavior
@@ -132,7 +134,7 @@ Each skill must be independently useful. An agent reading only one skill must be
 - `sync --all-users`, `--dry-run`, `--token-file` (CI usage)
 - `seed --skip-existing`, `--upsert`, `--all-actors`
 - Static vs dynamic seed file format
-- `sheet-db.config.ts` full structure with `ActorConfig` (role + sheetIdEnv)
+- `sheet-db.config.ts` full structure with `ActorConfig` (name + sheetIdEnv; `role` is a deprecated alias for `name`)
 - `.sheet-db-tokens.json` lifecycle
 - Common mistakes: missing env vars, committing token file, not syncing after schema change, re-seeding without --skip-existing, CI hangs without --token-file
 
@@ -175,7 +177,7 @@ The following failure modes are the most commonly encountered and must appear in
 6. `auth`: Losing the `refresh_token` on first OAuth exchange
 7. `core`: Upgrading chalk/inquirer/nanoid to ESM-only versions
 8. `cli` / `seed`: Re-seeding without `--skip-existing` causes unique constraint violations
-9. `permissions`: Setting `targetRole` without `targetSheetId`
+9. `permissions`: Setting `targetActor` without `targetSheetId`
 10. `crud`: Looping `create()` instead of using `createMany()` for bulk inserts
 11. `drive`: Calling `adapter.upload()` without configuring `storage` in `createSheetAdapter` (throws `SchemaError`)
 12. `drive`: Discarding `refresh_token` from `getTokens()` — actor-owned sheet creation fails after 1 hour

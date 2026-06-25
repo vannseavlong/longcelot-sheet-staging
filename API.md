@@ -166,6 +166,7 @@ Creates a new sheet adapter instance.
   sharedDriveId?: string;                                 // target a Google Workspace Shared Drive
   tokenStore?: TokenStore;                                // per-actor token persistence
   storage?: StorageAdapter;                               // file upload provider
+  sheetStyle?: SheetStyleConfig;                          // header color, frozen rows/columns (see Type Definitions)
 }
 ```
 
@@ -226,7 +227,8 @@ Creates a new adapter instance with user context. Optionally starts an async sch
   role?: string;         // @deprecated — use actor instead (accepted for backward compat, emits console.warn)
   actorSheetId?: string;
   // Cross-actor fields (see Cross-Actor Operations below)
-  targetRole?: string;
+  targetActor?: string;  // preferred — which actor's sheet to access
+  targetRole?: string;   // @deprecated — use targetActor instead (accepted for backward compat, emits console.warn)
   targetSheetId?: string;
 }
 ```
@@ -243,13 +245,13 @@ const userContext = adapter.withContext({
 });
 ```
 
-### `adapter.asActor(targetRole, targetSheetId)`
+### `adapter.asActor(targetActor, targetSheetId)`
 
 Convenience method — clones the current context and sets cross-actor fields. Requires `withContext()` to have been called first.
 
 **Parameters:**
 
-- `targetRole: string` - The actor type to access
+- `targetActor: string` - The actor type to access
 - `targetSheetId: string` - The sheet ID of the target actor
 
 **Returns:** `SheetAdapter` pointing at the target actor's sheet
@@ -358,7 +360,7 @@ Deletes a file via the configured `StorageAdapter`. Throws `SchemaError` if no s
 
 ### `adapter.syncSchema(schema)`
 
-Syncs a schema to Google Sheets.
+Syncs a schema to Google Sheets. Creates the tab if missing, appends any new columns, and — whenever headers are written (new tab or new columns) — applies sheet formatting: auto-fit column widths, header fill color, frozen header row (and first column if configured), and `BOOLEAN`/`ONE_OF_LIST` data validation dropdowns for `boolean()`/`enum()` columns. No formatting calls are made when nothing changed. Configure via `sheetStyle` on `createSheetAdapter()` (see [`SheetStyleConfig`](#sheetstyleconfig)).
 
 **Parameters:**
 
@@ -758,12 +760,12 @@ const adapter = createSheetAdapter({
 ### Cross-Actor Context
 
 ```typescript
-// Option A: withContext with targetRole + targetSheetId
+// Option A: withContext with targetActor + targetSheetId
 const ctx = adapter.withContext({
   userId: 'teacher_001',
   actor: 'teacher',
   actorSheetId: 'teacher-sheet-id',
-  targetRole: 'student',
+  targetActor: 'student',
   targetSheetId: 'student-sheet-id-123',
 });
 
@@ -836,7 +838,10 @@ interface UserContext {
   /** @deprecated Use actor instead. Accepted for backward compat; emits console.warn when used. */
   role?: string;
   actorSheetId?: string;
-  targetRole?: string;      // cross-actor: which actor type to access
+  /** Preferred. Cross-actor: which actor's sheet to access. */
+  targetActor?: string;
+  /** @deprecated Use targetActor instead. Accepted for backward compat; emits console.warn when used. */
+  targetRole?: string;
   targetSheetId?: string;   // cross-actor: the target actor's sheet ID
 }
 ```
@@ -849,6 +854,14 @@ interface UserContext {
 |---------|----------|----------|---------------|
 | **Actor** (`actor:`) | Which Google Sheet + table schemas to use | No — fixed in `sheet-db.config.ts` | Config file |
 | **App RBAC role** | What a user is allowed to do in your app | Yes — rows in your app's DB | Your app layer |
+
+Every field that identifies an actor follows this naming, so it can't be mistaken for an RBAC role at the point of writing the code:
+
+| Location | Preferred | Deprecated alias |
+|---|---|---|
+| `ActorConfig` (`sheet-db.config.ts`) | `name` | `role` |
+| `UserContext` (`withContext()`) | `actor` | `role` |
+| `UserContext` cross-actor target | `targetActor` | `targetRole` |
 
 ### `ActorPermission`
 
@@ -863,10 +876,25 @@ interface ActorPermission {
 
 ```typescript
 interface ActorConfig {
-  role: string;
+  /** Preferred. The actor's identifier — e.g. 'admin', 'seller', 'student'. */
+  name?: string;
+  /** @deprecated Use name instead. Accepted for backward compat; emits console.warn when used. */
+  role?: string;
   sheetIdEnv: string;   // env var name that holds this actor's sheet ID
 }
 ```
+
+### `SheetStyleConfig`
+
+```typescript
+interface SheetStyleConfig {
+  headerColor?: string;        // hex color for the header row fill, e.g. '#E8F0FE'
+  freezeHeader?: boolean;      // default: true
+  freezeFirstColumn?: boolean; // default: false
+}
+```
+
+Passed as `sheetStyle` on `createSheetAdapter()`. Auto-fit column width and `boolean()`/`enum()` data validation dropdowns are always applied — no config needed.
 
 ### `SchemaMismatchBehaviour`
 

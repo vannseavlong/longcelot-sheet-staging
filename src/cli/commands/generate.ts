@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
+import { resolveActorName } from '../../utils/actorConfig';
 
 export async function generateCommand(tableName: string) {
   console.log(chalk.blue.bold(`📝 Generating table schema: ${tableName}\n`));
@@ -19,9 +20,7 @@ export async function generateCommand(tableName: string) {
       type: 'list',
       name: 'actor',
       message: 'Which actor owns this table?',
-      choices: config.actors.map((a: { role?: string } | string) =>
-        typeof a === 'string' ? a : a.role
-      ),
+      choices: config.actors.map((a: { name?: string; role?: string } | string) => resolveActorName(a)),
     },
     {
       type: 'confirm',

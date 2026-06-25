@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
+import { resolveActorName } from '../../utils/actorConfig';
 
 function makeEmail(userId: string, role: string) {
   return `${role}.${userId}@example.local`;
@@ -47,7 +48,7 @@ export async function mockUsersCommand(countArg?: string | number) {
 
   // Load config and schemas
   interface CLIConfig {
-    actors: Array<{ role: string; sheetIdEnv?: string } | string>;
+    actors: Array<{ name?: string; role?: string; sheetIdEnv?: string } | string>;
     schemasDir?: string;
   }
   let config: CLIConfig;
@@ -76,7 +77,7 @@ export async function mockUsersCommand(countArg?: string | number) {
     : path.join(process.cwd(), 'schemas');
 
   for (const actorEntry of config.actors) {
-    const actor = typeof actorEntry === 'string' ? actorEntry : actorEntry.role;
+    const actor = resolveActorName(actorEntry);
     const actorDir = path.join(schemasRoot, actor);
     if (!fs.existsSync(actorDir)) continue;
     const files = fs.readdirSync(actorDir).filter((f) => f.endsWith('.ts'));
@@ -102,8 +103,8 @@ export async function mockUsersCommand(countArg?: string | number) {
     const userId = `mock-${Date.now().toString(36)}-${i}`;
     // Rotate roles among configured actors (skip admin)
     const actors = config.actors
-      .map((a: { role?: string } | string) => (typeof a === 'string' ? a : a.role))
-      .filter((r): r is string => r !== undefined && r !== 'admin');
+      .map((a) => resolveActorName(a))
+      .filter((r) => r !== 'admin');
     const role = actors[i % actors.length] || 'student';
     const email = makeEmail(userId, role);
 

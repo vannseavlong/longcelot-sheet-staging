@@ -85,7 +85,7 @@ export interface AuthRouter {
  *   frontendUrl: process.env.FRONTEND_URL!,
  *   registrationPolicy: 'login-only',   // admin-only — no self-signup
  *   async onUser(profile, adapter) {
- *     const ctx = adapter.withContext({ userId: 'auth', role: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! })
+ *     const ctx = adapter.withContext({ userId: 'auth', actor: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! })
  *     return await ctx.table('users').findOne({ where: { email: profile.email } })
  *   },
  * })

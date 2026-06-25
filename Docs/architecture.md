@@ -88,13 +88,24 @@ The storage layer consists of:
 
 ## 4. Actor-Based Data Model
 
-Actors represent roles that determine:
+Actors are **data domains**, not application roles. An actor determines:
 
 * data ownership
 * sheet location
 * access permissions
 
 Each actor owns exactly one sheet.
+
+### Actors vs Application Roles
+
+These are two distinct concepts, and the package's field names are deliberately chosen so they can't be confused at the point of writing code:
+
+| Concept | Controls | Dynamic? | Where defined | Field name |
+|---|---|---|---|---|
+| **Actor** | *Where* data is stored (which Google Sheet, which schemas) | No — fixed at deploy time in `sheet-db.config.ts` | Config file | `ActorConfig.name`, `UserContext.actor` / `targetActor` |
+| **App RBAC role** | *What* a user is allowed to do | Yes — rows in your own `roles` / `role_permissions` table | Your app's DB layer | Not modeled by sheet-db at all |
+
+`name`/`actor`/`targetActor` replaced an earlier `role`/`targetRole` naming (kept as deprecated aliases). The old names conflated the two concepts: a config entry like `{ role: 'operation' }` reads exactly like an RBAC role assignment, which has led teams to model RBAC sub-roles as separate actors instead of as rows inside one actor's `roles` table. See [FAQ #2](../FAQ.md#2-actors-vs-rbac-roles) for the concrete incident this fixed.
 
 ### Role Permissions & Table Joins (Roadmap)
 

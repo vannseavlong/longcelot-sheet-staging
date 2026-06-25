@@ -261,6 +261,80 @@ describe('admin bypass', () => {
   });
 });
 
+// ── targetActor (preferred) vs targetRole (deprecated alias) ─────────────────
+
+describe('targetActor / targetRole normalisation', () => {
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('targetActor grants cross-actor access without a deprecation warning', () => {
+    const { adapter } = makeAdapter({
+      permissions: { teacher: { canAccess: ['student'] } },
+    });
+    const ctx = adapter.withContext({
+      userId: 'teacher_001',
+      actor: 'teacher',
+      actorSheetId: 'teacher-sheet-id',
+      targetActor: 'student',
+      targetSheetId: 'student-sheet-id',
+    });
+    expect(() => ctx.table('scores')).not.toThrow();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('targetRole still grants cross-actor access but emits a deprecation warning', () => {
+    const { adapter } = makeAdapter({
+      permissions: { teacher: { canAccess: ['student'] } },
+    });
+    const ctx = adapter.withContext({
+      userId: 'teacher_001',
+      actor: 'teacher',
+      actorSheetId: 'teacher-sheet-id',
+      targetRole: 'student',
+      targetSheetId: 'student-sheet-id',
+    });
+    expect(() => ctx.table('scores')).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('UserContext.targetRole is deprecated'));
+  });
+
+  it('targetActor takes priority when both targetActor and targetRole are set', () => {
+    const { adapter } = makeAdapter({
+      permissions: { teacher: { canAccess: ['student'] } },
+    });
+    const ctx = adapter.withContext({
+      userId: 'teacher_001',
+      actor: 'teacher',
+      actorSheetId: 'teacher-sheet-id',
+      targetActor: 'student',
+      targetRole: 'ignored-value',
+      targetSheetId: 'student-sheet-id',
+    });
+    expect(() => ctx.table('scores')).not.toThrow();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('asActor() sets targetActor without emitting a deprecation warning', () => {
+    const { adapter } = makeAdapter({
+      permissions: { teacher: { canAccess: ['student'] } },
+    });
+    const ctx = adapter.withContext({
+      userId: 'teacher_001',
+      actor: 'teacher',
+      actorSheetId: 'teacher-sheet-id',
+    });
+    const crossCtx = ctx.asActor('student', 'student-sheet-id');
+    expect(() => crossCtx.table('scores')).not.toThrow();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
 // ── CRUD routing — operations hit the correct spreadsheetId ───────────────────
 
 describe('CRUD routing to correct sheet', () => {

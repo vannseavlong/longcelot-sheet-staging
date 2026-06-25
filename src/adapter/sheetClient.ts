@@ -9,6 +9,27 @@ export interface CreateSpreadsheetOptions {
   sharedDriveId?: string;
 }
 
+export type ColumnValidationRule =
+  | { columnIndex: number; type: 'BOOLEAN' }
+  | { columnIndex: number; type: 'ONE_OF_LIST'; values: (string | number | boolean)[] };
+
+export interface SheetFormattingOptions {
+  /** Total number of header columns — used for fill/auto-resize ranges. */
+  columnCount: number;
+  headerColor?: string;
+  freezeHeader?: boolean;
+  freezeFirstColumn?: boolean;
+  validations?: ColumnValidationRule[];
+}
+
+function hexToRgb(hex: string): { red: number; green: number; blue: number } {
+  const normalized = hex.replace('#', '');
+  const r = parseInt(normalized.substring(0, 2), 16);
+  const g = parseInt(normalized.substring(2, 4), 16);
+  const b = parseInt(normalized.substring(4, 6), 16);
+  return { red: r / 255, green: g / 255, blue: b / 255 };
+}
+
 export class SheetClient {
   private sheets: sheets_v4.Sheets;
   private drive: drive_v3.Drive;
@@ -153,6 +174,96 @@ export class SheetClient {
       requestBody: {
         values: [headers],
       },
+    });
+  }
+
+  /**
+   * Applies header fill color, frozen rows/columns, auto-fit column widths, and
+   * boolean/enum data validation dropdowns in a single batchUpdate call.
+   */
+  async formatSheet(
+    spreadsheetId: string,
+    sheetName: string,
+    options: SheetFormattingOptions
+  ): Promise<void> {
+    const sheetId = await this.getSheetId(spreadsheetId, sheetName);
+    const requests: sheets_v4.Schema$Request[] = [];
+
+    if (options.headerColor) {
+      requests.push({
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: 0,
+            endRowIndex: 1,
+            startColumnIndex: 0,
+            endColumnIndex: options.columnCount,
+          },
+          cell: {
+            userEnteredFormat: { backgroundColor: hexToRgb(options.headerColor) },
+          },
+          fields: 'userEnteredFormat.backgroundColor',
+        },
+      });
+    }
+
+    if (options.freezeHeader || options.freezeFirstColumn) {
+      const fields: string[] = [];
+      const gridProperties: sheets_v4.Schema$GridProperties = {};
+      if (options.freezeHeader) {
+        gridProperties.frozenRowCount = 1;
+        fields.push('gridProperties.frozenRowCount');
+      }
+      if (options.freezeFirstColumn) {
+        gridProperties.frozenColumnCount = 1;
+        fields.push('gridProperties.frozenColumnCount');
+      }
+      requests.push({
+        updateSheetProperties: {
+          properties: { sheetId, gridProperties },
+          fields: fields.join(','),
+        },
+      });
+    }
+
+    requests.push({
+      autoResizeDimensions: {
+        dimensions: {
+          sheetId,
+          dimension: 'COLUMNS',
+          startIndex: 0,
+          endIndex: options.columnCount,
+        },
+      },
+    });
+
+    for (const rule of options.validations ?? []) {
+      requests.push({
+        setDataValidation: {
+          range: {
+            sheetId,
+            startRowIndex: 1,
+            startColumnIndex: rule.columnIndex,
+            endColumnIndex: rule.columnIndex + 1,
+          },
+          rule: {
+            condition:
+              rule.type === 'BOOLEAN'
+                ? { type: 'BOOLEAN' }
+                : {
+                    type: 'ONE_OF_LIST',
+                    values: rule.values.map((v) => ({ userEnteredValue: String(v) })),
+                  },
+            strict: true,
+            showCustomUi: true,
+          },
+        },
+      });
+    }
+
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
     });
   }
 

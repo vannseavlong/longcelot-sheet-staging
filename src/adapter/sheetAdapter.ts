@@ -1,7 +1,8 @@
-import { SheetClient } from './sheetClient';
+import { SheetClient, ColumnValidationRule } from './sheetClient';
 import { CRUDOperations } from './crud';
 import {
   TableSchema,
+  ColumnDefinition,
   UserContext,
   FKResolver,
   SchemaMismatchBehaviour,
@@ -11,7 +12,10 @@ import {
   StorageAdapter,
   UploadOptions,
   CreateUserSheetOptions,
+  SheetStyleConfig,
 } from '../schema/types';
+
+const DEFAULT_HEADER_COLOR = '#E8F0FE';
 
 // Internal context type — always has both actor and role set (normalised by withContext).
 interface NormalisedContext {
@@ -19,7 +23,7 @@ interface NormalisedContext {
   actor: string;
   role: string;
   actorSheetId?: string;
-  targetRole?: string;
+  targetActor?: string;
   targetSheetId?: string;
 }
 import { PermissionError } from '../errors/PermissionError';
@@ -61,6 +65,8 @@ export interface SheetAdapterConfig {
   tokenStore?: TokenStore;
   /** File upload provider. Pass new DriveStorageAdapter() for built-in Drive upload. */
   storage?: StorageAdapter;
+  /** Header fill color, frozen rows/columns. Auto-resize and boolean/enum dropdowns are always applied. */
+  sheetStyle?: SheetStyleConfig;
 }
 
 export class SheetAdapter {
@@ -75,6 +81,7 @@ export class SheetAdapter {
   private sharedDriveId?: string;
   private tokenStore?: TokenStore;
   private storage?: StorageAdapter;
+  private sheetStyle: Required<SheetStyleConfig>;
   /** Cached Drive folder IDs: role -> folderId */
   private _folderCache = new Map<string, string>();
   /** Pending schema version check promise set by withContext() */
@@ -92,6 +99,11 @@ export class SheetAdapter {
     this.sharedDriveId = config.sharedDriveId;
     this.tokenStore = config.tokenStore;
     this.storage = config.storage;
+    this.sheetStyle = {
+      headerColor: config.sheetStyle?.headerColor ?? DEFAULT_HEADER_COLOR,
+      freezeHeader: config.sheetStyle?.freezeHeader ?? true,
+      freezeFirstColumn: config.sheetStyle?.freezeFirstColumn ?? false,
+    };
 
     // Inject the admin SheetClient into DriveStorageAdapter so callers don't repeat credentials
     const storageAsAny = this.storage as unknown as Record<string, unknown>;
@@ -124,12 +136,24 @@ export class SheetAdapter {
       throw new Error('[sheet-db] withContext() requires either actor or role in UserContext');
     }
 
+    // Normalise targetActor/targetRole: prefer `targetActor`, fall back to deprecated `targetRole`.
+    let targetActorValue: string | undefined;
+    if (context.targetActor) {
+      targetActorValue = context.targetActor;
+    } else if (context.targetRole) {
+      console.warn(
+        '[sheet-db] UserContext.targetRole is deprecated — use targetActor instead. ' +
+        'See: https://github.com/longcelot/sheet-db#actors-vs-application-roles'
+      );
+      targetActorValue = context.targetRole;
+    }
+
     const normalised: NormalisedContext = {
       userId: context.userId,
       actor: actorValue,
       role: actorValue,
       actorSheetId: context.actorSheetId,
-      targetRole: context.targetRole,
+      targetActor: targetActorValue,
       targetSheetId: context.targetSheetId,
     };
 
@@ -144,16 +168,16 @@ export class SheetAdapter {
     return newAdapter;
   }
 
-  asActor(targetRole: string, targetSheetId: string): SheetAdapter {
+  asActor(targetActor: string, targetSheetId: string): SheetAdapter {
     if (!this.context) {
       throw new PermissionError('Context required before calling asActor()', undefined);
     }
-    // Pass actor: (not role:) so withContext does not emit a deprecation warning.
+    // Pass actor:/targetActor: (not role:/targetRole:) so withContext does not emit deprecation warnings.
     return this.withContext({
       userId: this.context.userId,
       actor: this.context.actor,
       actorSheetId: this.context.actorSheetId,
-      targetRole,
+      targetActor,
       targetSheetId,
     });
   }
@@ -220,6 +244,7 @@ export class SheetAdapter {
       await this.client.addSheet(sheetId, table.name);
       const headers = Object.keys(table.columns);
       await this.client.writeHeader(sheetId, table.name, headers);
+      await this._applySheetFormatting(sheetId, table, headers);
     }
 
     const adminTable = this.table('users');
@@ -266,14 +291,14 @@ export class SheetAdapter {
 
     if (rows.length === 0) {
       await this.client.writeHeader(spreadsheetId, schema.name, schemaHeaders);
+      await this._applySheetFormatting(spreadsheetId, schema, schemaHeaders);
     } else {
       const existingHeaders = rows[0];
       const missingHeaders = schemaHeaders.filter((h) => !existingHeaders.includes(h));
       if (missingHeaders.length > 0) {
-        await this.client.writeHeader(spreadsheetId, schema.name, [
-          ...existingHeaders,
-          ...missingHeaders,
-        ]);
+        const finalHeaders = [...existingHeaders, ...missingHeaders];
+        await this.client.writeHeader(spreadsheetId, schema.name, finalHeaders);
+        await this._applySheetFormatting(spreadsheetId, schema, finalHeaders);
       }
     }
   }
@@ -331,6 +356,37 @@ export class SheetAdapter {
 
   // ── Internal helpers ──────────────────────────────────────────────────────
 
+  private _buildValidationRules(
+    headers: string[],
+    columns: Record<string, ColumnDefinition>
+  ): ColumnValidationRule[] {
+    const rules: ColumnValidationRule[] = [];
+    headers.forEach((header, columnIndex) => {
+      const col = columns[header];
+      if (!col) return;
+      if (col.type === 'boolean') {
+        rules.push({ columnIndex, type: 'BOOLEAN' });
+      } else if (col.enum && col.enum.length > 0) {
+        rules.push({ columnIndex, type: 'ONE_OF_LIST', values: col.enum });
+      }
+    });
+    return rules;
+  }
+
+  private async _applySheetFormatting(
+    spreadsheetId: string,
+    schema: TableSchema,
+    headers: string[]
+  ): Promise<void> {
+    await this.client.formatSheet(spreadsheetId, schema.name, {
+      columnCount: headers.length,
+      headerColor: this.sheetStyle.headerColor,
+      freezeHeader: this.sheetStyle.freezeHeader,
+      freezeFirstColumn: this.sheetStyle.freezeFirstColumn,
+      validations: this._buildValidationRules(headers, schema.columns),
+    });
+  }
+
   private _svCrud(): CRUDOperations {
     return new CRUDOperations(this.client, this.adminSheetId, SCHEMA_VERSIONS_SCHEMA);
   }
@@ -339,11 +395,9 @@ export class SheetAdapter {
     const sheets = await this.client.getSheetNames(this.adminSheetId);
     if (!sheets.includes('schema_versions')) {
       await this.client.addSheet(this.adminSheetId, 'schema_versions');
-      await this.client.writeHeader(
-        this.adminSheetId,
-        'schema_versions',
-        Object.keys(SCHEMA_VERSIONS_SCHEMA.columns)
-      );
+      const headers = Object.keys(SCHEMA_VERSIONS_SCHEMA.columns);
+      await this.client.writeHeader(this.adminSheetId, 'schema_versions', headers);
+      await this._applySheetFormatting(this.adminSheetId, SCHEMA_VERSIONS_SCHEMA, headers);
     }
   }
 
@@ -462,9 +516,9 @@ export class SheetAdapter {
       return this.adminSheetId;
     }
 
-    const isCrossActor = this.context?.targetRole && this.context.targetRole !== this.context?.role;
+    const isCrossActor = this.context?.targetActor && this.context.targetActor !== this.context?.role;
 
-    if (isCrossActor && schema.actor === this.context?.targetRole) {
+    if (isCrossActor && schema.actor === this.context?.targetActor) {
       if (!this.context?.targetSheetId) {
         throw new PermissionError(
           `targetSheetId required for cross-actor access to '${schema.actor}' tables`,
@@ -487,16 +541,16 @@ export class SheetAdapter {
     if (this.context.role === 'admin') return true;
 
     // Same actor accessing their own tables
-    if (schema.actor === this.context.role && !this.context.targetRole) return true;
+    if (schema.actor === this.context.role && !this.context.targetActor) return true;
 
     // Admin tables: non-admin cannot access unless it's the users table on create
     if (schema.actor === 'admin') return false;
 
     // Cross-actor: check permission matrix
-    const targetRole = this.context.targetRole;
-    if (!targetRole || targetRole === this.context.role) return schema.actor === this.context.role;
+    const targetActor = this.context.targetActor;
+    if (!targetActor || targetActor === this.context.role) return schema.actor === this.context.role;
 
-    if (schema.actor !== targetRole) return false;
+    if (schema.actor !== targetActor) return false;
 
     const perm = this.permissions?.[this.context.role];
     if (!perm) {
@@ -506,16 +560,16 @@ export class SheetAdapter {
       );
     }
 
-    if (!perm.canAccess.includes(targetRole)) {
+    if (!perm.canAccess.includes(targetActor)) {
       throw new PermissionError(
-        `'${this.context.role}' cannot access '${targetRole}' sheets`,
+        `'${this.context.role}' cannot access '${targetActor}' sheets`,
         this.context.role
       );
     }
 
     if (perm.tables && !perm.tables.includes(schema.name)) {
       throw new PermissionError(
-        `Table '${schema.name}' is not allowed for '${this.context.role}' → '${targetRole}' access`,
+        `Table '${schema.name}' is not allowed for '${this.context.role}' → '${targetActor}' access`,
         this.context.role
       );
     }

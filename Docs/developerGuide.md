@@ -281,9 +281,9 @@ Provide both the caller's context **and** the target sheet:
 // Fetch the student's sheet ID from your users table first, then:
 const ctx = adapter.withContext({
   userId: "teacher_001",
-  role: "teacher",
+  actor: "teacher",
   actorSheetId: "teacher-sheet-id",
-  targetRole: "student",
+  targetActor: "student",
   targetSheetId: "student-sheet-id-from-users-table",
 });
 ```
@@ -293,7 +293,7 @@ Or use the `asActor()` shorthand:
 ```ts
 const teacherCtx = adapter.withContext({
   userId: "teacher_001",
-  role: "teacher",
+  actor: "teacher",
   actorSheetId: "teacher-sheet-id",
 });
 
@@ -335,7 +335,7 @@ await crossCtx.table("scores").delete({ where: { _id: "score_xyz" } });
 | No `permissions` configured for a role attempting cross-actor access | `PermissionError` |
 | Role not in `canAccess` list for the target | `PermissionError` |
 | Table not in the allowed `tables` list | `PermissionError` |
-| `targetSheetId` missing while `targetRole` is set | `PermissionError` |
+| `targetSheetId` missing while `targetActor` is set | `PermissionError` |
 | Admin role — no config needed | Always allowed |
 
 ### 13.5 Fetching All Student Data Across Multiple Sheets
@@ -343,7 +343,7 @@ await crossCtx.table("scores").delete({ where: { _id: "score_xyz" } });
 ```ts
 // 1. Get your teacher's student list from their own sheet
 const myStudents = await adapter
-  .withContext({ userId: teacherId, role: "teacher", actorSheetId: teacherSheetId })
+  .withContext({ userId: teacherId, actor: "teacher", actorSheetId: teacherSheetId })
   .table("teacher_students")
   .findMany({ where: { teacher_id: teacherId } });
 
@@ -353,9 +353,9 @@ for (const student of myStudents) {
   const scores = await adapter
     .withContext({
       userId: teacherId,
-      role: "teacher",
+      actor: "teacher",
       actorSheetId: teacherSheetId,
-      targetRole: "student",
+      targetActor: "student",
       targetSheetId: student.actor_sheet_id,
     })
     .table("scores")
@@ -397,7 +397,7 @@ const auth = createAuthRouter({
   async onUser(profile, adapter) {
     const ctx = adapter.withContext({
       userId: 'auth',
-      role: 'admin',
+      actor: 'admin',
       actorSheetId: process.env.ADMIN_SHEET_ID!,
     });
     return await ctx.table('users').findOne({ where: { email: profile.email } });
