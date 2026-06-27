@@ -18,6 +18,8 @@ export class MockSheetClient {
   deleteFileCalls: string[] = [];
   /** Tracks calls to formatSheet */
   formatSheetCalls: Array<{ spreadsheetId: string; sheetName: string; options: any }> = [];
+  /** Tracks calls to extendValidation */
+  extendValidationCalls: Array<{ spreadsheetId: string; sheetName: string; validations: any; dataRowCount: number }> = [];
 
   /** Pre-seed a spreadsheet so tests can skip createSpreadsheet */
   seed(spreadsheetId: string, sheetName: string, rows: any[][]) {
@@ -77,9 +79,11 @@ export class MockSheetClient {
     }
   }
 
-  async appendRow(spreadsheetId: string, sheetName: string, values: any[]): Promise<void> {
+  async appendRow(spreadsheetId: string, sheetName: string, values: any[]): Promise<number> {
     this._ensureSheet(spreadsheetId, sheetName);
-    this.spreadsheets.get(spreadsheetId)!.get(sheetName)!.push([...values]);
+    const rows = this.spreadsheets.get(spreadsheetId)!.get(sheetName)!;
+    rows.push([...values]);
+    return rows.length; // 1-based row number of the row just written (header is row 1)
   }
 
   async getAllRows(spreadsheetId: string, sheetName: string): Promise<any[][]> {
@@ -111,6 +115,16 @@ export class MockSheetClient {
   async formatSheet(spreadsheetId: string, sheetName: string, options: any): Promise<void> {
     this._ensureSheet(spreadsheetId, sheetName);
     this.formatSheetCalls.push({ spreadsheetId, sheetName, options });
+  }
+
+  async extendValidation(
+    spreadsheetId: string,
+    sheetName: string,
+    validations: any,
+    dataRowCount: number
+  ): Promise<void> {
+    this._ensureSheet(spreadsheetId, sheetName);
+    this.extendValidationCalls.push({ spreadsheetId, sheetName, validations, dataRowCount });
   }
 
   /** Helper: get raw rows for assertions */

@@ -350,6 +350,27 @@
 - [x] Add `includeDeleted?: boolean` to `FindOptions` as an explicit opt-in to see soft-deleted rows
 - [x] Tests: soft-deleted row excluded by default from `findMany()`/`findOne()`/`count()`, included with `includeDeleted: true`
 
+### 11.4 Follow-up to 11.1 — validation buffer doesn't grow past 200 rows on its own (Medium) — Fixed
+
+- [x] `SheetClient.appendRow()` now returns the 1-based row number it wrote to (parsed from the Sheets API's `updates.updatedRange`, no extra read)
+- [x] `SheetClient.extendValidation()` — re-applies boolean/enum validation bounded to `dataRowCount + VALIDATION_ROW_BUFFER`, without touching header color/freeze/auto-resize
+- [x] `CRUDOperations.create()` calls `extendValidation()` every `VALIDATION_CHECK_INTERVAL` (100, half the 200-row buffer) rows, only when the schema actually has boolean/enum columns
+- [x] Extracted shared `buildValidationRules()` into `src/utils/validationRules.ts` (was duplicated between `SheetAdapter` and now `CRUDOperations`)
+- [x] Scoped to `create()` only — `createMany()`/bulk seeding still relies on a manual `sheet-db sync` afterward, consistent with existing seed-data guidance
+- [x] Tests: no-op below the check interval, extends exactly once at the interval boundary with correct `dataRowCount`, never fires for schemas without boolean/enum columns, `extendValidation()` request shape bounded correctly and isolated from header/freeze/auto-resize requests
+
+### 11.5 Feature: `boolean()` renders as a configurable ONE_OF_LIST dropdown, not a native checkbox (closes root cause of 11.1 for boolean columns) — Fixed
+
+- [x] `boolean()` columns now produce a `ONE_OF_LIST` validation rule (`['TRUE','FALSE']` or `['1','0']`) instead of the native `BOOLEAN` checkbox type — removed `ColumnValidationRule`'s `BOOLEAN` variant entirely (no longer produced anywhere)
+- [x] `BooleanFormat = 'TRUE_FALSE' | '1_0'` type added; configurable both project-wide and per-column
+- [x] `SheetStyleConfig.booleanFormat?: BooleanFormat` — project-wide default (falls back to `'TRUE_FALSE'`)
+- [x] `boolean({ format })` — per-column override, takes priority over the project-wide default
+- [x] `CRUDOperations` takes the resolved project-wide default as a 6th constructor arg (set by `SheetAdapter.table()` from `sheetStyle.booleanFormat`); `serializeValue()`/`deserializeRow()` resolve `column.booleanFormat ?? defaultBooleanFormat`
+- [x] `deserializeRow()` accepts both `'TRUE'` and `'1'` as true regardless of configured format, for sheets with mixed write history across a format change
+- [x] `computeSchemaHash()` includes `booleanFormat` so a per-column format change is detected as schema drift
+- [x] Shipped as the new default for everyone (no opt-in) — existing checkboxes render as a dropdown on the next sync; already-written cell values (`'TRUE'`/`'FALSE'`) are unaffected
+- [x] Tests: project-wide default applied, per-column override wins, mixed-format read compatibility, schema-sync builds `ONE_OF_LIST` for boolean() columns
+
 ---
 
 ## Documentation Updates

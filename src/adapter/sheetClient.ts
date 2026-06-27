@@ -9,9 +9,15 @@ export interface CreateSpreadsheetOptions {
   sharedDriveId?: string;
 }
 
-export type ColumnValidationRule =
-  | { columnIndex: number; type: 'BOOLEAN' }
-  | { columnIndex: number; type: 'ONE_OF_LIST'; values: (string | number | boolean)[] };
+/**
+ * boolean() columns use ONE_OF_LIST too (not a dedicated BOOLEAN type/condition) — see
+ * buildValidationRules() in src/utils/validationRules.ts for why that's deliberate.
+ */
+export interface ColumnValidationRule {
+  columnIndex: number;
+  type: 'ONE_OF_LIST';
+  values: (string | number | boolean)[];
+}
 
 export interface SheetFormattingOptions {
   /** Total number of header columns — used for fill/auto-resize ranges. */
@@ -31,7 +37,16 @@ export interface SheetFormattingOptions {
  * 1000-row default grid, and Sheets API reads then treat every one of those
  * formatted-but-empty rows as "has content" — see FAQ.md #10.
  */
-const VALIDATION_ROW_BUFFER = 200;
+export const VALIDATION_ROW_BUFFER = 200;
+
+/**
+ * How often CRUDOperations.create() re-checks whether the validated range needs
+ * extending as rows are appended between syncs (see FAQ.md #10 follow-up). Must be
+ * at most half of VALIDATION_ROW_BUFFER so coverage never runs out between checks:
+ * a check at row R extends coverage to R + VALIDATION_ROW_BUFFER; the next check at
+ * R + VALIDATION_CHECK_INTERVAL must still land inside that window.
+ */
+export const VALIDATION_CHECK_INTERVAL = VALIDATION_ROW_BUFFER / 2;
 
 function hexToRgb(hex: string): { red: number; green: number; blue: number } {
   const normalized = hex.replace('#', '');
@@ -39,6 +54,12 @@ function hexToRgb(hex: string): { red: number; green: number; blue: number } {
   const g = parseInt(normalized.substring(2, 4), 16);
   const b = parseInt(normalized.substring(4, 6), 16);
   return { red: r / 255, green: g / 255, blue: b / 255 };
+}
+
+/** Extracts the 1-based row number from an `updatedRange` like `"Sheet1!A12:G12"`. */
+function parseRowNumber(updatedRange: string | undefined | null): number {
+  const match = updatedRange?.match(/![A-Za-z]+(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
 }
 
 export class SheetClient {
@@ -249,31 +270,7 @@ export class SheetClient {
     });
 
     const validationEndRowIndex = 1 + (options.dataRowCount ?? 0) + VALIDATION_ROW_BUFFER;
-
-    for (const rule of options.validations ?? []) {
-      requests.push({
-        setDataValidation: {
-          range: {
-            sheetId,
-            startRowIndex: 1,
-            endRowIndex: validationEndRowIndex,
-            startColumnIndex: rule.columnIndex,
-            endColumnIndex: rule.columnIndex + 1,
-          },
-          rule: {
-            condition:
-              rule.type === 'BOOLEAN'
-                ? { type: 'BOOLEAN' }
-                : {
-                    type: 'ONE_OF_LIST',
-                    values: rule.values.map((v) => ({ userEnteredValue: String(v) })),
-                  },
-            strict: true,
-            showCustomUi: true,
-          },
-        },
-      });
-    }
+    requests.push(...this.buildValidationRequests(sheetId, options.validations ?? [], validationEndRowIndex));
 
     await this.sheets.spreadsheets.batchUpdate({
       spreadsheetId,
@@ -281,8 +278,57 @@ export class SheetClient {
     });
   }
 
-  async appendRow(spreadsheetId: string, sheetName: string, values: string[]): Promise<void> {
-    await this.sheets.spreadsheets.values.append({
+  /**
+   * Re-applies boolean/enum validation rules bounded to `dataRowCount + VALIDATION_ROW_BUFFER`,
+   * without touching header color/freeze/auto-resize. Called by CRUDOperations.create() as rows
+   * are appended between syncs, so the validated range keeps pace with real row growth instead
+   * of only catching up the next time `sheet-db sync` runs — see FAQ.md #10 follow-up.
+   */
+  async extendValidation(
+    spreadsheetId: string,
+    sheetName: string,
+    validations: ColumnValidationRule[],
+    dataRowCount: number
+  ): Promise<void> {
+    if (validations.length === 0) return;
+    const sheetId = await this.getSheetId(spreadsheetId, sheetName);
+    const endRowIndex = 1 + dataRowCount + VALIDATION_ROW_BUFFER;
+    const requests = this.buildValidationRequests(sheetId, validations, endRowIndex);
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
+  }
+
+  private buildValidationRequests(
+    sheetId: number,
+    validations: ColumnValidationRule[],
+    endRowIndex: number
+  ): sheets_v4.Schema$Request[] {
+    return validations.map((rule) => ({
+      setDataValidation: {
+        range: {
+          sheetId,
+          startRowIndex: 1,
+          endRowIndex,
+          startColumnIndex: rule.columnIndex,
+          endColumnIndex: rule.columnIndex + 1,
+        },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: rule.values.map((v) => ({ userEnteredValue: String(v) })),
+          },
+          strict: true,
+          showCustomUi: true,
+        },
+      },
+    }));
+  }
+
+  /** Returns the 1-based sheet row number the new row was written to (parsed from the API's updatedRange, no extra read). */
+  async appendRow(spreadsheetId: string, sheetName: string, values: string[]): Promise<number> {
+    const response = await this.sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${sheetName}!A:A`,
       valueInputOption: 'RAW',
@@ -290,6 +336,7 @@ export class SheetClient {
         values: [values],
       },
     });
+    return parseRowNumber(response.data.updates?.updatedRange);
   }
 
   async appendRows(spreadsheetId: string, sheetName: string, rows: string[][]): Promise<void> {

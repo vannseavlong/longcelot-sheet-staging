@@ -3,8 +3,8 @@ import { ColumnDefinition, DataType, JsonValue } from './types';
 export class ColumnBuilder {
   private definition: ColumnDefinition;
 
-  constructor(type: DataType) {
-    this.definition = { type };
+  constructor(type: DataType, initial: Partial<ColumnDefinition> = {}) {
+    this.definition = { type, ...initial };
   }
 
   required(): this {
@@ -77,8 +77,8 @@ export function number(): ColumnBuilder {
   return new ColumnBuilder('number');
 }
 
-export function boolean(): ColumnBuilder {
-  return new ColumnBuilder('boolean');
+export function boolean(options?: { format?: ColumnDefinition['booleanFormat'] }): ColumnBuilder {
+  return new ColumnBuilder('boolean', options?.format ? { booleanFormat: options.format } : {});
 }
 
 export function date(): ColumnBuilder {

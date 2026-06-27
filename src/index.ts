@@ -18,6 +18,7 @@ export type {
   ActorConfig,
   ActorPermission,
   SheetStyleConfig,
+  BooleanFormat,
   SchemaMismatchBehaviour,
   UserContext,
   FindOptions,

@@ -1,7 +1,9 @@
 import { nanoid } from 'nanoid';
-import { SheetClient } from './sheetClient';
+import { SheetClient, VALIDATION_CHECK_INTERVAL } from './sheetClient';
 import {
   TableSchema,
+  ColumnDefinition,
+  BooleanFormat,
   FindOptions,
   UpdateOptions,
   DeleteOptions,
@@ -10,6 +12,7 @@ import {
   FKResolver,
 } from '../schema/types';
 import { ValidationError } from '../errors/ValidationError';
+import { buildValidationRules } from '../utils/validationRules';
 
 export class CRUDOperations {
   constructor(
@@ -17,7 +20,8 @@ export class CRUDOperations {
     private spreadsheetId: string,
     private schema: TableSchema,
     private fkResolver?: FKResolver,
-    private preFlight?: Promise<void>
+    private preFlight?: Promise<void>,
+    private defaultBooleanFormat: BooleanFormat = 'TRUE_FALSE'
   ) {}
 
   async create(data: Record<string, unknown>, options: CreateOptions = {}): Promise<Record<string, unknown>> {
@@ -49,9 +53,10 @@ export class CRUDOperations {
     }
 
     const headers = await this.getHeaders();
-    const values = headers.map((header) => this.serializeValue(validated[header]));
+    const values = headers.map((header) => this.serializeValue(validated[header], this.schema.columns[header]));
 
-    await this.client.appendRow(this.spreadsheetId, this.schema.name, values);
+    const rowNumber = await this.client.appendRow(this.spreadsheetId, this.schema.name, values);
+    await this.maybeExtendValidation(headers, rowNumber);
 
     return validated;
   }
@@ -130,7 +135,7 @@ export class CRUDOperations {
         }
 
         const merged = { ...item, ...validated };
-        const values = headers.map((header) => this.serializeValue(merged[header]));
+        const values = headers.map((header) => this.serializeValue(merged[header], this.schema.columns[header]));
 
         await this.client.updateRow(this.spreadsheetId, this.schema.name, rowNumber, values);
         updated++;
@@ -191,7 +196,7 @@ export class CRUDOperations {
 
     // Batch all rows into a single append call
     const rows = results.map((validated) =>
-      headers.map((header) => this.serializeValue(validated[header]))
+      headers.map((header) => this.serializeValue(validated[header], this.schema.columns[header]))
     );
 
     await this.client.appendRows(this.spreadsheetId, this.schema.name, rows);
@@ -265,6 +270,20 @@ export class CRUDOperations {
       .filter(({ values }) => idIndex === -1 || (values[idIndex] !== undefined && values[idIndex] !== ''));
 
     return { headers, rows };
+  }
+
+  /**
+   * The validated range applied by sync/formatSheet() only covers data rows that existed
+   * at sync time plus a fixed buffer (see FAQ.md #10) — it doesn't grow on its own as rows
+   * are appended via create() between syncs. Every VALIDATION_CHECK_INTERVAL rows, re-extend
+   * the range by one more buffer's worth so checkbox/dropdown UI keeps pace with real growth
+   * without re-checking (let alone re-extending) on every single insert.
+   */
+  private async maybeExtendValidation(headers: string[], rowNumber: number): Promise<void> {
+    if (rowNumber % VALIDATION_CHECK_INTERVAL !== 0) return;
+    const rules = buildValidationRules(headers, this.schema.columns, this.defaultBooleanFormat);
+    if (rules.length === 0) return;
+    await this.client.extendValidation(this.spreadsheetId, this.schema.name, rules, rowNumber - 1);
   }
 
   private async getHeaders(): Promise<string[]> {
@@ -347,9 +366,13 @@ export class CRUDOperations {
     }
   }
 
-  private serializeValue(value: unknown): string {
+  private serializeValue(value: unknown, column?: ColumnDefinition): string {
     if (value === null || value === undefined) return '';
-    if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+    if (typeof value === 'boolean') {
+      const format = column?.booleanFormat ?? this.defaultBooleanFormat;
+      const [trueValue, falseValue] = format === '1_0' ? ['1', '0'] : ['TRUE', 'FALSE'];
+      return value ? trueValue : falseValue;
+    }
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   }
@@ -376,7 +399,9 @@ export class CRUDOperations {
           result[header] = Number(value);
           break;
         case 'boolean':
-          result[header] = value === 'TRUE';
+          // Accept both configured formats regardless of which one is active — a sheet's history
+          // may mix 'TRUE'/'FALSE' and '1'/'0' rows across a booleanFormat change (see FAQ.md #10).
+          result[header] = value === 'TRUE' || value === '1';
           break;
         case 'json':
           try {

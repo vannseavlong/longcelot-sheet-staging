@@ -683,7 +683,7 @@ Every tab created or extended by `sync` / `syncSchema()` / `createUserSheet()` i
 
 - **Auto-fit columns** — header and data columns are resized to fit their content.
 - **Header row styling** — a light fill color, frozen by default so it stays visible while scrolling.
-- **Data validation dropdowns** — `boolean()` columns get a native checkbox; `string().enum([...])` columns get a dropdown of the allowed values. Both guard against invalid manual edits directly in the sheet.
+- **Data validation dropdowns** — `boolean()` columns get a dropdown restricted to `TRUE`/`FALSE` (or `1`/`0`, see below); `string().enum([...])` columns get a dropdown of the allowed values. Both guard against invalid manual edits directly in the sheet.
 
 Override the defaults via `sheetStyle` on `createSheetAdapter()`:
 
@@ -691,12 +691,15 @@ Override the defaults via `sheetStyle` on `createSheetAdapter()`:
 const adapter = createSheetAdapter({
   // ...
   sheetStyle: {
-    headerColor: '#E8F0FE',   // optional, falls back to this built-in default
-    freezeHeader: true,       // default: true
-    freezeFirstColumn: false, // default: false
+    headerColor: '#E8F0FE',     // optional, falls back to this built-in default
+    freezeHeader: true,         // default: true
+    freezeFirstColumn: false,   // default: false
+    booleanFormat: 'TRUE_FALSE', // default: 'TRUE_FALSE', or '1_0'
   },
 });
 ```
+
+Override per column instead of project-wide with `boolean({ format: '1_0' })` — useful when one table needs to match an external system's convention without changing every other table.
 
 ## 🎓 Complete Example
 

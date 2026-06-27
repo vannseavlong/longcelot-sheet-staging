@@ -206,18 +206,25 @@ await crossCtx.table('scores').findMany();
 
 ## Sheet Formatting
 
-Every tab created or extended by `syncSchema()` / `createUserSheet()` is auto-formatted: columns auto-fit to content, the header row gets a fill color and is frozen, and `boolean()`/`enum()` columns get native checkbox/dropdown data validation. No config is required. Override the defaults:
+Every tab created or extended by `syncSchema()` / `createUserSheet()` is auto-formatted: columns auto-fit to content, the header row gets a fill color and is frozen, and `boolean()`/`enum()` columns get dropdown data validation (`ONE_OF_LIST` — deliberately not a native checkbox for `boolean()`, see FAQ.md #10). No config is required.
+
+The validation range is bounded (200 rows past the data that existed at sync time, not the whole sheet — see FAQ.md #10) but self-heals as rows are appended: `create()` automatically re-extends it every 100 rows so dropdown UI keeps up with organic growth between syncs. Bulk inserts via `createMany()` don't trigger this — run `sheet-db sync` after a large seed/migration to format the new rows.
+
+Override the defaults:
 
 ```typescript
 const adapter = createSheetAdapter({
   // ...
   sheetStyle: {
-    headerColor: '#E8F0FE',   // optional, this is also the built-in default
-    freezeHeader: true,       // default: true
-    freezeFirstColumn: false, // default: false
+    headerColor: '#E8F0FE',      // optional, this is also the built-in default
+    freezeHeader: true,          // default: true
+    freezeFirstColumn: false,    // default: false
+    booleanFormat: 'TRUE_FALSE', // default: 'TRUE_FALSE', or '1_0'
   },
 });
 ```
+
+`booleanFormat` is the project-wide default for every `boolean()` column. Override one column without changing the rest via `boolean({ format: '1_0' })` — see `skills/schema/SKILL.md`.
 
 ---
 

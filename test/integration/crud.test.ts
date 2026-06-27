@@ -94,6 +94,106 @@ describe('CRUDOperations.create()', () => {
   });
 });
 
+// ── self-healing validation range (FAQ.md #10 follow-up) ─────────────────────
+// create() re-extends the boolean/enum validation range every VALIDATION_CHECK_INTERVAL
+// (100) rows, so it keeps pace with organic row growth between syncs instead of only
+// catching up the next time `sheet-db sync` runs.
+
+describe('CRUDOperations self-healing validation range', () => {
+  it('does not call extendValidation before the check interval is reached', async () => {
+    const { crud, client } = makeCRUD();
+    for (let i = 0; i < 50; i++) {
+      await crud.create({ name: `Item ${i}`, price: 1 });
+    }
+    expect(client.extendValidationCalls).toHaveLength(0);
+  });
+
+  it('calls extendValidation once the row number hits a multiple of the check interval', async () => {
+    const { crud, client } = makeCRUD();
+    for (let i = 0; i < 99; i++) {
+      await crud.create({ name: `Item ${i}`, price: 1 });
+    }
+    // 99 created rows + 1 header row = row 100 -> 100 % 100 === 0, triggers exactly once
+    expect(client.extendValidationCalls).toHaveLength(1);
+    expect(client.extendValidationCalls[0].dataRowCount).toBe(99);
+    expect(client.extendValidationCalls[0].validations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'ONE_OF_LIST', values: ['TRUE', 'FALSE'] }), // available: boolean()
+        expect.objectContaining({ type: 'ONE_OF_LIST', values: ['electronics', 'clothing', 'food'] }), // category: enum()
+      ])
+    );
+  });
+
+  it('never calls extendValidation for a schema with no boolean/enum columns', async () => {
+    const plainSchema = defineTable({
+      name: 'plain_items',
+      actor: 'admin',
+      columns: { label: string().required() },
+    });
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, plainSchema);
+
+    for (let i = 0; i < 100; i++) {
+      await crud.create({ label: `Item ${i}` });
+    }
+    expect(client.extendValidationCalls).toHaveLength(0);
+  });
+});
+
+// ── boolean() value-pair (TRUE_FALSE vs 1_0) ──────────────────────────────────
+// boolean() columns render as a ONE_OF_LIST dropdown (not a native checkbox) so an
+// unselected cell stays genuinely empty instead of Sheets writing a real FALSE into
+// it — see FAQ.md #10. serializeValue()/deserializeRow() must read/write whichever
+// pair is configured: per-column boolean({ format }) overrides the adapter-wide
+// default passed into CRUDOperations' 6th constructor argument.
+
+describe('CRUDOperations boolean() value-pair', () => {
+  const flagSchema = defineTable({
+    name: 'flags',
+    actor: 'admin',
+    columns: {
+      label: string().required(),
+      active: boolean(), // no per-column override -> uses the adapter-wide default
+      legacy_flag: boolean({ format: '1_0' }), // explicit override regardless of default
+    },
+  });
+
+  it('writes TRUE/FALSE by default when no format is configured anywhere', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, flagSchema);
+
+    await crud.create({ label: 'a', active: true, legacy_flag: true });
+
+    const headers = client.getRows(SHEET_ID, 'flags')[0];
+    const row = client.getRows(SHEET_ID, 'flags')[1];
+    expect(row[headers.indexOf('active')]).toBe('TRUE');
+    expect(row[headers.indexOf('legacy_flag')]).toBe('1'); // per-column override wins
+  });
+
+  it('writes 1/0 for columns with no override when the adapter-wide default is 1_0', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, flagSchema, undefined, undefined, '1_0');
+
+    await crud.create({ label: 'a', active: true, legacy_flag: false });
+
+    const headers = client.getRows(SHEET_ID, 'flags')[0];
+    const row = client.getRows(SHEET_ID, 'flags')[1];
+    expect(row[headers.indexOf('active')]).toBe('1'); // adapter-wide default
+    expect(row[headers.indexOf('legacy_flag')]).toBe('0'); // per-column override still wins
+  });
+
+  it('deserializes both "TRUE" and "1" as true, regardless of configured format', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, flagSchema);
+
+    await crud.create({ label: 'a', active: true, legacy_flag: true });
+    const record = await crud.findOne({ where: { label: 'a' } });
+
+    expect(record!.active).toBe(true); // stored as 'TRUE'
+    expect(record!.legacy_flag).toBe(true); // stored as '1'
+  });
+});
+
 // ── findMany / findOne ────────────────────────────────────────────────────────
 
 describe('CRUDOperations.findMany()', () => {

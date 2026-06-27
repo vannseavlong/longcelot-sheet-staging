@@ -83,11 +83,11 @@ describe('SheetClient.formatSheet()', () => {
     });
   });
 
-  it('builds a BOOLEAN data validation rule for boolean columns, bounded to a buffer past the header row', async () => {
+  it('builds a ONE_OF_LIST data validation request bounded to a buffer past the header row', async () => {
     const { client, batchUpdate } = makeClientWithMockSheets();
     await client.formatSheet('sheet-id', 'orders', {
       columnCount: 3,
-      validations: [{ columnIndex: 2, type: 'BOOLEAN' }],
+      validations: [{ columnIndex: 2, type: 'ONE_OF_LIST', values: ['TRUE', 'FALSE'] }],
     });
     const { requests } = batchUpdate.mock.calls[0][0].requestBody;
     const validation = requests.find((r: any) => r.setDataValidation);
@@ -98,7 +98,10 @@ describe('SheetClient.formatSheet()', () => {
       startColumnIndex: 2,
       endColumnIndex: 3,
     });
-    expect(validation.setDataValidation.rule.condition).toEqual({ type: 'BOOLEAN' });
+    expect(validation.setDataValidation.rule.condition).toEqual({
+      type: 'ONE_OF_LIST',
+      values: [{ userEnteredValue: 'TRUE' }, { userEnteredValue: 'FALSE' }],
+    });
   });
 
   it('bounds the validation range to existing data rows plus the buffer, not the whole grid', async () => {
@@ -106,7 +109,7 @@ describe('SheetClient.formatSheet()', () => {
     await client.formatSheet('sheet-id', 'orders', {
       columnCount: 3,
       dataRowCount: 6,
-      validations: [{ columnIndex: 2, type: 'BOOLEAN' }],
+      validations: [{ columnIndex: 2, type: 'ONE_OF_LIST', values: ['TRUE', 'FALSE'] }],
     });
     const { requests } = batchUpdate.mock.calls[0][0].requestBody;
     const validation = requests.find((r: any) => r.setDataValidation);
@@ -127,5 +130,31 @@ describe('SheetClient.formatSheet()', () => {
       type: 'ONE_OF_LIST',
       values: [{ userEnteredValue: 'active' }, { userEnteredValue: 'inactive' }],
     });
+  });
+});
+
+describe('SheetClient.extendValidation()', () => {
+  it('re-applies validation bounded to dataRowCount + the buffer, without touching header/freeze/auto-resize', async () => {
+    const { client, batchUpdate } = makeClientWithMockSheets();
+
+    await client.extendValidation('sheet-id', 'orders', [{ columnIndex: 2, type: 'ONE_OF_LIST', values: ['TRUE', 'FALSE'] }], 99);
+
+    const { requests } = batchUpdate.mock.calls[0][0].requestBody;
+    expect(requests).toHaveLength(1);
+    const validation = requests[0];
+    expect(validation.setDataValidation.range).toEqual({
+      sheetId: 42,
+      startRowIndex: 1,
+      endRowIndex: 300, // 1 (header offset) + 99 (data rows) + 200 (buffer)
+      startColumnIndex: 2,
+      endColumnIndex: 3,
+    });
+    expect(requests.find((r: any) => r.repeatCell || r.updateSheetProperties || r.autoResizeDimensions)).toBeUndefined();
+  });
+
+  it('does not call batchUpdate at all when there are no validation rules', async () => {
+    const { client, batchUpdate } = makeClientWithMockSheets();
+    await client.extendValidation('sheet-id', 'orders', [], 99);
+    expect(batchUpdate).not.toHaveBeenCalled();
   });
 });

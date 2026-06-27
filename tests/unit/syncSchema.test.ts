@@ -238,7 +238,7 @@ describe('syncSchema()', () => {
       });
     });
 
-    it('builds BOOLEAN/ONE_OF_LIST validation rules for boolean() and enum() columns', async () => {
+    it('builds ONE_OF_LIST validation rules for both boolean() and enum() columns', async () => {
       const client = makeClient({}, []);
       const adapter = makeAdapter(client);
       adapter.registerSchemas([ordersSchema]);
@@ -247,9 +247,44 @@ describe('syncSchema()', () => {
 
       const [, , options] = client.formatSheet.mock.calls[0];
       // headers: status, paid, _id (defineTable appends _id last)
+      // boolean() uses ONE_OF_LIST too (not a native checkbox) — see FAQ.md #10
       expect(options.validations).toEqual([
         { columnIndex: 0, type: 'ONE_OF_LIST', values: ['pending', 'shipped'] },
-        { columnIndex: 1, type: 'BOOLEAN' },
+        { columnIndex: 1, type: 'ONE_OF_LIST', values: ['TRUE', 'FALSE'] },
+      ]);
+    });
+
+    it('uses the project-wide sheetStyle.booleanFormat default for boolean() columns', async () => {
+      const client = makeClient({}, []);
+      const adapter = makeAdapter(client, { sheetStyle: { booleanFormat: '1_0' } });
+      adapter.registerSchemas([ordersSchema]);
+
+      await adapter.syncSchema(ordersSchema);
+
+      const [, , options] = client.formatSheet.mock.calls[0];
+      const booleanRule = options.validations.find((v: any) => v.columnIndex === 1);
+      expect(booleanRule).toEqual({ columnIndex: 1, type: 'ONE_OF_LIST', values: ['1', '0'] });
+    });
+
+    it('lets a per-column boolean({ format }) override the project-wide default', async () => {
+      const mixedSchema = defineTable({
+        name: 'mixed',
+        actor: 'admin',
+        columns: {
+          legacy_flag: boolean({ format: '1_0' }),
+          active: boolean(), // no override -> falls back to project default
+        },
+      });
+      const client = makeClient({}, []);
+      const adapter = makeAdapter(client, { sheetStyle: { booleanFormat: 'TRUE_FALSE' } });
+      adapter.registerSchemas([mixedSchema]);
+
+      await adapter.syncSchema(mixedSchema);
+
+      const [, , options] = client.formatSheet.mock.calls[0];
+      expect(options.validations).toEqual([
+        { columnIndex: 0, type: 'ONE_OF_LIST', values: ['1', '0'] }, // legacy_flag override
+        { columnIndex: 1, type: 'ONE_OF_LIST', values: ['TRUE', 'FALSE'] }, // active, project default
       ]);
     });
 

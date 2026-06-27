@@ -58,9 +58,22 @@ import { string, number, boolean, date, json } from 'longcelot-sheet-db';
 |---|---|---|
 | `string()` | Plain text | |
 | `number()` | Numeric text | Deserialized to `Number` on read |
-| `boolean()` | `"TRUE"` / `"FALSE"` | Deserialized to `true`/`false` on read |
+| `boolean()` | `"TRUE"`/`"FALSE"` (or `"1"`/`"0"` — see `format` below) | Deserialized to `true`/`false` on read; both pairs accepted regardless of configured format |
 | `date()` | ISO 8601 string | Store ISO strings; no auto-conversion |
 | `json()` | JSON string | Serialized with `JSON.stringify`, parsed on read |
+
+### `boolean()` value pair
+
+`boolean()` renders as a dropdown (`ONE_OF_LIST`, not a native checkbox — see FAQ.md #10) restricted to `TRUE`/`FALSE` by default. Override per column:
+
+```typescript
+columns: {
+  legacy_flag: boolean({ format: '1_0' }), // this column only
+  active: boolean(),                       // falls back to sheetStyle.booleanFormat
+}
+```
+
+Or project-wide via `sheetStyle.booleanFormat` on `createSheetAdapter()` (default `'TRUE_FALSE'`) — see `skills/core/SKILL.md`. The per-column `format` always wins when both are set.
 
 ---
 

@@ -1,8 +1,7 @@
-import { SheetClient, ColumnValidationRule } from './sheetClient';
+import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
 import {
   TableSchema,
-  ColumnDefinition,
   UserContext,
   FKResolver,
   SchemaMismatchBehaviour,
@@ -30,6 +29,7 @@ import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
 import { SchemaMismatchError } from '../errors/SchemaMismatchError';
 import { computeSchemaHash } from '../utils/schemaHash';
+import { buildValidationRules } from '../utils/validationRules';
 import { defineTable } from '../schema/defineTable';
 import { string, number } from '../schema/columnBuilder';
 
@@ -103,6 +103,7 @@ export class SheetAdapter {
       headerColor: config.sheetStyle?.headerColor ?? DEFAULT_HEADER_COLOR,
       freezeHeader: config.sheetStyle?.freezeHeader ?? true,
       freezeFirstColumn: config.sheetStyle?.freezeFirstColumn ?? false,
+      booleanFormat: config.sheetStyle?.booleanFormat ?? 'TRUE_FALSE',
     };
 
     // Inject the admin SheetClient into DriveStorageAdapter so callers don't repeat credentials
@@ -196,7 +197,14 @@ export class SheetAdapter {
     }
 
     const fkResolver = this.createFKResolver();
-    return new CRUDOperations(this.client, spreadsheetId, schema, fkResolver, this._pendingSchemaCheck);
+    return new CRUDOperations(
+      this.client,
+      spreadsheetId,
+      schema,
+      fkResolver,
+      this._pendingSchemaCheck,
+      this.sheetStyle.booleanFormat
+    );
   }
 
   async createUserSheet(
@@ -356,23 +364,6 @@ export class SheetAdapter {
 
   // ── Internal helpers ──────────────────────────────────────────────────────
 
-  private _buildValidationRules(
-    headers: string[],
-    columns: Record<string, ColumnDefinition>
-  ): ColumnValidationRule[] {
-    const rules: ColumnValidationRule[] = [];
-    headers.forEach((header, columnIndex) => {
-      const col = columns[header];
-      if (!col) return;
-      if (col.type === 'boolean') {
-        rules.push({ columnIndex, type: 'BOOLEAN' });
-      } else if (col.enum && col.enum.length > 0) {
-        rules.push({ columnIndex, type: 'ONE_OF_LIST', values: col.enum });
-      }
-    });
-    return rules;
-  }
-
   private async _applySheetFormatting(
     spreadsheetId: string,
     schema: TableSchema,
@@ -384,7 +375,7 @@ export class SheetAdapter {
       headerColor: this.sheetStyle.headerColor,
       freezeHeader: this.sheetStyle.freezeHeader,
       freezeFirstColumn: this.sheetStyle.freezeFirstColumn,
-      validations: this._buildValidationRules(headers, schema.columns),
+      validations: buildValidationRules(headers, schema.columns, this.sheetStyle.booleanFormat),
       dataRowCount,
     });
   }

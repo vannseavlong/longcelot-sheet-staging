@@ -2,6 +2,9 @@ export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json';
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+/** Value pair a boolean() column reads/writes as. 'TRUE_FALSE' is the default. */
+export type BooleanFormat = 'TRUE_FALSE' | '1_0';
+
 export interface ColumnDefinition {
   type: DataType;
   required?: boolean;
@@ -15,6 +18,8 @@ export interface ColumnDefinition {
   primary?: boolean;
   ref?: string;
   index?: boolean;
+  /** boolean() columns only. Overrides the project-wide `sheetStyle.booleanFormat` default. */
+  booleanFormat?: BooleanFormat;
 }
 
 export interface TableSchema {
@@ -58,6 +63,8 @@ export interface SheetStyleConfig {
   freezeHeader?: boolean;
   /** Freeze the first column. Default: false. */
   freezeFirstColumn?: boolean;
+  /** Project-wide default value pair for boolean() columns. Default: 'TRUE_FALSE'. Override per-column via boolean({ format }). */
+  booleanFormat?: BooleanFormat;
 }
 
 export interface ActorPermission {

@@ -97,7 +97,11 @@ price: number().min(0).required()
 
 ### `boolean()`
 
-Creates a boolean column.
+Creates a boolean column. Renders as a `ONE_OF_LIST` dropdown in the sheet (not a native checkbox — see [`SheetStyleConfig`](#sheetstyleconfig) and FAQ.md #10 for why) restricted to `TRUE`/`FALSE` by default, or `1`/`0` if configured.
+
+**Parameters:**
+
+- `options?: { format?: 'TRUE_FALSE' | '1_0' }` — overrides the project-wide `sheetStyle.booleanFormat` default for this column only.
 
 **Modifiers:**
 
@@ -109,6 +113,7 @@ Creates a boolean column.
 ```typescript
 is_active: boolean().default(true)
 verified: boolean().required()
+legacy_flag: boolean({ format: '1_0' }) // overrides the project-wide default for this column
 ```
 
 ### `date()`
@@ -829,8 +834,17 @@ interface ColumnDefinition {
   primary?: boolean;  // auto-generates nanoid for string columns
   ref?: string;       // 'table.column' FK reference
   index?: boolean;
+  booleanFormat?: BooleanFormat; // boolean() columns only — overrides the project-wide sheetStyle default
 }
 ```
+
+### `BooleanFormat`
+
+```typescript
+type BooleanFormat = 'TRUE_FALSE' | '1_0';
+```
+
+Value pair a `boolean()` column reads/writes as. Configurable project-wide via [`SheetStyleConfig.booleanFormat`](#sheetstyleconfig) (default `'TRUE_FALSE'`) or per-column via `boolean({ format })`, which takes priority when set.
 
 ### `UserContext`
 
@@ -892,13 +906,14 @@ interface ActorConfig {
 
 ```typescript
 interface SheetStyleConfig {
-  headerColor?: string;        // hex color for the header row fill, e.g. '#E8F0FE'
-  freezeHeader?: boolean;      // default: true
-  freezeFirstColumn?: boolean; // default: false
+  headerColor?: string;          // hex color for the header row fill, e.g. '#E8F0FE'
+  freezeHeader?: boolean;        // default: true
+  freezeFirstColumn?: boolean;   // default: false
+  booleanFormat?: BooleanFormat; // 'TRUE_FALSE' | '1_0' — default: 'TRUE_FALSE'
 }
 ```
 
-Passed as `sheetStyle` on `createSheetAdapter()`. Auto-fit column width and `boolean()`/`enum()` data validation dropdowns are always applied — no config needed.
+Passed as `sheetStyle` on `createSheetAdapter()`. Auto-fit column width and `boolean()`/`enum()` data validation dropdowns are always applied — no config needed. `booleanFormat` is the project-wide default for every `boolean()` column; override an individual column with `boolean({ format })` (see [`boolean()`](#boolean)).
 
 ### `SchemaMismatchBehaviour`
 

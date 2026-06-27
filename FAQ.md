@@ -486,7 +486,7 @@ Every tab created or extended by `sync` / `syncSchema()` / `createUserSheet()` i
 
 - **Auto-fit columns** — header and data columns are resized to fit their content, so long values (emails, JSON-array columns, long enum strings) aren't visually truncated.
 - **Header row styling** — a light fill color is applied to row 1, and the header row is frozen by default so it stays visible while scrolling.
-- **Data validation dropdowns** — `boolean()` columns get a native checkbox; `string().enum([...])` columns get a dropdown restricted to the declared values.
+- **Data validation dropdowns** — `boolean()` columns get a dropdown restricted to `TRUE`/`FALSE` (or `1`/`0`, configurable — see below); `string().enum([...])` columns get a dropdown restricted to the declared values. Both use the same `ONE_OF_LIST` mechanism, deliberately — see the incident write-up below for why.
 
 This runs whenever headers are written (new tab creation, or new columns appended by `sync`) — not on every no-op sync, to avoid unnecessary Google Sheets API calls.
 
@@ -505,7 +505,7 @@ const adapter = createSheetAdapter({
 });
 ```
 
-Auto-fit column width and boolean/enum data validation are always applied and are not configurable — they have no downside to leaving on.
+Auto-fit column width and boolean/enum data validation are always applied and can't be turned off — they have no downside to leaving on. The `boolean()` value pair itself *is* configurable — see the next section.
 
 ### If I manually type an invalid value into a dropdown-restricted cell anyway, what happens?
 
@@ -522,3 +522,30 @@ Two independent fixes, both now shipped:
 - `findMany()`/`update()`/`count()`/`delete()` now filter out any row with an empty `_id` before returning it, regardless of cause — this protects sheets that were already synced under the old buggy behavior, with no re-sync required.
 
 If you're on an older version and can't upgrade immediately, the safe workaround is to filter `_id == null` rows out of `findMany()` results in your own code before using them.
+
+### After the fix above, why did checkbox/dropdown UI stop appearing past row ~200 on a table that only ever called `create()`?
+
+Follow-up to the incident above, not a separate bug. The 200-row buffer bounds the validation range *at the moment `sheet-db sync` last ran* — it's a one-time snapshot of `dataRowCount + 200`, not something `create()` was originally aware of or kept extending. A table that grows from 5 rows to 250 rows over weeks of normal app usage, with no schema changes in between, gets validation UI through row ~205 and plain cells for every row after that — silent, since reads/writes through the SDK are unaffected either way; it only shows up if someone opens the raw sheet.
+
+Fixed: `create()` now self-heals. Every 100 rows (half the 200-row buffer, so coverage can't run out between checks) it re-extends the validated range another 200 rows via the new `SheetClient.extendValidation()`, using the row number the Sheets API's own append response already tells it — no extra read required to know "how many rows are there now." It's skipped entirely for schemas with no `boolean()`/`enum()` columns, and it's deliberately scoped to `create()` only: bulk inserts via `createMany()` (seeding, migrations) still expect a manual `sheet-db sync` afterward, the same as before.
+
+### Why does `boolean()` use a dropdown instead of a real checkbox? Wasn't the checkbox nicer?
+
+This closes the actual root cause of the phantom-rows incident above, specifically for `boolean()` columns. Google Sheets' native checkbox validation (condition type `BOOLEAN`) isn't just a rendering choice — applying it to a range sets every *blank* cell in that range to a real, stored `FALSE`. That's different from `ONE_OF_LIST` (what `enum()` already used): an unselected dropdown cell stays genuinely empty until something is written to it. So a row with literally nothing in it was never "empty" once `boolean()` formatting reached it — one cell in that row already held `FALSE`. `enum()`-only tables were never susceptible to this on their own.
+
+`boolean()` now uses `ONE_OF_LIST` too, rendered as a dropdown of `'TRUE'`/`'FALSE'` text instead of a checkbox glyph. The bounded-range and defensive-`_id`-filter fixes from the incident above are still in place — this closes one more contributing cause, it doesn't replace them.
+
+```typescript
+// Project-wide default (falls back to 'TRUE_FALSE'):
+createSheetAdapter({
+  sheetStyle: { booleanFormat: '1_0' }, // or 'TRUE_FALSE'
+});
+
+// Per-column override, takes priority over the project-wide default:
+columns: {
+  legacy_flag: boolean({ format: '1_0' }), // this table's external system expects 1/0
+  active: boolean(),                       // uses the project-wide default
+}
+```
+
+Existing sheets are unaffected at the data level — already-written cells already hold literal `TRUE`/`FALSE` text underneath the old checkbox widget, and `deserializeRow()` accepts both `'TRUE'` and `'1'` as true regardless of which format is currently configured, so rows written before and after a format change both read back correctly. The only visible change is cosmetic: a dropdown showing text instead of a checkbox tick, starting from the next `sheet-db sync`.

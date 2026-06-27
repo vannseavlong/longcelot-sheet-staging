@@ -18,6 +18,31 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [Unreleased]
+
+> Phase 11.4–11.5 — follow-ups to the 0.1.23 phantom-row fix.
+
+### Fixed
+
+- **The bounded validation range from 0.1.23 no longer goes stale as rows are appended.** The fix in 0.1.23 bounded `setDataValidation` to `dataRowCount + 200` at the moment `sheet-db sync` last ran, but nothing kept that range growing afterward — a table fed purely through `create()` calls (no schema changes) would silently lose checkbox/dropdown UI past the original 200-row buffer, recoverable only by re-running `sync`. `CRUDOperations.create()` now self-heals: every 100 rows (half the buffer, so coverage never runs out), it calls the new `SheetClient.extendValidation()` to push the validated range another 200 rows ahead — at no cost in the common case (skipped entirely for schemas with no `boolean()`/`enum()` columns) and using the row number already returned by the Sheets API's own append response, so no extra read is needed to know "how many rows are there now."
+- **`boolean()` columns no longer cause Sheets to write a real `FALSE` into blank cells, closing the root cause of the 0.1.23 phantom-row bug for boolean columns specifically.** Google Sheets' native `BOOLEAN` checkbox validation isn't just a rendering choice — applying it sets every blank cell in its range to an actual `FALSE` value, unlike `ONE_OF_LIST` (what `enum()` already used), where an unselected cell stays genuinely empty. `boolean()` now uses `ONE_OF_LIST` too, rendered as a dropdown of `'TRUE'`/`'FALSE'` (or `'1'`/`'0'`) instead of a checkbox. 0.1.23's bounded-range and defensive-`_id`-filter fixes remain in place as defense-in-depth for every other cause of phantom rows.
+
+### Added
+
+- **`SheetStyleConfig.booleanFormat?: 'TRUE_FALSE' | '1_0'`** — project-wide default value pair for `boolean()` columns. Default: `'TRUE_FALSE'`.
+- **`boolean({ format })`** — per-column override of the value pair, taking priority over the project-wide default. Useful when one table needs to match an external system's `1`/`0` convention without changing the whole project.
+- **`BooleanFormat` type** exported from the package.
+
+### Changed
+
+- **`SheetClient.appendRow()`** now returns the 1-based row number the new row was written to (was `Promise<void>`). Existing callers that ignore the return value are unaffected.
+- Extracted `buildValidationRules()` into `src/utils/validationRules.ts`, shared between `SheetAdapter` (sync-time formatting) and `CRUDOperations` (the new self-heal check) instead of being duplicated.
+- **`ColumnValidationRule`'s `BOOLEAN` variant removed** — `boolean()` columns produce `ONE_OF_LIST` rules exclusively now. `SheetClient` is internal (not exported from the package), so this isn't a public breaking change.
+- **`computeSchemaHash()`** now includes each column's resolved `booleanFormat`, so changing a column's format is detected as schema drift by `onSchemaMismatch`/`sync --all-users` like any other column change.
+- This changes the rendered appearance of every existing `boolean()` column on its next sync — a dropdown showing `TRUE`/`FALSE` text instead of a checkbox glyph. Already-written cell values are untouched (Sheets stores the same `'TRUE'`/`'FALSE'` text either way); `deserializeRow()` accepts both `'TRUE'` and `'1'` as true so rows written before and after a format change read back correctly.
+
+---
+
 ## [0.1.23] — 2026-06-27
 
 > Phase 11 — developer-reported bug fixes against 0.1.22.

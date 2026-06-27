@@ -17,6 +17,7 @@ export function computeSchemaHash(schema: TableSchema): string {
           unique: v.unique ?? false,
           primary: v.primary ?? false,
           enum: v.enum ?? null,
+          booleanFormat: v.booleanFormat ?? null,
         }])
     ),
   };
