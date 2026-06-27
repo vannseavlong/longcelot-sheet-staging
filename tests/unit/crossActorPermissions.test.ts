@@ -94,7 +94,7 @@ describe('same-actor access', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      // No targetRole / targetSheetId
+      // No targetActor / targetSheetId
     });
     expect(() => ctx.table('scores')).toThrow(PermissionError);
   });
@@ -103,7 +103,7 @@ describe('same-actor access', () => {
 // ── asActor() helper ──────────────────────────────────────────────────────────
 
 describe('asActor() helper', () => {
-  it('returns a new adapter with targetRole and targetSheetId set', () => {
+  it('returns a new adapter with targetActor and targetSheetId set', () => {
     const { adapter } = makeAdapter({
       permissions: { teacher: { canAccess: ['student'] } },
     });
@@ -133,7 +133,7 @@ describe('cross-actor access with permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     expect(() => ctx.table('scores')).not.toThrow();
@@ -149,7 +149,7 @@ describe('cross-actor access with permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     expect(() => ctx.table('scores')).not.toThrow();
@@ -166,7 +166,7 @@ describe('cross-actor access with permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     ctx.table('scores');
@@ -184,7 +184,7 @@ describe('cross-actor access without permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     expect(() => ctx.table('scores')).toThrow(PermissionError);
@@ -198,7 +198,7 @@ describe('cross-actor access without permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     expect(() => ctx.table('scores')).toThrow(PermissionError);
@@ -212,7 +212,7 @@ describe('cross-actor access without permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     expect(() => ctx.table('profile')).toThrow(PermissionError);
@@ -226,7 +226,7 @@ describe('cross-actor access without permission', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       // targetSheetId missing
     });
     expect(() => ctx.table('scores')).toThrow(PermissionError);
@@ -254,7 +254,7 @@ describe('admin bypass', () => {
       userId: 'admin_001',
       actor: 'admin',
       actorSheetId: 'admin-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
     expect(() => ctx.table('scores')).not.toThrow();
@@ -347,7 +347,7 @@ describe('CRUD routing to correct sheet', () => {
       userId: 'teacher_001',
       actor: 'teacher',
       actorSheetId: 'teacher-sheet-id',
-      targetRole: 'student',
+      targetActor: 'student',
       targetSheetId: 'student-sheet-id',
     });
   }

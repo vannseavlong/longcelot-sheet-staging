@@ -18,7 +18,9 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [Unreleased] — Phase 11 (bug fixes)
+## [0.1.23] — 2026-06-27
+
+> Phase 11 — developer-reported bug fixes against 0.1.22.
 
 ### Fixed
 
@@ -32,7 +34,35 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [Unreleased] — Phase 9 (CLI naming, docs alignment, actor/role API)
+## [0.1.22] — 2026-06-25
+
+> Phase 10 — actor config naming, sheet formatting & UX.
+
+### Added
+
+- **`ActorConfig.name`** — new preferred field on actor entries in `sheet-db.config.ts` for the actor identifier. Replaces the misleadingly named `role` field, which read as an RBAC role assignment at the point of writing config (`{ role: 'operation' }` looks identical to an RBAC role, even after reading the docs). A shared `resolveActorName()` helper normalises `name`/`role`/bare-string actor entries across all CLI commands.
+- **`UserContext.targetActor`** — new preferred field for the cross-actor target, replacing `targetRole`. Closes out the part of Phase 9.5's actor/role rename that didn't extend to the cross-actor fields.
+- **Automatic sheet formatting** — `syncSchema()` / `createUserSheet()` now format every tab whenever headers are written (new tab or appended columns): auto-fit column widths (`autoResizeDimensions`), a header row fill color, a frozen header row, and `BOOLEAN`/`ONE_OF_LIST` data validation dropdowns for `boolean()`/`enum()` columns. No config required; no formatting calls when nothing changed.
+- **`sheetStyle` config option** on `createSheetAdapter()` — `{ headerColor?, freezeHeader?, freezeFirstColumn? }`. Overrides the built-in header color (`#E8F0FE`) and freeze defaults (`freezeHeader: true`, `freezeFirstColumn: false`).
+- **`SheetClient.formatSheet()`** (new method, exported types `ColumnValidationRule` / `SheetFormattingOptions`) — builds the batched `repeatCell` / `updateSheetProperties` / `autoResizeDimensions` / `setDataValidation` requests in a single `batchUpdate` call.
+
+### Changed
+
+- **`ActorConfig.role` is deprecated** — use `name` instead. Both fields are accepted; passing only `role` emits a `console.warn` deprecation notice and still works.
+- **`UserContext.targetRole` is deprecated** — use `targetActor` instead. Both fields are accepted; passing only `targetRole` emits a `console.warn` deprecation notice and still works. `asActor()`'s first parameter is renamed `targetActor` (positional — no call-site changes needed).
+- **CLI commands** (`init`, `sync`, `mock-users`, `seed`, `generate`, `status`, `validate`, `export`, `export-data`) updated to read `name` (falling back to deprecated `role`) from actor config entries.
+- **README / API.md / Docs/developerGuide.md / skills (`core`, `cli`, `permissions`)** — actor config examples and cross-actor examples updated to `name:`/`targetActor:`; new "Sheet Formatting" sections documenting `sheetStyle`.
+
+### Deprecated
+
+- **`ActorConfig.role`** — use `name` instead. Will be removed in a future minor release.
+- **`UserContext.targetRole`** — use `targetActor` instead. Will be removed in a future minor release.
+
+---
+
+## [0.1.21] — 2026-06-21
+
+> Phase 9 — CLI naming, docs alignment, actor/role API.
 
 ### Added
 
@@ -55,27 +85,9 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [Unreleased] — Phase 10 (actor config naming, sheet formatting & UX)
+## [0.1.20] — 2026-06-19
 
-### Added
-
-- **`ActorConfig.name`** — new preferred field on actor entries in `sheet-db.config.ts` for the actor identifier. Replaces the misleadingly named `role` field, which read as an RBAC role assignment at the point of writing config (`{ role: 'operation' }` looks identical to an RBAC role, even after reading the docs). A shared `resolveActorName()` helper normalises `name`/`role`/bare-string actor entries across all CLI commands.
-- **`UserContext.targetActor`** — new preferred field for the cross-actor target, replacing `targetRole`. Closes out the part of Phase 9.5's actor/role rename that didn't extend to the cross-actor fields.
-- **Automatic sheet formatting** — `syncSchema()` / `createUserSheet()` now format every tab whenever headers are written (new tab or appended columns): auto-fit column widths (`autoResizeDimensions`), a header row fill color, a frozen header row, and `BOOLEAN`/`ONE_OF_LIST` data validation dropdowns for `boolean()`/`enum()` columns. No config required; no formatting calls when nothing changed.
-- **`sheetStyle` config option** on `createSheetAdapter()` — `{ headerColor?, freezeHeader?, freezeFirstColumn? }`. Overrides the built-in header color (`#E8F0FE`) and freeze defaults (`freezeHeader: true`, `freezeFirstColumn: false`).
-- **`SheetClient.formatSheet()`** (new method, exported types `ColumnValidationRule` / `SheetFormattingOptions`) — builds the batched `repeatCell` / `updateSheetProperties` / `autoResizeDimensions` / `setDataValidation` requests in a single `batchUpdate` call.
-
-### Changed
-
-- **`ActorConfig.role` is deprecated** — use `name` instead. Both fields are accepted; passing only `role` emits a `console.warn` deprecation notice and still works.
-- **`UserContext.targetRole` is deprecated** — use `targetActor` instead. Both fields are accepted; passing only `targetRole` emits a `console.warn` deprecation notice and still works. `asActor()`'s first parameter is renamed `targetActor` (positional — no call-site changes needed).
-- **CLI commands** (`init`, `sync`, `mock-users`, `seed`, `generate`, `status`, `validate`, `export`, `export-data`) updated to read `name` (falling back to deprecated `role`) from actor config entries.
-- **README / API.md / Docs/developerGuide.md / skills (`core`, `cli`, `permissions`)** — actor config examples and cross-actor examples updated to `name:`/`targetActor:`; new "Sheet Formatting" sections documenting `sheetStyle`.
-
-### Deprecated
-
-- **`ActorConfig.role`** — use `name` instead. Will be removed in a future minor release.
-- **`UserContext.targetRole`** — use `targetActor` instead. Will be removed in a future minor release.
+> Internal release — version bump only, no functional changes over 0.1.19.
 
 ---
 
@@ -331,6 +343,6 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-[Unreleased]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.23...HEAD
 [0.1.5]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.0...v0.1.5
 [0.1.0]: https://github.com/vannseavlong/longcelot-sheet-staging/releases/tag/v0.1.0

@@ -45,7 +45,7 @@ function makeAdapter(extra: Partial<SheetAdapterConfig> = {}) {
 
   const adminAdapter = adapter.withContext({
     userId: 'admin-user',
-    role: 'admin',
+    actor: 'admin',
     actorSheetId: ADMIN_ID,
   });
 
