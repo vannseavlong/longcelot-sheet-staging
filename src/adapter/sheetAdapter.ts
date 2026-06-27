@@ -298,7 +298,7 @@ export class SheetAdapter {
       if (missingHeaders.length > 0) {
         const finalHeaders = [...existingHeaders, ...missingHeaders];
         await this.client.writeHeader(spreadsheetId, schema.name, finalHeaders);
-        await this._applySheetFormatting(spreadsheetId, schema, finalHeaders);
+        await this._applySheetFormatting(spreadsheetId, schema, finalHeaders, rows.length - 1);
       }
     }
   }
@@ -376,7 +376,8 @@ export class SheetAdapter {
   private async _applySheetFormatting(
     spreadsheetId: string,
     schema: TableSchema,
-    headers: string[]
+    headers: string[],
+    dataRowCount = 0
   ): Promise<void> {
     await this.client.formatSheet(spreadsheetId, schema.name, {
       columnCount: headers.length,
@@ -384,6 +385,7 @@ export class SheetAdapter {
       freezeHeader: this.sheetStyle.freezeHeader,
       freezeFirstColumn: this.sheetStyle.freezeFirstColumn,
       validations: this._buildValidationRules(headers, schema.columns),
+      dataRowCount,
     });
   }
 

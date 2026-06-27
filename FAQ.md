@@ -510,3 +510,15 @@ Auto-fit column width and boolean/enum data validation are always applied and ar
 ### If I manually type an invalid value into a dropdown-restricted cell anyway, what happens?
 
 The Sheets-native dropdown is a UI guard, not a hard constraint — `setDataValidation` is applied with `strict: true`, which makes Google Sheets reject the edit with an in-cell warning. It does not replace SDK-level validation: `create()`/`update()` calls through the adapter still validate `enum()`/`boolean()` values independently, since the dropdown only protects against *manual* edits made directly in the spreadsheet UI.
+
+### Why did `findMany()` return ~1000 rows full of `null` after syncing a `boolean()`/`enum()` column? (incident write-up)
+
+This was a real bug (fixed — see CHANGELOG.md "Phase 11"), not expected behavior. Root cause: `setDataValidation` was applied with no `endRowIndex`, which the Sheets API treats as unbounded — it extends to the tab's full default grid (1000 rows for a fresh tab). Every `boolean()`/`enum()` column then got checkbox/dropdown formatting on all 1000 rows, not just the rows holding real data.
+
+The second-order effect is what made this expensive: a `values.get` range read trims to the last cell with *any* content, and Sheets counts a formatted-but-empty cell as content. So every subsequent read of that tab dragged in every formatted row as a row of `null`s — `_id: null` included — bloating a 2-row response into 1001 rows.
+
+Two independent fixes, both now shipped:
+- The validation range is bounded to existing data rows + a 200-row buffer instead of the unbounded default, so newly-synced tabs don't balloon to 1000 formatted rows in the first place.
+- `findMany()`/`update()`/`count()`/`delete()` now filter out any row with an empty `_id` before returning it, regardless of cause — this protects sheets that were already synced under the old buggy behavior, with no re-sync required.
+
+If you're on an older version and can't upgrade immediately, the safe workaround is to filter `_id == null` rows out of `findMany()` results in your own code before using them.

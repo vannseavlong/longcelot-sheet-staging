@@ -106,6 +106,8 @@ const bookings = await ctx.table('bookings').findMany({
 
 All filtering, sorting, and pagination happen **in memory** after fetching all rows. Not suitable for large datasets (performance degrades beyond ~1000 rows).
 
+Rows with an empty `_id` (e.g. a cell that only has checkbox/dropdown formatting applied but was never written by `create()`) are filtered out before any other processing — they are never returned as phantom `null`-filled records.
+
 ### FindOptions type
 
 ```typescript
@@ -115,6 +117,7 @@ interface FindOptions {
   order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  includeDeleted?: boolean; // see softDelete in skills/schema/SKILL.md — default: false
 }
 ```
 
@@ -161,6 +164,7 @@ const updatedCount = await ctx.table('bookings').update({
 **Behavior:**
 - PK (`primary()`) columns are silently stripped from `data` — they are read-only
 - `readonly()` columns throw `ValidationError` if included in `data`
+- Column `default()` values are **never** applied on `update()` — a field omitted from `data` keeps its existing value, it is not reset to the schema default. Defaults only ever apply on `create()`.
 - `_updated_at` is refreshed automatically if `timestamps: true`
 - Unique constraints are re-checked per row (excluding the current row's own `_id`)
 

@@ -93,6 +93,20 @@ describe('defineTable()', () => {
     expect(schema.columns.meta.type).toBe('json');
   });
 
+  it('accepts an array or object default for json() columns', () => {
+    const schema = defineTable({
+      name: 'platforms',
+      actor: 'admin',
+      columns: {
+        platform: json().default([]),
+        meta: json().default({ featured: false }),
+      },
+    });
+
+    expect(schema.columns.platform.default).toEqual([]);
+    expect(schema.columns.meta.default).toEqual({ featured: false });
+  });
+
   it('stores enum values on a column', () => {
     const schema = defineTable({
       name: 'orders',

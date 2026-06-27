@@ -1,10 +1,12 @@
 export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json';
 
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 export interface ColumnDefinition {
   type: DataType;
   required?: boolean;
   unique?: boolean;
-  default?: string | number | boolean | null;
+  default?: JsonValue;
   min?: number;
   max?: number;
   enum?: (string | number | boolean)[];
@@ -102,6 +104,8 @@ export interface FindOptions {
   offset?: number;
   orderBy?: string;
   order?: 'asc' | 'desc';
+  /** When the schema has `softDelete: true`, soft-deleted rows are excluded by default. Set true to include them. */
+  includeDeleted?: boolean;
 }
 
 export interface CreateOptions {

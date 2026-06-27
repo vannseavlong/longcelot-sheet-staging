@@ -83,7 +83,7 @@ describe('SheetClient.formatSheet()', () => {
     });
   });
 
-  it('builds a BOOLEAN data validation rule for boolean columns', async () => {
+  it('builds a BOOLEAN data validation rule for boolean columns, bounded to a buffer past the header row', async () => {
     const { client, batchUpdate } = makeClientWithMockSheets();
     await client.formatSheet('sheet-id', 'orders', {
       columnCount: 3,
@@ -94,10 +94,25 @@ describe('SheetClient.formatSheet()', () => {
     expect(validation.setDataValidation.range).toEqual({
       sheetId: 42,
       startRowIndex: 1,
+      endRowIndex: 201, // no dataRowCount given -> defaults to 0 + 200-row buffer
       startColumnIndex: 2,
       endColumnIndex: 3,
     });
     expect(validation.setDataValidation.rule.condition).toEqual({ type: 'BOOLEAN' });
+  });
+
+  it('bounds the validation range to existing data rows plus the buffer, not the whole grid', async () => {
+    const { client, batchUpdate } = makeClientWithMockSheets();
+    await client.formatSheet('sheet-id', 'orders', {
+      columnCount: 3,
+      dataRowCount: 6,
+      validations: [{ columnIndex: 2, type: 'BOOLEAN' }],
+    });
+    const { requests } = batchUpdate.mock.calls[0][0].requestBody;
+    const validation = requests.find((r: any) => r.setDataValidation);
+    // 1 (header offset) + 6 (real data rows) + 200 (buffer) = 207 — not the unbounded
+    // 1000-row default grid that caused ~1000 phantom rows to leak into every read.
+    expect(validation.setDataValidation.range.endRowIndex).toBe(207);
   });
 
   it('builds a ONE_OF_LIST data validation rule for enum columns', async () => {

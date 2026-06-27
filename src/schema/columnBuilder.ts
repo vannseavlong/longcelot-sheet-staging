@@ -1,4 +1,4 @@
-import { ColumnDefinition, DataType } from './types';
+import { ColumnDefinition, DataType, JsonValue } from './types';
 
 export class ColumnBuilder {
   private definition: ColumnDefinition;
@@ -17,7 +17,7 @@ export class ColumnBuilder {
     return this;
   }
 
-  default(value: string | number | boolean | null): this {
+  default(value: JsonValue): this {
     this.definition.default = value;
     return this;
   }

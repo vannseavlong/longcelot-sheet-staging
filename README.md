@@ -225,7 +225,7 @@ Define tables using a fluent builder API:
 
 - `required()` - Cannot be null
 - `unique()` - Enforced uniqueness
-- `default(value)` - Default value
+- `default(value)` - Default value, applied on `create()` only (accepts arrays/objects for `json()` columns)
 - `min(n)` / `max(n)` - Validation constraints
 - `enum([...])` - Allowed values
 - `pattern(regex)` - Regex validation

@@ -85,7 +85,7 @@ string().index()
 |---|---|---|
 | `.required()` | all | Throws `ValidationError` if `null`/`undefined` on `create()` |
 | `.unique()` | all | Throws `ValidationError` if value already exists in the column |
-| `.default(value)` | all | Applied when field is omitted on `create()` |
+| `.default(value)` | all | Applied when field is omitted on `create()` — never on `update()`. Accepts arrays/objects too, e.g. `json().default([])` |
 | `.min(n)` | string, number | Min length (string) or min value (number) |
 | `.max(n)` | string, number | Max length (string) or max value (number) |
 | `.enum([...])` | string | Throws `ValidationError` if value not in list |

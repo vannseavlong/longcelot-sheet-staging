@@ -329,6 +329,29 @@
 
 ---
 
+## Phase 11: Bug Fixes (developer-reported, `longcelot-sheet-db@0.1.22`) — Fixed
+
+### 11.1 Boolean/enum validation leaks ~1000 phantom rows into every read (Critical) — Fixed
+
+- [x] Bound `setDataValidation` range in `formatSheet()` to actual data rows instead of leaving `endRowIndex` unbounded
+- [x] Defend the read path: `findMany()`/`update()`/`count()`/`delete()` filter out rows with an empty/null `_id` before returning, regardless of cause
+- [x] Loosen `ColumnBuilder.default()`'s type to accept structured values for `json()` columns (was `string | number | boolean | null` only)
+- [x] Tests: validation range bounded to real data + buffer, phantom null-`_id` rows filtered out, `json().default([])` type-checks and applies at runtime
+
+### 11.2 `update()` silently resets defaulted columns omitted from the patch body (Critical) — Fixed
+
+- [x] `validateAndApplyDefaults()`: only apply `column.default` when `mode === 'create'`; a field missing on `update()` means "leave it alone"
+- [x] Tests: partial update preserves a non-default value on a defaulted column that's omitted from the patch
+
+### 11.3 `findMany()`/`findOne()` don't honor soft-delete, contradicting the docs (High) — Fixed
+
+- [x] `findMany()` excludes rows with a populated `_deleted_at` by default when `schema.softDelete` is true
+- [x] `count()` excludes soft-deleted rows by default too, matching the documented behavior in `skills/crud/SKILL.md`
+- [x] Add `includeDeleted?: boolean` to `FindOptions` as an explicit opt-in to see soft-deleted rows
+- [x] Tests: soft-deleted row excluded by default from `findMany()`/`findOne()`/`count()`, included with `includeDeleted: true`
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables

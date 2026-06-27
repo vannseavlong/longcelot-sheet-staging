@@ -20,7 +20,18 @@ export interface SheetFormattingOptions {
   freezeHeader?: boolean;
   freezeFirstColumn?: boolean;
   validations?: ColumnValidationRule[];
+  /** Number of existing data rows (excluding header) — bounds the validation range. Default: 0. */
+  dataRowCount?: number;
 }
+
+/**
+ * Extra rows past the current data range to pre-apply boolean/enum validation to,
+ * so a handful of new rows still get checkbox/dropdown UI before the next sync.
+ * Left unbounded (the GridRange default), validation extends to the sheet's full
+ * 1000-row default grid, and Sheets API reads then treat every one of those
+ * formatted-but-empty rows as "has content" — see FAQ.md #10.
+ */
+const VALIDATION_ROW_BUFFER = 200;
 
 function hexToRgb(hex: string): { red: number; green: number; blue: number } {
   const normalized = hex.replace('#', '');
@@ -237,12 +248,15 @@ export class SheetClient {
       },
     });
 
+    const validationEndRowIndex = 1 + (options.dataRowCount ?? 0) + VALIDATION_ROW_BUFFER;
+
     for (const rule of options.validations ?? []) {
       requests.push({
         setDataValidation: {
           range: {
             sheetId,
             startRowIndex: 1,
+            endRowIndex: validationEndRowIndex,
             startColumnIndex: rule.columnIndex,
             endColumnIndex: rule.columnIndex + 1,
           },

@@ -1,6 +1,6 @@
 import { CRUDOperations } from '../../src/adapter/crud';
 import { defineTable } from '../../src/schema/defineTable';
-import { string, number, boolean } from '../../src/schema/columnBuilder';
+import { string, number, boolean, json } from '../../src/schema/columnBuilder';
 import { MockSheetClient } from '../fixtures/mockSheetClient';
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
@@ -73,6 +73,25 @@ describe('CRUDOperations.create()', () => {
       "Unique constraint violation: column 'name' already has value 'Camera'"
     );
   });
+
+  it('applies an array default for a json() column when omitted', async () => {
+    const tagsSchema = defineTable({
+      name: 'tagged_items',
+      actor: 'admin',
+      columns: {
+        label: string().required(),
+        tags: json().default([]),
+      },
+    });
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, tagsSchema);
+
+    const record = await crud.create({ label: 'Widget' });
+    expect(record.tags).toEqual([]);
+
+    const stored = await crud.findOne({ where: { label: 'Widget' } });
+    expect(stored!.tags).toEqual([]);
+  });
 });
 
 // ── findMany / findOne ────────────────────────────────────────────────────────
@@ -125,6 +144,62 @@ describe('CRUDOperations.findMany()', () => {
   });
 });
 
+// ── phantom row defense ──────────────────────────────────────────────────────
+// Simulates rows that have boolean/enum validation formatting applied (and so are
+// picked up by a Sheets `values.get` read) but were never written by create()/
+// createMany() — every column empty, including `_id`. See FAQ.md #10.
+
+describe('CRUDOperations phantom row defense', () => {
+  const PHANTOM_SHEET = 'phantom-sheet';
+  const HEADERS = ['name', 'price', 'available', 'category', '_created_at', '_updated_at', '_id'];
+
+  function makePhantomCRUD() {
+    const client = new MockSheetClient();
+    client.seed(PHANTOM_SHEET, 'products', [
+      HEADERS,
+      ['Laptop', '999', 'TRUE', 'electronics', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'id1'],
+      ['', '', '', '', '', '', ''],
+      ['', '', '', '', '', '', ''],
+    ]);
+    const crud = new CRUDOperations(client as any, PHANTOM_SHEET, productSchema);
+    return { crud, client };
+  }
+
+  it('findMany() filters out rows with an empty _id', async () => {
+    const { crud } = makePhantomCRUD();
+    const results = await crud.findMany();
+    expect(results).toHaveLength(1);
+    expect(results[0].name).toBe('Laptop');
+  });
+
+  it('count() does not count phantom rows', async () => {
+    const { crud } = makePhantomCRUD();
+    expect(await crud.count()).toBe(1);
+  });
+
+  it('update() ignores phantom rows and still updates the correct real row', async () => {
+    const { crud, client } = makePhantomCRUD();
+    const updated = await crud.update({ where: { name: 'Laptop' }, data: { price: 1099 } });
+    expect(updated).toBe(1);
+
+    const record = await crud.findOne({ where: { name: 'Laptop' } });
+    expect(record!.price).toBe(1099);
+
+    // The two phantom rows must remain untouched (still in the raw sheet, unaffected).
+    const rawRows = client.getRows(PHANTOM_SHEET, 'products');
+    expect(rawRows).toHaveLength(4); // header + 1 real + 2 phantom
+  });
+
+  it('delete() removes only the real row, leaving phantom rows alone', async () => {
+    const { crud, client } = makePhantomCRUD();
+    const deleted = await crud.delete({ where: { name: 'Laptop' } });
+    expect(deleted).toBe(1);
+
+    const rawRows = client.getRows(PHANTOM_SHEET, 'products');
+    expect(rawRows).toHaveLength(3); // header + 2 phantom rows remain
+  });
+});
+
 describe('CRUDOperations.findOne()', () => {
   it('returns null when no match', async () => {
     const { crud } = makeCRUD();
@@ -173,6 +248,22 @@ describe('CRUDOperations.update()', () => {
       crud.update({ where: { name: 'Beta' }, data: { name: 'Alpha' } })
     ).rejects.toThrow("Unique constraint violation: column 'name' already has value 'Alpha'");
   });
+
+  it('does not reset a defaulted column that is omitted from the patch body', async () => {
+    const { crud } = makeCRUD();
+    await crud.create({ name: 'Mouse', price: 15 });
+
+    // Explicitly move off the schema defaults first.
+    await crud.update({ where: { name: 'Mouse' }, data: { available: false, category: 'clothing' } });
+
+    // A partial patch that only touches an unrelated field must not reset available/category.
+    await crud.update({ where: { name: 'Mouse' }, data: { price: 20 } });
+
+    const record = await crud.findOne({ where: { name: 'Mouse' } });
+    expect(record!.price).toBe(20);
+    expect(record!.available).toBe(false);
+    expect(record!.category).toBe('clothing');
+  });
 });
 
 // ── delete ────────────────────────────────────────────────────────────────────
@@ -218,8 +309,56 @@ describe('CRUDOperations soft delete', () => {
     const deleted = await crud.delete({ where: { ref: 'ORD-001' } });
     expect(deleted).toBe(1);
 
-    const record = await crud.findOne({ where: { ref: 'ORD-001' } });
+    const record = await crud.findOne({ where: { ref: 'ORD-001' }, includeDeleted: true });
     expect(record!._deleted_at).not.toBeNull();
+  });
+
+  it('excludes soft-deleted rows from findMany() by default', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, 'soft-sheet-2', softSchema);
+
+    await crud.create({ ref: 'ORD-001' });
+    await crud.create({ ref: 'ORD-002' });
+    await crud.delete({ where: { ref: 'ORD-001' } });
+
+    const results = await crud.findMany();
+    expect(results).toHaveLength(1);
+    expect(results[0].ref).toBe('ORD-002');
+  });
+
+  it('excludes soft-deleted rows from findOne() by default', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, 'soft-sheet-3', softSchema);
+
+    await crud.create({ ref: 'ORD-001' });
+    await crud.delete({ where: { ref: 'ORD-001' } });
+
+    const record = await crud.findOne({ where: { ref: 'ORD-001' } });
+    expect(record).toBeNull();
+  });
+
+  it('includes soft-deleted rows when includeDeleted: true is passed', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, 'soft-sheet-4', softSchema);
+
+    await crud.create({ ref: 'ORD-001' });
+    await crud.delete({ where: { ref: 'ORD-001' } });
+
+    const results = await crud.findMany({ includeDeleted: true });
+    expect(results).toHaveLength(1);
+    expect(results[0]._deleted_at).not.toBeNull();
+  });
+
+  it('excludes soft-deleted rows from count() by default', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, 'soft-sheet-5', softSchema);
+
+    await crud.create({ ref: 'ORD-001' });
+    await crud.create({ ref: 'ORD-002' });
+    await crud.delete({ where: { ref: 'ORD-001' } });
+
+    expect(await crud.count()).toBe(1);
+    expect(await crud.count({ includeDeleted: true })).toBe(2);
   });
 });
 

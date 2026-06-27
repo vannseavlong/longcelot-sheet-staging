@@ -199,6 +199,7 @@ describe('syncSchema()', () => {
         freezeHeader: true,
         freezeFirstColumn: false,
         validations: [],
+        dataRowCount: 0,
       });
     });
 
@@ -233,6 +234,7 @@ describe('syncSchema()', () => {
         freezeHeader: true,
         freezeFirstColumn: false,
         validations: [],
+        dataRowCount: 1, // one existing data row: u1/Alice/alice@example.com
       });
     });
 

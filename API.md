@@ -411,6 +411,7 @@ Finds multiple rows.
   offset?: number;
   orderBy?: string;
   order?: 'asc' | 'desc';
+  includeDeleted?: boolean; // see softDelete below — default: false
 }
 ```
 
@@ -427,15 +428,18 @@ const bookings = await table.findMany({
 });
 ```
 
+When the table's schema has `softDelete: true`, rows with a populated `_deleted_at` are excluded automatically. Pass `includeDeleted: true` to see them anyway.
+
 ### `table.findOne(options)`
 
-Finds a single row.
+Finds a single row. Like `findMany()`, excludes soft-deleted rows unless `includeDeleted: true` is passed.
 
 **Parameters:**
 
 ```typescript
 {
   where?: Record<string, unknown>;
+  includeDeleted?: boolean;
 }
 ```
 
@@ -451,7 +455,7 @@ const booking = await table.findOne({
 
 ### `table.update(options)`
 
-Updates rows matching criteria.
+Updates rows matching criteria. Column `default()` values are **never** applied here — a field omitted from `data` keeps its existing value rather than being reset to the schema default. Defaults only apply on `create()`.
 
 **Parameters:**
 
@@ -476,7 +480,7 @@ const updated = await table.update({
 
 ### `table.delete(options)`
 
-Deletes rows matching criteria. If `softDelete: true` is set on the schema, sets `_deleted_at` instead of removing the row.
+Deletes rows matching criteria. If `softDelete: true` is set on the schema, sets `_deleted_at` instead of removing the row — the row is then excluded from `findMany()`/`findOne()`/`count()` by default (pass `includeDeleted: true` to see it).
 
 **Parameters:**
 
@@ -816,7 +820,7 @@ interface ColumnDefinition {
   type: 'string' | 'number' | 'boolean' | 'date' | 'json';
   required?: boolean;
   unique?: boolean;
-  default?: string | number | boolean | null;
+  default?: JsonValue;  // string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue } — needed for json() column defaults
   min?: number;
   max?: number;
   enum?: (string | number | boolean)[];

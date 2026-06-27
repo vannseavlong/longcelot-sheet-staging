@@ -58,14 +58,15 @@ export class CRUDOperations {
 
   async findMany(options: FindOptions = {}): Promise<Record<string, unknown>[]> {
     if (this.preFlight) await this.preFlight;
-    const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
+    const { headers, rows } = await this.getDataRows();
 
     if (rows.length === 0) return [];
 
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
+    let results = rows.map(({ values }) => this.deserializeRow(headers, values));
 
-    let results = dataRows.map((row) => this.deserializeRow(headers, row));
+    if (this.schema.softDelete && !options.includeDeleted) {
+      results = results.filter((item) => item._deleted_at === null || item._deleted_at === undefined);
+    }
 
     if (options.where) {
       results = results.filter((item) => this.matchesWhere(item, options.where!));
@@ -100,17 +101,14 @@ export class CRUDOperations {
 
   async update(options: UpdateOptions): Promise<number> {
     if (this.preFlight) await this.preFlight;
-    const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
+    const { headers, rows } = await this.getDataRows();
 
     if (rows.length === 0) return 0;
 
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-
     let updated = 0;
 
-    for (let i = 0; i < dataRows.length; i++) {
-      const item = this.deserializeRow(headers, dataRows[i]);
+    for (const { values: rowValues, rowNumber } of rows) {
+      const item = this.deserializeRow(headers, rowValues);
 
       if (this.matchesWhere(item, options.where)) {
         // Strip pkColumn silently — PK is readonly on update
@@ -134,7 +132,7 @@ export class CRUDOperations {
         const merged = { ...item, ...validated };
         const values = headers.map((header) => this.serializeValue(merged[header]));
 
-        await this.client.updateRow(this.spreadsheetId, this.schema.name, i + 2, values);
+        await this.client.updateRow(this.spreadsheetId, this.schema.name, rowNumber, values);
         updated++;
       }
     }
@@ -201,20 +199,17 @@ export class CRUDOperations {
     return results;
   }
 
-  async count(options: Pick<FindOptions, 'where'> = {}): Promise<number> {
+  async count(options: Pick<FindOptions, 'where' | 'includeDeleted'> = {}): Promise<number> {
     if (this.preFlight) await this.preFlight;
-    const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
+    const { headers, rows } = await this.getDataRows();
     if (rows.length === 0) return 0;
 
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-
-    if (!options.where) return dataRows.length;
-
     let count = 0;
-    for (const row of dataRows) {
-      const item = this.deserializeRow(headers, row);
-      if (this.matchesWhere(item, options.where)) count++;
+    for (const { values } of rows) {
+      const item = this.deserializeRow(headers, values);
+      if (this.schema.softDelete && !options.includeDeleted && item._deleted_at != null) continue;
+      if (options.where && !this.matchesWhere(item, options.where)) continue;
+      count++;
     }
     return count;
   }
@@ -229,25 +224,47 @@ export class CRUDOperations {
       });
     }
 
-    const rows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
+    const { headers, rows } = await this.getDataRows();
 
     if (rows.length === 0) return 0;
 
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-
     let deleted = 0;
 
-    for (let i = dataRows.length - 1; i >= 0; i--) {
-      const item = this.deserializeRow(headers, dataRows[i]);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const { values, rowNumber } = rows[i];
+      const item = this.deserializeRow(headers, values);
 
       if (this.matchesWhere(item, options.where)) {
-        await this.client.deleteRow(this.spreadsheetId, this.schema.name, i + 2);
+        await this.client.deleteRow(this.spreadsheetId, this.schema.name, rowNumber);
         deleted++;
       }
     }
 
     return deleted;
+  }
+
+  /**
+   * Reads all rows and filters out phantom rows — sheet cells that have
+   * formatting/validation applied (e.g. a checkbox dropdown past the real data,
+   * see FAQ.md #10) but were never actually written by create()/createMany().
+   * A real row always has a non-empty `_id`; anything else is grid noise, not a record.
+   */
+  private async getDataRows(): Promise<{
+    headers: string[];
+    rows: Array<{ values: string[]; rowNumber: number }>;
+  }> {
+    const allRows = await this.client.getAllRows(this.spreadsheetId, this.schema.name);
+    if (allRows.length === 0) return { headers: [], rows: [] };
+
+    const headers = allRows[0];
+    const idIndex = headers.indexOf('_id');
+
+    const rows = allRows
+      .slice(1)
+      .map((values, i) => ({ values, rowNumber: i + 2 }))
+      .filter(({ values }) => idIndex === -1 || (values[idIndex] !== undefined && values[idIndex] !== ''));
+
+    return { headers, rows };
   }
 
   private async getHeaders(): Promise<string[]> {
@@ -273,7 +290,7 @@ export class CRUDOperations {
       }
 
       if (value === undefined || value === null) {
-        if (column.default !== undefined) {
+        if (column.default !== undefined && mode === 'create') {
           result[columnName] = column.default;
         } else if (column.required && mode === 'create') {
           throw new ValidationError(`Column ${columnName} is required`, columnName);

@@ -18,6 +18,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [Unreleased] — Phase 11 (bug fixes)
+
+### Fixed
+
+- **Boolean/enum columns no longer leak ~1000 phantom rows into every read.** `formatSheet()` was applying `setDataValidation` with no `endRowIndex`, which the Sheets API treats as unbounded — every fresh tab got checkbox/dropdown formatting on all 1000 default grid rows, and a `values.get` read then trims to the last *formatted* cell, dragging in hundreds of empty rows as `null`-filled results. The validation range is now bounded to existing data rows plus a 200-row buffer. Independently, `findMany()`/`update()`/`count()`/`delete()` now filter out any row with an empty `_id` before returning it, so phantom rows from any cause (this bug, manual sheet edits, etc.) never reach a caller — existing synced sheets are protected without needing to re-sync.
+- **`update()` no longer resets defaulted columns omitted from the patch body.** `validateAndApplyDefaults()` was applying `column.default` regardless of `create()` vs `update()` mode, so a partial `update()`/`PATCH` that omitted a defaulted column (e.g. `status: boolean().default(true)`) silently reset it back to the default instead of leaving the existing value alone. Defaults now only apply on `create()`.
+- **`findMany()`/`findOne()`/`count()` now honor `softDelete`, matching the documented behavior.** Soft-deleted rows (`_deleted_at` populated) are excluded by default. Added `includeDeleted?: boolean` to `FindOptions` as an explicit opt-in for callers that need to see soft-deleted rows.
+
+### Changed
+
+- **`ColumnBuilder.default()`** now accepts arrays and objects (`JsonValue`), not just `string | number | boolean | null` — `json().default([])` previously failed to type-check even though it worked correctly at runtime.
+
+---
+
 ## [Unreleased] — Phase 9 (CLI naming, docs alignment, actor/role API)
 
 ### Added
