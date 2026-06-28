@@ -18,9 +18,9 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [Unreleased]
+## [0.1.25] — 2026-06-28
 
-> Phase 11.4–11.5 — follow-ups to the 0.1.23 phantom-row fix.
+> Phase 11.4–11.5 — follow-ups to the 0.1.23 phantom-row fix, plus a numeric `orderBy` sort fix.
 
 ### Fixed
 
