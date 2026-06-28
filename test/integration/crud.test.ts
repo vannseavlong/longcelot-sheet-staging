@@ -242,6 +242,22 @@ describe('CRUDOperations.findMany()', () => {
     const results = await crud.findMany({ orderBy: 'price', order: 'desc' });
     expect(results[0].name).toBe('Laptop');
   });
+
+  it('sorts a numeric column numerically, not lexicographically, past double digits', async () => {
+    const { crud } = makeCRUD();
+    // 0..11 lexicographically would come back as 0, 1, 10, 11, 2, 3, ... if compared as strings
+    for (let price = 0; price <= 11; price++) {
+      await crud.create({ name: `Item ${price}`, price });
+    }
+    const results = await crud.findMany({ orderBy: 'price', order: 'asc' });
+    expect(results.map((r) => r.price)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('still sorts a text column lexicographically', async () => {
+    const { crud } = await seedProducts();
+    const results = await crud.findMany({ orderBy: 'name', order: 'asc' });
+    expect(results.map((r) => r.name)).toEqual(['Apple', 'Laptop', 'T-Shirt']);
+  });
 });
 
 // ── phantom row defense ──────────────────────────────────────────────────────

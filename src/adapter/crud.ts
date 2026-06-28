@@ -80,11 +80,8 @@ export class CRUDOperations {
     if (options.orderBy) {
       const order = options.order || 'asc';
       results.sort((a, b) => {
-        const aVal = a[options.orderBy!];
-        const bVal = b[options.orderBy!];
-        if (aVal === bVal) return 0;
-        const gt = String(aVal) > String(bVal) ? 1 : -1;
-        return order === 'asc' ? gt : -gt;
+        const cmp = this.compareOrderValues(a[options.orderBy!], b[options.orderBy!]);
+        return order === 'asc' ? cmp : -cmp;
       });
     }
 
@@ -441,5 +438,25 @@ export class CRUDOperations {
       }
     }
     return true;
+  }
+
+  // Compares numerically when both sides parse cleanly as numbers (e.g. a `sort` column),
+  // otherwise falls back to string comparison so text columns sort as before.
+  private compareOrderValues(a: unknown, b: unknown): number {
+    if (a === b) return 0;
+
+    const aNum = this.toOrderNumber(a);
+    const bNum = this.toOrderNumber(b);
+    if (aNum !== null && bNum !== null) return aNum - bNum;
+
+    const aStr = String(a ?? '');
+    const bStr = String(b ?? '');
+    return aStr > bStr ? 1 : aStr < bStr ? -1 : 0;
+  }
+
+  private toOrderNumber(value: unknown): number | null {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) return Number(value);
+    return null;
   }
 }
