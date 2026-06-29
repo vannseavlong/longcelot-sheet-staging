@@ -18,6 +18,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.27] — 2026-06-30
+
+### Fixed
+
+- **`dotenv` was never declared as a dependency.** Six CLI commands (`sync`, `seed`, `mock-users`, `status`, `doctor`, `export-data`) call `require('dotenv').config()`, but `dotenv` had never been added to `package.json` `dependencies` — a fresh install of the published package would throw `Cannot find module 'dotenv'` the moment almost any CLI command ran. Added `dotenv@^17.4.2` to `dependencies`.
+
 ## [0.1.26] — 2026-06-30
 
 ### Changed
@@ -378,6 +384,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+[0.1.27]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.26...v0.1.27
 [0.1.26]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.25...v0.1.26
 [0.1.5]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.0...v0.1.5
 [0.1.0]: https://github.com/vannseavlong/longcelot-sheet-staging/releases/tag/v0.1.0
