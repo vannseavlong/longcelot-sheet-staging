@@ -17,7 +17,7 @@ metadata:
 
 ### schema_versions table (built-in)
 
-Scaffolded automatically by `sheet-db init`. Do not modify this table's schema manually.
+Scaffolded automatically by `lsdb init`. Do not modify this table's schema manually.
 
 | Column | Type | Description |
 |---|---|---|
@@ -61,8 +61,8 @@ const hash = computeSchemaHash(bookingsSchema);
 After schema changes, push updates to every registered user sheet:
 
 ```bash
-npx sheet-db sync --all-users              # apply to all users
-npx sheet-db sync --all-users --dry-run    # preview without writing
+npx lsdb sync --all-users              # apply to all users
+npx lsdb sync --all-users --dry-run    # preview without writing
 ```
 
 **What it does:**
@@ -76,13 +76,13 @@ npx sheet-db sync --all-users --dry-run    # preview without writing
 
 ---
 
-## 3. sheet-db export (Schema Export)
+## 3. lsdb export (Schema Export)
 
 Export all defined schemas to a target format for migration:
 
 ```bash
-npx sheet-db export --prisma --output ./prisma      # generates schema.prisma
-npx sheet-db export --sql --output ./migrations     # generates CREATE TABLE DDL
+npx lsdb export --prisma --output ./prisma      # generates schema.prisma
+npx lsdb export --sql --output ./migrations     # generates CREATE TABLE DDL
 ```
 
 ### Prisma output example
@@ -123,13 +123,13 @@ CREATE TABLE bookings (
 
 ---
 
-## 4. sheet-db migrate (Data Migration Script Generator)
+## 4. lsdb migrate (Data Migration Script Generator)
 
 ```bash
-npx sheet-db migrate                        # generate for all tables
-npx sheet-db migrate --table bookings       # single table only
-npx sheet-db migrate --output ./scripts     # custom output directory
-npx sheet-db migrate --dry-run              # preview plan without writing
+npx lsdb migrate                        # generate for all tables
+npx lsdb migrate --table bookings       # single table only
+npx lsdb migrate --output ./scripts     # custom output directory
+npx lsdb migrate --dry-run              # preview plan without writing
 ```
 
 Generates a `migrate.js` script with `insertRow()` stubs for each table. The developer replaces the stubs with their production DB client:
@@ -166,10 +166,10 @@ async function insertRow(table, data) {
 ```
 longcelot-sheet-db (staging/MVP)
     ↓
-1. npx sheet-db export --prisma --output ./prisma
-2. Review schema.prisma — adjust types, add indexes, remove sheet-db-specific columns
+1. npx lsdb export --prisma --output ./prisma
+2. Review schema.prisma — adjust types, add indexes, remove lsdb-specific columns
 3. npx prisma migrate dev  (or equivalent for your ORM)
-4. Write migration script:  npx sheet-db migrate --output ./scripts
+4. Write migration script:  npx lsdb migrate --output ./scripts
 5. Edit migrate.js — replace insertRow() stub with your DB client
 6. Run node scripts/migrate.js against staging DB
 7. Validate data integrity

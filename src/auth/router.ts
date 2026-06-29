@@ -4,7 +4,7 @@ import { OAuthManager, createLoginOAuthManager, OAuthConfig } from './oauth';
 export type RegistrationPolicy = 'open' | 'login-only';
 
 export interface AuthRouterOptions {
-  /** The sheet-db adapter instance (must have `users` schema registered) */
+  /** The lsdb adapter instance (must have `users` schema registered) */
   adapter: SheetAdapter;
   /** Secret used to sign JWTs */
   jwtSecret: string;

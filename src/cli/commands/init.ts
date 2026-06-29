@@ -89,10 +89,11 @@ ${nonAdminActors.length > 0 ? `\n# Development actor sheet IDs (one per actor ty
 SUPER_ADMIN_EMAIL=${answers.superAdminEmail}
 `;
 
-  if (!fs.existsSync('sheet-db.config.ts') || !options.integrate) {
-    fs.writeFileSync('sheet-db.config.ts', configContent);
+  const hasExistingConfig = fs.existsSync('lsdb.config.ts') || fs.existsSync('sheet-db.config.ts');
+  if (!hasExistingConfig || !options.integrate) {
+    fs.writeFileSync('lsdb.config.ts', configContent);
   } else {
-    console.log(chalk.yellow('ℹ sheet-db.config.ts already exists, skipping creation.'));
+    console.log(chalk.yellow('ℹ A config file already exists (lsdb.config.ts or sheet-db.config.ts), skipping creation.'));
   }
 
   if (!fs.existsSync('.env') || !options.integrate) {
@@ -171,7 +172,7 @@ export default defineTable({
 
   console.log(chalk.green('\n✅ Project initialized!\n'));
   console.log(chalk.yellow('Created:'));
-  console.log('  ' + chalk.white('sheet-db.config.ts'));
+  console.log('  ' + chalk.white('lsdb.config.ts'));
   console.log('  ' + chalk.white('.env'));
   console.log('  ' + chalk.white('schemas/'));
 
@@ -181,6 +182,6 @@ export default defineTable({
   console.log('     ' + chalk.gray('GOOGLE_CLIENT_SECRET=<your-client-secret>'));
   console.log('     ' + chalk.gray('ADMIN_SHEET_ID=<your-sheet-id>'));
   console.log('     ' + chalk.dim('→ https://console.cloud.google.com/apis/credentials'));
-  console.log('  2. ' + chalk.white('Generate tables:  sheet-db generate <table-name>'));
-  console.log('  3. ' + chalk.white('Sync to sheets:   sheet-db sync\n'));
+  console.log('  2. ' + chalk.white('Generate tables:  lsdb generate <table-name>'));
+  console.log('  3. ' + chalk.white('Sync to sheets:   lsdb sync\n'));
 }

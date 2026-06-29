@@ -18,6 +18,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.26] — 2026-06-30
+
+### Changed
+
+- **CLI command renamed from `sheet-db` to `lsdb`.** The npm package itself is still published as `longcelot-sheet-db` — only the binary you run and its on-disk artifacts changed names. `sheet-db` keeps working as a deprecated alias (prints a one-time warning pointing to `lsdb`) and will be removed in a future release.
+- **Config file renamed from `sheet-db.config.ts` to `lsdb.config.ts`.** `lsdb init` now scaffolds the new filename; existing `sheet-db.config.ts` files are still read automatically (with a deprecation warning) so existing projects keep working without manual changes.
+- **OAuth token file renamed from `.sheet-db-tokens.json` to `.lsdb-tokens.json`.** `lsdb sync` reads the legacy filename if the new one isn't present yet (with a deprecation warning), and writes new/refreshed tokens to the new filename going forward.
+- All CLI output, generated scripts (`export-data.js`), error messages, and documentation now reference `lsdb` instead of `sheet-db`.
+
 ## [0.1.25] — 2026-06-28
 
 > Phase 11.4–11.5 — follow-ups to the 0.1.23 phantom-row fix, plus a numeric `orderBy` sort fix.
@@ -369,6 +378,6 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-[Unreleased]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.23...HEAD
+[0.1.26]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.25...v0.1.26
 [0.1.5]: https://github.com/vannseavlong/longcelot-sheet-staging/compare/v0.1.0...v0.1.5
 [0.1.0]: https://github.com/vannseavlong/longcelot-sheet-staging/releases/tag/v0.1.0

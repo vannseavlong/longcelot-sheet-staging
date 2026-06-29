@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
+import { resolveConfigPath, resolveTokensPath, CONFIG_FILENAME, TOKENS_FILENAME } from '../../utils/cliFiles';
 
 interface CheckResult {
   label: string;
@@ -20,8 +21,8 @@ export async function doctorCommand() {
   const results: CheckResult[] = [];
 
   // 1. Config file
-  const configPath = path.join(process.cwd(), 'sheet-db.config.ts');
-  results.push(check('Config file (sheet-db.config.ts)', fs.existsSync(configPath)));
+  const configPath = resolveConfigPath();
+  results.push(check(`Config file (${CONFIG_FILENAME})`, fs.existsSync(configPath)));
 
   // 2. .env file
   const envPath = path.join(process.cwd(), '.env');
@@ -45,7 +46,7 @@ export async function doctorCommand() {
 
   // 4. Schemas directory
   const schemasDir = path.join(process.cwd(), 'schemas');
-  results.push(check('schemas/ directory', fs.existsSync(schemasDir), 'Run: sheet-db init'));
+  results.push(check('schemas/ directory', fs.existsSync(schemasDir), 'Run: lsdb init'));
 
   // 5. Schema files
   let schemaCount = 0;
@@ -63,15 +64,15 @@ export async function doctorCommand() {
   results.push(check(
     `Schema files (${schemaCount} found)`,
     schemaCount > 0,
-    'Run: sheet-db generate <table-name> to create schemas'
+    'Run: lsdb generate <table-name> to create schemas'
   ));
 
   // 6. OAuth tokens
-  const tokensPath = path.join(process.cwd(), '.sheet-db-tokens.json');
+  const tokensPath = resolveTokensPath();
   results.push(check(
-    'OAuth tokens (.sheet-db-tokens.json)',
+    `OAuth tokens (${TOKENS_FILENAME})`,
     fs.existsSync(tokensPath),
-    'Run: sheet-db sync to authorize and create tokens'
+    'Run: lsdb sync to authorize and create tokens'
   ));
 
   // 7. OAuth token validity (basic check)
@@ -85,7 +86,7 @@ export async function doctorCommand() {
       results.push(check(
         'OAuth refresh token present',
         hasRefreshToken,
-        'Re-run: sheet-db sync to get a refresh token'
+        'Re-run: lsdb sync to get a refresh token'
       ));
 
       if (expiryDate) {
@@ -95,7 +96,7 @@ export async function doctorCommand() {
         ));
       }
     } catch {
-      results.push(check('OAuth token file parseable', false, 'Delete .sheet-db-tokens.json and run: sheet-db sync'));
+      results.push(check('OAuth token file parseable', false, `Delete ${TOKENS_FILENAME} and run: lsdb sync`));
     }
   }
 
@@ -119,7 +120,7 @@ export async function doctorCommand() {
     console.log(chalk.green.bold(`✅ All ${passed} checks passed. You're good to go!`));
   } else {
     console.log(chalk.yellow.bold(`⚠️  ${failed} check(s) failed, ${passed} passed.`));
-    console.log(chalk.gray('Fix the issues above before running sheet-db sync.'));
+    console.log(chalk.gray('Fix the issues above before running lsdb sync.'));
     process.exit(1);
   }
 }

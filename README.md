@@ -53,20 +53,20 @@ bun add longcelot-sheet-db
 
 ```bash
 # npm
-npx sheet-db init
+npx lsdb init
 
 # pnpm
-pnpm dlx sheet-db init
+pnpm dlx lsdb init
 
 # yarn
-yarn dlx sheet-db init
+yarn dlx lsdb init
 
 # bun
-bunx sheet-db init
+bunx lsdb init
 ```
 
 This creates:
-- `sheet-db.config.ts` - Project configuration
+- `lsdb.config.ts` - Project configuration
 - `.env` - Environment variables
 - `schemas/` - Schema directory
 
@@ -90,7 +90,7 @@ ADMIN_SHEET_ID=your_admin_sheet_id
 **What if you have your own authentication?**
 - OAuth is strictly for **backend-to-Google-Sheets** communication
 - Your app's existing authentication (JWT, sessions, etc.) remains untouched
-- You map your user identity to sheet-db context (see "Integrating into an Existing Project" below)
+- You map your user identity to lsdb context (see "Integrating into an Existing Project" below)
 
 ### Define a Schema
 
@@ -155,7 +155,7 @@ const bookings = await userContext.table('bookings').findMany({
 Actors are **data domains** — they determine *where* data is stored (which Google Sheet and which table schemas apply). Each actor maps to a sheet ID via an environment variable:
 
 ```typescript
-// sheet-db.config.ts
+// lsdb.config.ts
 actors: [
   { name: "admin",  sheetIdEnv: "ADMIN_SHEET_ID" },
   { name: "user",   sheetIdEnv: "DEV_USER_SHEET_ID" },
@@ -175,7 +175,7 @@ DEV_SELLER_SHEET_ID=1GHIyourDevSellerSheetId  # optional for local dev
 - **admin**: Data stored in central admin sheet (always required)
 - **user / seller**: Each actor gets a personal sheet at runtime; `DEV_*_SHEET_ID` values let you sync schemas during development without registering real users
 
-`sheet-db init` scaffolds all env vars automatically based on the actors you define.
+`lsdb init` scaffolds all env vars automatically based on the actors you define.
 
 ### Actors vs Application Roles
 
@@ -183,16 +183,16 @@ These two concepts are distinct — confusing them leads to wrong architecture d
 
 | Concept | What it controls | Dynamic? | Where defined |
 |---------|-----------------|----------|---------------|
-| **Actor** | *Where* data is stored (which Google Sheet, which schemas) | No — fixed in `sheet-db.config.ts` | Config file |
+| **Actor** | *Where* data is stored (which Google Sheet, which schemas) | No — fixed in `lsdb.config.ts` | Config file |
 | **App RBAC role** | *What* a user can do (read orders, edit products, etc.) | Yes — rows in `roles` / `role_permissions` tables | Your app's DB layer |
 
-The `actor` field in `withContext()` is the sheet-db actor concept, not an RBAC role. If you need fine-grained permissions (e.g. "manager can approve but not delete"), build a `roles` + `role_permissions` table in the admin sheet and enforce it in your application layer — sheet-db intentionally does not provide RBAC.
+The `actor` field in `withContext()` is the lsdb actor concept, not an RBAC role. If you need fine-grained permissions (e.g. "manager can approve but not delete"), build a `roles` + `role_permissions` table in the admin sheet and enforce it in your application layer — lsdb intentionally does not provide RBAC.
 
 **Field names follow the same rule everywhere actor identity appears** — each was renamed away from `role` because the bare word `role` reads as an RBAC role at the point of writing the code, regardless of what the docs say:
 
 | Location | Preferred field | Deprecated alias (still works, warns) |
 |---|---|---|
-| `sheet-db.config.ts` actor entries | `name` | `role` |
+| `lsdb.config.ts` actor entries | `name` | `role` |
 | `withContext()` | `actor` | `role` |
 | `withContext()` cross-actor target | `targetActor` | `targetRole` |
 
@@ -203,7 +203,7 @@ Modeling RBAC sub-roles (e.g. `operation`, `finance`, `marketing`) as separate a
 In development, each actor type shares **one** sheet (`DEV_SELLER_SHEET_ID` for all sellers). In production, `createUserSheet()` creates **one sheet per registered user**. This means:
 
 - Some bugs that only appear with per-user data isolation are invisible in dev.
-- Use `sheet-db mock-users` to create separate actor sheets that mirror the production topology for more realistic local testing.
+- Use `lsdb mock-users` to create separate actor sheets that mirror the production topology for more realistic local testing.
 
 > **Tip**: Add a "Dev vs Production" section to your own `README.md` noting which tests cover per-user-sheet scenarios.
 
@@ -300,7 +300,7 @@ Permissions are enforced automatically:
 
 `longcelot-sheet-db` computes a **SHA-256 hash** of every table schema and compares it against the hash stored in the built-in `schema_versions` admin table. When `withContext()` is called for a non-admin user, the check runs in the background — every subsequent CRUD call awaits the result before proceeding.
 
-Configure the behaviour in `sheet-db.config.ts`:
+Configure the behaviour in `lsdb.config.ts`:
 
 ```typescript
 export default {
@@ -330,14 +330,14 @@ const adapter = createSheetAdapter({
 | `'error'` | Throw `SchemaMismatchError` — useful in staging to hard-fail stale clients |
 | `'auto-sync'` | Silently sync the actor sheet and update the version record before proceeding |
 
-When you push a schema change, run `sheet-db sync --all-users` to propagate it to every registered user sheet and update the version records in one go:
+When you push a schema change, run `lsdb sync --all-users` to propagate it to every registered user sheet and update the version records in one go:
 
 ```bash
 # Push schema changes to all user sheets
-npx sheet-db sync --all-users
+npx lsdb sync --all-users
 
 # Preview what would change without applying
-npx sheet-db sync --all-users --dry-run
+npx lsdb sync --all-users --dry-run
 ```
 
 ### Integrating into an Existing Project
@@ -348,21 +348,21 @@ If you already have a working backend (e.g., Express, NestJS), you can safely in
 pnpm add longcelot-sheet-db
 
 # 2. Initialize project (creates config and schemas directory)
-npx sheet-db init
+npx lsdb init
 
 # 3. Update your .env with Google OAuth credentials
 
 # 4. Define your schemas in schemas/ directory
 
 # 5. Sync schemas to Google Sheets
-npx sheet-db sync
+npx lsdb sync
 
 # 6. Use in your backend code
 ```
 
 **How it works with your existing auth**:
 - Your app continues to use your existing authentication (JWT, sessions, cookies)
-- When you need to access data, map your authenticated user to sheet-db context:
+- When you need to access data, map your authenticated user to lsdb context:
 
 ```typescript
 // Your Express/NestJS route handler
@@ -370,11 +370,11 @@ app.get('/bookings', async (req, res) => {
   // Your existing auth provides user info
   const developerUser = req.user; // From your JWT/session
 
-  // Map to sheet-db context
+  // Map to lsdb context
   const userContext = adapter.withContext({
     userId: developerUser.id,        // Your app's user ID
     role: developerUser.role,         // 'student', 'teacher', etc.
-    actorSheetId: developerUser.sheetId, // From sheet-db user registry
+    actorSheetId: developerUser.sheetId, // From lsdb user registry
   });
 
   const bookings = await userContext.table('bookings').findMany();
@@ -474,7 +474,7 @@ app.get('/auth/callback', async (req, res) => {
 
 ### Why do we need `user_id` if we have `sheet_id`?
 
-The `sheet_id` dictates the **physical storage location** on Google Drive — it exists only in the sheet-db world. When you eventually graduate from Google Sheets to a production SQL database (MySQL, PostgreSQL), the `sheet_id` goes away entirely.
+The `sheet_id` dictates the **physical storage location** on Google Drive — it exists only in the lsdb world. When you eventually graduate from Google Sheets to a production SQL database (MySQL, PostgreSQL), the `sheet_id` goes away entirely.
 
 The `user_id` dictates the **logical domain identity** — it persists across all databases. This is your app's true primary key that ties your entire system together.
 
@@ -487,15 +487,15 @@ The `user_id` dictates the **logical domain identity** — it persists across al
 
 ## 🛠️ CLI Commands
 
-> All commands can be run with `npx`, `pnpm dlx`, `yarn dlx`, or `bunx` — or directly as `sheet-db <command>` if installed globally.
+> All commands can be run with `npx`, `pnpm dlx`, `yarn dlx`, or `bunx` — or directly as `lsdb <command>` if installed globally.
 
 ### Initialize Project
 
 ```bash
-npx sheet-db init
-# pnpm dlx sheet-db init
-# yarn dlx sheet-db init
-# bunx sheet-db init
+npx lsdb init
+# pnpm dlx lsdb init
+# yarn dlx lsdb init
+# bunx lsdb init
 ```
 
 Creates project structure and configuration files.
@@ -503,10 +503,10 @@ Creates project structure and configuration files.
 ### Generate Schema
 
 ```bash
-npx sheet-db generate bookings
-# pnpm dlx sheet-db generate bookings
-# yarn dlx sheet-db generate bookings
-# bunx sheet-db generate bookings
+npx lsdb generate bookings
+# pnpm dlx lsdb generate bookings
+# yarn dlx lsdb generate bookings
+# bunx lsdb generate bookings
 ```
 
 Interactive schema generator with prompts for columns and types.
@@ -514,13 +514,13 @@ Interactive schema generator with prompts for columns and types.
 ### Sync Schemas
 
 ```bash
-npx sheet-db sync
-# pnpm dlx sheet-db sync
-# yarn dlx sheet-db sync
-# bunx sheet-db sync
+npx lsdb sync
+# pnpm dlx lsdb sync
+# yarn dlx lsdb sync
+# bunx lsdb sync
 ```
 
-Creates missing sheets and adds missing columns (never deletes data). Iterates **all actors** defined in `sheet-db.config.ts` and prints a per-actor status table:
+Creates missing sheets and adds missing columns (never deletes data). Iterates **all actors** defined in `lsdb.config.ts` and prints a per-actor status table:
 
 ```
 Actor      │ Sheet ID                   │ Tables   │ Status
@@ -537,25 +537,25 @@ Actors whose sheet ID env var is not set are skipped with a warning (non-fatal).
 **`--dry-run`** — combine with `--all-users` to preview which user sheets are outdated without writing any changes:
 
 ```bash
-npx sheet-db sync --all-users           # apply
-npx sheet-db sync --all-users --dry-run # preview only
+npx lsdb sync --all-users           # apply
+npx lsdb sync --all-users --dry-run # preview only
 ```
 
 **`--token-file <path>`** — CI/CD-friendly: load a pre-stored tokens JSON file instead of triggering the interactive browser OAuth prompt. Inject the file from a CI secret:
 
 ```bash
 # In GitHub Actions:
-echo "$SHEET_DB_TOKENS" > /tmp/tokens.json
-npx sheet-db sync --token-file /tmp/tokens.json
+echo "$LSDB_TOKENS" > /tmp/tokens.json
+npx lsdb sync --token-file /tmp/tokens.json
 ```
 
 ### Validate Schemas
 
 ```bash
-npx sheet-db validate
-# pnpm dlx sheet-db validate
-# yarn dlx sheet-db validate
-# bunx sheet-db validate
+npx lsdb validate
+# pnpm dlx lsdb validate
+# yarn dlx lsdb validate
+# bunx lsdb validate
 ```
 
 Checks for:
@@ -567,8 +567,8 @@ Checks for:
 ### Seed Data
 
 ```bash
-npx sheet-db seed <seed-file>
-# pnpm dlx sheet-db seed seeds/admin.ts
+npx lsdb seed <seed-file>
+# pnpm dlx lsdb seed seeds/admin.ts
 ```
 
 Load initial or test data into your sheets.
@@ -599,17 +599,17 @@ export default async function(env: NodeJS.ProcessEnv) {
 - `--all-actors` — distribute seed data to all registered user sheets
 
 ```bash
-npx sheet-db seed seeds/admin.ts --skip-existing  # idempotent re-seed
-npx sheet-db seed seeds/admin.ts --upsert          # update on conflict
+npx lsdb seed seeds/admin.ts --skip-existing  # idempotent re-seed
+npx lsdb seed seeds/admin.ts --upsert          # update on conflict
 ```
 
 ### Doctor
 
 ```bash
-npx sheet-db doctor
-# pnpm dlx sheet-db doctor
-# yarn dlx sheet-db doctor
-# bunx sheet-db doctor
+npx lsdb doctor
+# pnpm dlx lsdb doctor
+# yarn dlx lsdb doctor
+# bunx lsdb doctor
 ```
 
 Runs environment and configuration health checks.
@@ -617,10 +617,10 @@ Runs environment and configuration health checks.
 ### Status
 
 ```bash
-npx sheet-db status
-# pnpm dlx sheet-db status
-# yarn dlx sheet-db status
-# bunx sheet-db status
+npx lsdb status
+# pnpm dlx lsdb status
+# yarn dlx lsdb status
+# bunx lsdb status
 ```
 
 Shows all registered tables, actors, and their sheet IDs.
@@ -718,32 +718,32 @@ When you're ready for production:
 
 | Goal | Command |
 |------|---------|
-| Copy table structure only (schema / DDL) | `sheet-db export --prisma` or `--sql` |
-| Copy structure + admin sheet row data | `sheet-db export-data` |
-| Copy structure + all user-sheet row data | `sheet-db export-data --all-users` |
+| Copy table structure only (schema / DDL) | `lsdb export --prisma` or `--sql` |
+| Copy structure + admin sheet row data | `lsdb export-data` |
+| Copy structure + all user-sheet row data | `lsdb export-data --all-users` |
 | Preview export plan without writing files | add `--dry-run` to either command |
 
 ### Schema export (structure only)
 
 ```bash
 # Export to Prisma schema
-npx sheet-db export --prisma --output ./prisma
+npx lsdb export --prisma --output ./prisma
 
 # Export to SQL DDL (CREATE TABLE statements)
-npx sheet-db export --sql --output ./migrations
+npx lsdb export --sql --output ./migrations
 ```
 
 ### Data export (row data → production DB)
 
 ```bash
 # Admin sheet only
-npx sheet-db export-data
+npx lsdb export-data
 
 # Admin sheet + all registered user sheets
-npx sheet-db export-data --all-users
+npx lsdb export-data --all-users
 
 # Preview without writing
-npx sheet-db export-data --all-users --dry-run
+npx lsdb export-data --all-users --dry-run
 ```
 
 `export-data` generates a `export-data.js` script. Replace the `insertRow()` stub with your real DB client (Prisma, Sequelize, etc.) and run it once.
@@ -756,7 +756,7 @@ const adapter = createSheetAdapter({ ... });
 const adapter = createSQLAdapter({ ... });
 ```
 
-> **Note**: `sheet-db migrate` is deprecated — use `sheet-db export-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes. `export-data` correctly names what this command does: move row data.
+> **Note**: `lsdb migrate` is deprecated — use `lsdb export-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes. `export-data` correctly names what this command does: move row data.
 
 ## ⚡ Performance
 

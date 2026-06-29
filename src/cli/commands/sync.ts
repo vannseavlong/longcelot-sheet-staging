@@ -7,6 +7,7 @@ import { createOAuthManager } from '../../auth/oauth';
 import { TableSchema, ActorConfig } from '../../schema/types';
 import { computeSchemaHash } from '../../utils/schemaHash';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath, resolveTokensPath, TOKENS_FILENAME } from '../../utils/cliFiles';
 
 function isRateLimitError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -33,10 +34,8 @@ async function withBackoff<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> 
   throw new Error('Max retries exceeded');
 }
 
-const TOKENS_FILE = '.sheet-db-tokens.json';
-
 function readTokens(): unknown | null {
-  const tokenPath = path.join(process.cwd(), TOKENS_FILE);
+  const tokenPath = resolveTokensPath();
   if (!fs.existsSync(tokenPath)) return null;
   try {
     return JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
@@ -47,7 +46,7 @@ function readTokens(): unknown | null {
 
 function saveTokens(tokens: unknown): void {
   fs.writeFileSync(
-    path.join(process.cwd(), TOKENS_FILE),
+    path.join(process.cwd(), TOKENS_FILENAME),
     JSON.stringify(tokens, null, 2),
     'utf-8'
   );
@@ -87,7 +86,7 @@ async function resolveTokens(
 
   const tokens = await oauth.getTokens(code.trim());
   saveTokens(tokens);
-  console.log(chalk.green(`✅ Tokens saved to ${TOKENS_FILE}\n`));
+  console.log(chalk.green(`✅ Tokens saved to ${TOKENS_FILENAME}\n`));
   return tokens;
 }
 
@@ -143,9 +142,9 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
 
   let config: { actors: ActorConfig[]; projectName?: string; schemasDir?: string };
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found. Run: sheet-db init'));
+    console.error(chalk.red('❌ lsdb.config.ts not found. Run: lsdb init'));
     process.exit(1);
   }
 

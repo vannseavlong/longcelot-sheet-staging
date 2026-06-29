@@ -27,7 +27,7 @@ No. OAuth2 is required because the Google Sheets API requires it for all read/wr
 
 ### My app already has its own auth (JWT, sessions). Does adding this package break it?
 
-No. OAuth in sheet-db is strictly for **backend-to-Google-Sheets communication**. Your app's own authentication is completely untouched. You just map your authenticated user to a sheet-db context when you need to access data:
+No. OAuth in lsdb is strictly for **backend-to-Google-Sheets communication**. Your app's own authentication is completely untouched. You just map your authenticated user to a lsdb context when you need to access data:
 
 ```typescript
 app.get('/courses', async (req, res) => {
@@ -86,7 +86,7 @@ The user's token is used exactly once: to verify their identity at login. After 
 
 | Concept | Controls | Dynamic? | Defined where |
 |---|---|---|---|
-| **Actor** | *Where* data is stored — which Google Sheet, which table schemas apply | No — fixed at deploy time in `sheet-db.config.ts` | Config file |
+| **Actor** | *Where* data is stored — which Google Sheet, which table schemas apply | No — fixed at deploy time in `lsdb.config.ts` | Config file |
 | **App RBAC role** | *What* a user is allowed to do (grade students, approve enrollment, view reports) | Yes — rows in your `roles` / `role_permissions` table | Your app's DB layer |
 
 **Wrong mental model:** actor = permission level
@@ -100,11 +100,11 @@ Actor "student" → one personal sheet per student (their grades, attendance, as
 Actor "parent"  → one personal sheet per parent (their children's info, communications)
 ```
 
-The fact that the admin panel has sub-roles like registrar / librarian / coordinator is irrelevant to sheet-db. Those are RBAC roles — stored in a `roles` table inside the admin sheet and enforced in your middleware. Sheet-db just stores and retrieves the rows.
+The fact that the admin panel has sub-roles like registrar / librarian / coordinator is irrelevant to lsdb. Those are RBAC roles — stored in a `roles` table inside the admin sheet and enforced in your middleware. Lsdb just stores and retrieves the rows.
 
 ### I read this exact FAQ entry and still modeled RBAC sub-roles as separate actors. Why?
 
-This happened in practice: a team modeled three admin-portal sub-roles (`operation`, `finance`, `marketing`) as three separate actors — each with its own `DEV_*_SHEET_ID` and `sheet-db.config.ts` entry — instead of as rows in a `roles`/`role_permissions` table inside one `admin` actor. They had already read this FAQ section before writing the code.
+This happened in practice: a team modeled three admin-portal sub-roles (`operation`, `finance`, `marketing`) as three separate actors — each with its own `DEV_*_SHEET_ID` and `lsdb.config.ts` entry — instead of as rows in a `roles`/`role_permissions` table inside one `admin` actor. They had already read this FAQ section before writing the code.
 
 The root cause wasn't the docs — it was the field name. Every actor-config entry and every `withContext()` call read `role: 'operation'`, which looks exactly like an RBAC role assignment at the moment of writing the code. Autocomplete and type hints show the field name, not the prose explaining what it means.
 
@@ -112,7 +112,7 @@ The fix: the field itself no longer says `role` anywhere in the actor-identity p
 
 | Location | Old (deprecated alias, still works + warns) | Current |
 |---|---|---|
-| `ActorConfig` (`sheet-db.config.ts`) | `role: string` | `name: string` |
+| `ActorConfig` (`lsdb.config.ts`) | `role: string` | `name: string` |
 | `UserContext` (`withContext()`) | `role: string` | `actor: string` |
 | `UserContext` cross-actor target | `targetRole: string` | `targetActor: string` |
 
@@ -137,7 +137,7 @@ function requirePermission(permission: string) {
 }
 ```
 
-Sheet-db stores and retrieves the `roles` table data. Your app enforces it.
+Lsdb stores and retrieves the `roles` table data. Your app enforces it.
 
 ### Why do we need `user_id` if every user already has a `sheet_id`?
 
@@ -164,7 +164,7 @@ The threat model is identical to any backend database: if someone gets your data
 
 ### Can I enforce that a librarian cannot see registrar data, even within my own backend?
 
-Sheet-db does **not** provide row-level or column-level security within a sheet. All admin-actor data lives in one sheet. Your options:
+Lsdb does **not** provide row-level or column-level security within a sheet. All admin-actor data lives in one sheet. Your options:
 
 | Option | Trade-off |
 |---|---|
@@ -189,7 +189,7 @@ app.post('/api/enrollments/assign', requireRole(['admin', 'registrar']), async (
 });
 ```
 
-Sheet-db provides the data storage. Your Express / NestJS / Next.js middleware provides the access control.
+Lsdb provides the data storage. Your Express / NestJS / Next.js middleware provides the access control.
 
 ---
 
@@ -218,7 +218,7 @@ columns: {
 }
 ```
 
-On `create()` and `update()`, sheet-db reads the referenced table and checks the value exists. Throws `ValidationError` if not:
+On `create()` and `update()`, lsdb reads the referenced table and checks the value exists. Throws `ValidationError` if not:
 
 ```
 FK violation: users.user_id 'u_999' does not exist
@@ -239,7 +239,7 @@ Two-layer guarantee:
 
 **Layer 1 — Runtime detection via schema hash**
 
-On every `withContext()` call for a non-admin user, sheet-db computes a SHA-256 hash of the current schema and compares it against the hash stored in the built-in `schema_versions` admin table. Configure the mismatch behaviour:
+On every `withContext()` call for a non-admin user, lsdb computes a SHA-256 hash of the current schema and compares it against the hash stored in the built-in `schema_versions` admin table. Configure the mismatch behaviour:
 
 ```typescript
 createSheetAdapter({ onSchemaMismatch: 'warn' })      // log to stderr, continue (default)
@@ -250,8 +250,8 @@ createSheetAdapter({ onSchemaMismatch: 'auto-sync' }) // sync the actor sheet be
 **Layer 2 — Bulk push via CLI**
 
 ```bash
-npx sheet-db sync --all-users           # push schema changes to every registered user sheet
-npx sheet-db sync --all-users --dry-run # preview what would change without writing
+npx lsdb sync --all-users           # push schema changes to every registered user sheet
+npx lsdb sync --all-users --dry-run # preview what would change without writing
 ```
 
 Reads all `actor_sheet_id` values from the admin `users` table, diffs row-1 headers against the current schema, appends any missing columns (additive only — never deletes existing data), and updates `schema_versions` records. Uses exponential backoff (1s → 32s) to handle Google Sheets API rate limits.
@@ -268,7 +268,7 @@ DEV_PARENT_SHEET_ID=1JKL...
 ```
 
 ```typescript
-// sheet-db.config.ts
+// lsdb.config.ts
 actors: [
   { name: 'admin',   sheetIdEnv: 'ADMIN_SHEET_ID' },
   { name: 'teacher', sheetIdEnv: 'DEV_TEACHER_SHEET_ID' },
@@ -277,7 +277,7 @@ actors: [
 ]
 ```
 
-`sheet-db init` scaffolds all of these automatically based on the actors you define. In production the `DEV_*` vars are not set — each registered user gets their own personal sheet via `createUserSheet()`.
+`lsdb init` scaffolds all of these automatically based on the actors you define. In production the `DEV_*` vars are not set — each registered user gets their own personal sheet via `createUserSheet()`.
 
 ### What is the dev vs production data model difference?
 
@@ -287,7 +287,7 @@ actors: [
 | Data isolation | All dev users share one sheet | Each user's data is physically isolated |
 | Bugs visible | Only shared-sheet bugs appear | Per-user isolation bugs become visible |
 
-Use `sheet-db mock-users` to create separate actor sheets locally that mirror the production topology for more realistic testing.
+Use `lsdb mock-users` to create separate actor sheets locally that mirror the production topology for more realistic testing.
 
 ---
 
@@ -378,8 +378,8 @@ The implementation will run parallel queries to both actor sheets and perform an
 
 ```
 longcelot-sheet-db (dev/staging)
-    ↓  npx sheet-db export --prisma / --sql
-    ↓  npx sheet-db export-data --all-users
+    ↓  npx lsdb export --prisma / --sql
+    ↓  npx lsdb export-data --all-users
 MySQL / PostgreSQL + Prisma / Sequelize (production)
 ```
 
@@ -392,14 +392,14 @@ Every schema maps cleanly to SQL tables. The code swap is minimal:
 
 | Goal | Command |
 |---|---|
-| Copy table structure only (DDL / schema) | `sheet-db export --prisma` or `sheet-db export --sql` |
-| Copy structure + admin sheet row data | `sheet-db export-data` |
-| Copy structure + all user-sheet row data | `sheet-db export-data --all-users` |
+| Copy table structure only (DDL / schema) | `lsdb export --prisma` or `lsdb export --sql` |
+| Copy structure + admin sheet row data | `lsdb export-data` |
+| Copy structure + all user-sheet row data | `lsdb export-data --all-users` |
 | Preview export plan without writing files | Add `--dry-run` to either command |
 
 ### Why is the command called `export-data` and not `migrate`?
 
-In standard tooling (Prisma Migrate, Rails, Flyway, Liquibase), "migrate" means schema-only DDL changes. `export-data` correctly names what the command actually does: read row data from Google Sheets and generate an insertion script. The old `sheet-db migrate` alias still works but emits a deprecation warning.
+In standard tooling (Prisma Migrate, Rails, Flyway, Liquibase), "migrate" means schema-only DDL changes. `export-data` correctly names what the command actually does: read row data from Google Sheets and generate an insertion script. The old `lsdb migrate` alias still works but emits a deprecation warning.
 
 ---
 
@@ -409,7 +409,7 @@ In standard tooling (Prisma Migrate, Rails, Flyway, Liquibase), "migrate" means 
 
 ```bash
 # 1. Initialise project (creates config + schemas directory + .env)
-npx sheet-db init
+npx lsdb init
 
 # 2. Fill in Google OAuth credentials in .env
 GOOGLE_CLIENT_ID=...
@@ -418,17 +418,17 @@ GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
 ADMIN_SHEET_ID=...
 
 # 3. Define your schemas in schemas/ directory, or use the interactive generator
-npx sheet-db generate enrollments
+npx lsdb generate enrollments
 
 # 4. Sync schemas to Google Sheets (creates tabs and headers)
-npx sheet-db sync
+npx lsdb sync
 
 # 5. Use the adapter in your backend code
 ```
 
-### How does `sheet-db sync` work for multiple actors?
+### How does `lsdb sync` work for multiple actors?
 
-`sync` iterates every actor defined in `sheet-db.config.ts` and prints a status table:
+`sync` iterates every actor defined in `lsdb.config.ts` and prints a status table:
 
 ```
 Actor   │ Sheet ID                   │ Tables │ Status
@@ -445,33 +445,33 @@ Actors whose `DEV_*_SHEET_ID` env var is not set are skipped with a warning (non
 
 | Command | What it does |
 |---|---|
-| `sheet-db init` | Scaffold config, `.env`, schemas directory |
-| `sheet-db init --integrate` | Merge into existing project without overwriting files |
-| `sheet-db generate <name>` | Interactive schema generator |
-| `sheet-db sync` | Sync all actor schemas to Google Sheets |
-| `sheet-db sync --all-users` | Also push schema changes to every registered user sheet |
-| `sheet-db sync --all-users --dry-run` | Preview `--all-users` changes without applying |
-| `sheet-db sync --token-file <path>` | CI/CD: load pre-stored tokens file, skip interactive OAuth |
-| `sheet-db validate` | Validate all schema files for errors |
-| `sheet-db seed <file>` | Seed data from a JS/TS file |
-| `sheet-db seed <file> --skip-existing` | Skip rows where a unique column already matches |
-| `sheet-db seed <file> --upsert` | Update on unique conflict instead of throwing |
-| `sheet-db seed <file> --all-actors` | Distribute seed data to all registered user sheets |
-| `sheet-db mock-users [count]` | Create mock Google Sheets for dev/testing (default: 3) |
-| `sheet-db export --prisma` | Export schemas to `schema.prisma` |
-| `sheet-db export --sql` | Export schemas to SQL `CREATE TABLE` DDL |
-| `sheet-db export-data` | Generate data export script (admin sheet) |
-| `sheet-db export-data --all-users` | Generate data export script (admin + all user sheets) |
-| `sheet-db export-data --all-users --dry-run` | Preview export plan without writing files |
-| `sheet-db doctor` | Health check: env vars, config, OAuth tokens, schema directory |
-| `sheet-db status` | Show actors, env var values, OAuth state, all registered tables |
+| `lsdb init` | Scaffold config, `.env`, schemas directory |
+| `lsdb init --integrate` | Merge into existing project without overwriting files |
+| `lsdb generate <name>` | Interactive schema generator |
+| `lsdb sync` | Sync all actor schemas to Google Sheets |
+| `lsdb sync --all-users` | Also push schema changes to every registered user sheet |
+| `lsdb sync --all-users --dry-run` | Preview `--all-users` changes without applying |
+| `lsdb sync --token-file <path>` | CI/CD: load pre-stored tokens file, skip interactive OAuth |
+| `lsdb validate` | Validate all schema files for errors |
+| `lsdb seed <file>` | Seed data from a JS/TS file |
+| `lsdb seed <file> --skip-existing` | Skip rows where a unique column already matches |
+| `lsdb seed <file> --upsert` | Update on unique conflict instead of throwing |
+| `lsdb seed <file> --all-actors` | Distribute seed data to all registered user sheets |
+| `lsdb mock-users [count]` | Create mock Google Sheets for dev/testing (default: 3) |
+| `lsdb export --prisma` | Export schemas to `schema.prisma` |
+| `lsdb export --sql` | Export schemas to SQL `CREATE TABLE` DDL |
+| `lsdb export-data` | Generate data export script (admin sheet) |
+| `lsdb export-data --all-users` | Generate data export script (admin + all user sheets) |
+| `lsdb export-data --all-users --dry-run` | Preview export plan without writing files |
+| `lsdb doctor` | Health check: env vars, config, OAuth tokens, schema directory |
+| `lsdb status` | Show actors, env var values, OAuth state, all registered tables |
 
-### How do I use `sheet-db sync` in a CI/CD pipeline without interactive OAuth?
+### How do I use `lsdb sync` in a CI/CD pipeline without interactive OAuth?
 
 ```bash
 # Store tokens as a CI secret, inject at build time
-echo "$SHEET_DB_TOKENS" > /tmp/tokens.json
-npx sheet-db sync --token-file /tmp/tokens.json
+echo "$LSDB_TOKENS" > /tmp/tokens.json
+npx lsdb sync --token-file /tmp/tokens.json
 ```
 
 The `--token-file` flag loads a pre-stored tokens JSON file and skips the interactive browser OAuth prompt entirely.
@@ -480,7 +480,7 @@ The `--token-file` flag loads a pre-stored tokens JSON file and skips the intera
 
 ## 10. Sheet Formatting & Data Validation
 
-### Does sheet-db do anything to make the raw Google Sheet readable, or is it just plain cell writes?
+### Does lsdb do anything to make the raw Google Sheet readable, or is it just plain cell writes?
 
 Every tab created or extended by `sync` / `syncSchema()` / `createUserSheet()` is formatted automatically — no config needed:
 
@@ -525,9 +525,9 @@ If you're on an older version and can't upgrade immediately, the safe workaround
 
 ### After the fix above, why did checkbox/dropdown UI stop appearing past row ~200 on a table that only ever called `create()`?
 
-Follow-up to the incident above, not a separate bug. The 200-row buffer bounds the validation range *at the moment `sheet-db sync` last ran* — it's a one-time snapshot of `dataRowCount + 200`, not something `create()` was originally aware of or kept extending. A table that grows from 5 rows to 250 rows over weeks of normal app usage, with no schema changes in between, gets validation UI through row ~205 and plain cells for every row after that — silent, since reads/writes through the SDK are unaffected either way; it only shows up if someone opens the raw sheet.
+Follow-up to the incident above, not a separate bug. The 200-row buffer bounds the validation range *at the moment `lsdb sync` last ran* — it's a one-time snapshot of `dataRowCount + 200`, not something `create()` was originally aware of or kept extending. A table that grows from 5 rows to 250 rows over weeks of normal app usage, with no schema changes in between, gets validation UI through row ~205 and plain cells for every row after that — silent, since reads/writes through the SDK are unaffected either way; it only shows up if someone opens the raw sheet.
 
-Fixed: `create()` now self-heals. Every 100 rows (half the 200-row buffer, so coverage can't run out between checks) it re-extends the validated range another 200 rows via the new `SheetClient.extendValidation()`, using the row number the Sheets API's own append response already tells it — no extra read required to know "how many rows are there now." It's skipped entirely for schemas with no `boolean()`/`enum()` columns, and it's deliberately scoped to `create()` only: bulk inserts via `createMany()` (seeding, migrations) still expect a manual `sheet-db sync` afterward, the same as before.
+Fixed: `create()` now self-heals. Every 100 rows (half the 200-row buffer, so coverage can't run out between checks) it re-extends the validated range another 200 rows via the new `SheetClient.extendValidation()`, using the row number the Sheets API's own append response already tells it — no extra read required to know "how many rows are there now." It's skipped entirely for schemas with no `boolean()`/`enum()` columns, and it's deliberately scoped to `create()` only: bulk inserts via `createMany()` (seeding, migrations) still expect a manual `lsdb sync` afterward, the same as before.
 
 ### Why does `boolean()` use a dropdown instead of a real checkbox? Wasn't the checkbox nicer?
 
@@ -548,4 +548,4 @@ columns: {
 }
 ```
 
-Existing sheets are unaffected at the data level — already-written cells already hold literal `TRUE`/`FALSE` text underneath the old checkbox widget, and `deserializeRow()` accepts both `'TRUE'` and `'1'` as true regardless of which format is currently configured, so rows written before and after a format change both read back correctly. The only visible change is cosmetic: a dropdown showing text instead of a checkbox tick, starting from the next `sheet-db sync`.
+Existing sheets are unaffected at the data level — already-written cells already hold literal `TRUE`/`FALSE` text underneath the old checkbox widget, and `deserializeRow()` accepts both `'TRUE'` and `'1'` as true regardless of which format is currently configured, so rows written before and after a format change both read back correctly. The only visible change is cosmetic: a dropdown showing text instead of a checkbox tick, starting from the next `lsdb sync`.

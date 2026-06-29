@@ -129,12 +129,12 @@ export class SheetAdapter {
       actorValue = context.actor;
     } else if (context.role) {
       console.warn(
-        '[sheet-db] UserContext.role is deprecated — use actor instead. ' +
+        '[lsdb] UserContext.role is deprecated — use actor instead. ' +
         'See: https://github.com/longcelot/sheet-db#actors-vs-application-roles'
       );
       actorValue = context.role;
     } else {
-      throw new Error('[sheet-db] withContext() requires either actor or role in UserContext');
+      throw new Error('[lsdb] withContext() requires either actor or role in UserContext');
     }
 
     // Normalise targetActor/targetRole: prefer `targetActor`, fall back to deprecated `targetRole`.
@@ -143,7 +143,7 @@ export class SheetAdapter {
       targetActorValue = context.targetActor;
     } else if (context.targetRole) {
       console.warn(
-        '[sheet-db] UserContext.targetRole is deprecated — use targetActor instead. ' +
+        '[lsdb] UserContext.targetRole is deprecated — use targetActor instead. ' +
         'See: https://github.com/longcelot/sheet-db#actors-vs-application-roles'
       );
       targetActorValue = context.targetRole;
@@ -409,8 +409,8 @@ export class SheetAdapter {
         switch (this.onSchemaMismatch) {
           case 'warn':
             console.warn(
-              `[sheet-db] Schema mismatch: table '${schema.name}' on sheet '${context.actorSheetId}' ` +
-              `is outdated. Run 'sheet-db sync --all-users' to fix.`
+              `[lsdb] Schema mismatch: table '${schema.name}' on sheet '${context.actorSheetId}' ` +
+              `is outdated. Run 'lsdb sync --all-users' to fix.`
             );
             break;
 

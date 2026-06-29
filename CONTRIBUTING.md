@@ -62,7 +62,7 @@ pnpm test
 
 # 5. Link CLI locally for manual testing
 npm link
-sheet-db --help
+lsdb --help
 ```
 
 ### Environment Variables (for integration testing)

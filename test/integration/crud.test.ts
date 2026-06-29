@@ -97,7 +97,7 @@ describe('CRUDOperations.create()', () => {
 // ── self-healing validation range (FAQ.md #10 follow-up) ─────────────────────
 // create() re-extends the boolean/enum validation range every VALIDATION_CHECK_INTERVAL
 // (100) rows, so it keeps pace with organic row growth between syncs instead of only
-// catching up the next time `sheet-db sync` runs.
+// catching up the next time `lsdb sync` runs.
 
 describe('CRUDOperations self-healing validation range', () => {
   it('does not call extendValidation before the check interval is reached', async () => {

@@ -5,7 +5,7 @@ export class SchemaMismatchError extends Error {
   ) {
     super(
       `Schema mismatch: table '${tableName}' on sheet '${actorSheetId}' is outdated. ` +
-      `Run 'sheet-db sync --all-users' or set onSchemaMismatch to 'auto-sync'.`
+      `Run 'lsdb sync --all-users' or set onSchemaMismatch to 'auto-sync'.`
     );
     this.name = 'SchemaMismatchError';
   }

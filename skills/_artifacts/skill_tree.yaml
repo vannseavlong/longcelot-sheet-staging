@@ -119,16 +119,16 @@ skill_tree:
     path: skills/migrations/SKILL.md
     description: >
       Schema versioning (schema_versions table, onSchemaMismatch, computeSchemaHash),
-      sync --all-users bulk push, sheet-db export to Prisma/SQL, and
-      sheet-db migrate data migration script generation.
+      sync --all-users bulk push, lsdb export to Prisma/SQL, and
+      lsdb migrate data migration script generation.
     covers:
       - schema_versions built-in table
       - computeSchemaHash utility
       - onSchemaMismatch ('warn' | 'error' | 'auto-sync')
       - SchemaMismatchError
       - sync --all-users / --dry-run
-      - sheet-db export --prisma / --sql
-      - sheet-db migrate script generation
+      - lsdb export --prisma / --sql
+      - lsdb migrate script generation
       - Full migration path to production DB
       - What persists after migration (user_id vs actor_sheet_id)
     depends_on:
@@ -139,23 +139,23 @@ skill_tree:
   - name: cli
     path: skills/cli/SKILL.md
     description: >
-      The sheet-db CLI: init, generate, sync (with --all-users, --dry-run,
+      The lsdb CLI: init, generate, sync (with --all-users, --dry-run,
       --token-file), validate, seed (with --skip-existing, --upsert, dynamic
       format), mock-users, doctor, status, export, migrate.
     covers:
-      - sheet-db init / --integrate
-      - sheet-db generate
-      - sheet-db sync / --all-users / --dry-run / --token-file
-      - sheet-db validate
-      - sheet-db seed / --skip-existing / --upsert / --all-actors
+      - lsdb init / --integrate
+      - lsdb generate
+      - lsdb sync / --all-users / --dry-run / --token-file
+      - lsdb validate
+      - lsdb seed / --skip-existing / --upsert / --all-actors
       - Dynamic seed file format (async function)
-      - sheet-db mock-users
-      - sheet-db doctor
-      - sheet-db status
-      - sheet-db export
-      - sheet-db migrate
-      - sheet-db.config.ts (ActorConfig shape)
-      - .sheet-db-tokens.json
+      - lsdb mock-users
+      - lsdb doctor
+      - lsdb status
+      - lsdb export
+      - lsdb migrate
+      - lsdb.config.ts (ActorConfig shape)
+      - .lsdb-tokens.json
     depends_on:
       - core
       - schema

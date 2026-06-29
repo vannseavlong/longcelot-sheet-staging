@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import path from 'path';
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { initCommand } from './commands/init';
 import { generateCommand } from './commands/generate';
@@ -13,10 +15,20 @@ import { exportCommand } from './commands/export';
 import { exportDataCommand } from './commands/export-data';
 import { migrateCommand } from './commands/migrate';
 
+const invokedAs = path.basename(process.argv[1] ?? '');
+if (invokedAs === 'sheet-db') {
+  console.warn(
+    chalk.yellow(
+      '⚠️  Deprecation: the `sheet-db` command is renamed to `lsdb`.\n' +
+      '   Update your scripts to use `lsdb` — the old name will be removed in a future release.\n'
+    )
+  );
+}
+
 const program = new Command();
 
 program
-  .name('sheet-db')
+  .name('lsdb')
   .description('Google Sheets-backed staging database CLI')
   .version('0.1.0');
 

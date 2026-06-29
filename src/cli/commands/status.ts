@@ -3,9 +3,10 @@ import path from 'path';
 import chalk from 'chalk';
 import { TableSchema } from '../../schema/types';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath, resolveTokensPath } from '../../utils/cliFiles';
 
 export async function statusCommand() {
-  console.log(chalk.blue.bold('📊 Sheet-DB Project Status\n'));
+  console.log(chalk.blue.bold('📊 LSDB Project Status\n'));
 
   require('dotenv').config();
 
@@ -16,9 +17,9 @@ export async function statusCommand() {
   // Load config
   let config: CLIConfig;
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found. Run: sheet-db init'));
+    console.error(chalk.red('❌ lsdb.config.ts not found. Run: lsdb init'));
     process.exit(1);
   }
 
@@ -54,7 +55,7 @@ export async function statusCommand() {
   console.log();
 
   // OAuth tokens
-  const tokensPath = path.join(process.cwd(), '.sheet-db-tokens.json');
+  const tokensPath = resolveTokensPath();
   console.log(chalk.bold('OAuth Tokens'));
   if (fs.existsSync(tokensPath)) {
     try {
@@ -70,14 +71,14 @@ export async function statusCommand() {
       console.log(`  ${chalk.red('⚠ Token file could not be parsed')}`);
     }
   } else {
-    console.log(`  ${chalk.yellow('No tokens found — run: sheet-db sync')}`);
+    console.log(`  ${chalk.yellow('No tokens found — run: lsdb sync')}`);
   }
   console.log();
 
   // Schemas by actor
   const schemasDir = path.join(process.cwd(), 'schemas');
   if (!fs.existsSync(schemasDir)) {
-    console.log(chalk.yellow('No schemas/ directory found. Run: sheet-db init'));
+    console.log(chalk.yellow('No schemas/ directory found. Run: lsdb init'));
     return;
   }
 

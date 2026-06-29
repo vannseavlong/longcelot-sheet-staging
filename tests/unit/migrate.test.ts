@@ -139,7 +139,7 @@ describe('generateExportDataScript() with allUsers=true', () => {
 
   it('header comment reflects --all-users flag', () => {
     const script = generateExportDataScript([usersSchema], true);
-    expect(script).toContain('sheet-db export-data --all-users');
+    expect(script).toContain('lsdb export-data --all-users');
   });
 });
 

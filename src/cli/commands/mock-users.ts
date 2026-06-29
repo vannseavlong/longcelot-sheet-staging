@@ -3,6 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath, resolveTokensPath } from '../../utils/cliFiles';
 
 function makeEmail(userId: string, role: string) {
   return `${role}.${userId}@example.local`;
@@ -32,9 +33,9 @@ export async function mockUsersCommand(countArg?: string | number) {
     }
   }
 
-  const tokensPath = path.join(process.cwd(), '.sheet-db-tokens.json');
+  const tokensPath = resolveTokensPath();
   if (!fs.existsSync(tokensPath)) {
-    console.error(chalk.red('❌ No OAuth tokens found. Run: sheet-db sync'));
+    console.error(chalk.red('❌ No OAuth tokens found. Run: lsdb sync'));
     process.exit(1);
   }
 
@@ -53,9 +54,9 @@ export async function mockUsersCommand(countArg?: string | number) {
   }
   let config: CLIConfig;
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found. Run: sheet-db init'));
+    console.error(chalk.red('❌ lsdb.config.ts not found. Run: lsdb init'));
     process.exit(1);
   }
 

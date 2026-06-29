@@ -282,7 +282,7 @@ export class SheetClient {
    * Re-applies boolean/enum validation rules bounded to `dataRowCount + VALIDATION_ROW_BUFFER`,
    * without touching header color/freeze/auto-resize. Called by CRUDOperations.create() as rows
    * are appended between syncs, so the validated range keeps pace with real row growth instead
-   * of only catching up the next time `sheet-db sync` runs — see FAQ.md #10 follow-up.
+   * of only catching up the next time `lsdb sync` runs — see FAQ.md #10 follow-up.
    */
   async extendValidation(
     spreadsheetId: string,

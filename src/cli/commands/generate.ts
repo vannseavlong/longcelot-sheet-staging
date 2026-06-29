@@ -3,15 +3,16 @@ import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath } from '../../utils/cliFiles';
 
 export async function generateCommand(tableName: string) {
   console.log(chalk.blue.bold(`📝 Generating table schema: ${tableName}\n`));
 
   let config;
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found. Run: sheet-db init'));
+    console.error(chalk.red('❌ lsdb.config.ts not found. Run: lsdb init'));
     process.exit(1);
   }
 
@@ -123,5 +124,5 @@ ${columnsCode}
   fs.writeFileSync(filePath, schemaContent);
 
   console.log(chalk.green(`\n✅ Schema created: ${filePath}`));
-  console.log(chalk.cyan('\nNext: Run "sheet-db sync" to create the sheet\n'));
+  console.log(chalk.cyan('\nNext: Run "lsdb sync" to create the sheet\n'));
 }

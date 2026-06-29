@@ -3,15 +3,15 @@ import { exportDataCommand, generateExportDataScript } from './export-data';
 import { TableSchema } from '../../schema/types';
 
 /**
- * @deprecated `sheet-db migrate` is deprecated — use `sheet-db export-data` instead.
+ * @deprecated `lsdb migrate` is deprecated — use `lsdb export-data` instead.
  * "migrate" in standard tooling means schema-only DDL changes (Prisma Migrate, Rails, Flyway).
  * This command generates a DATA export script; the correct name is `export-data`.
  */
 export async function migrateCommand(options: { output?: string; table?: string; dryRun?: boolean }) {
   console.warn(
     chalk.yellow(
-      '⚠️  Deprecation: `sheet-db migrate` is renamed to `sheet-db export-data`.\n' +
-      '   Update your scripts to use `sheet-db export-data` — the old name will be removed in a future release.\n'
+      '⚠️  Deprecation: `lsdb migrate` is renamed to `lsdb export-data`.\n' +
+      '   Update your scripts to use `lsdb export-data` — the old name will be removed in a future release.\n'
     )
   );
   return exportDataCommand(options);

@@ -135,7 +135,7 @@ domains:
       Schema versioning, mismatch detection, and migration tooling.
       Covers the schema_versions admin table, computeSchemaHash utility,
       onSchemaMismatch runtime behavior, sync --all-users bulk push with
-      exponential backoff, sheet-db export (Prisma/SQL), and sheet-db migrate
+      exponential backoff, lsdb export (Prisma/SQL), and lsdb migrate
       script generation.
     sources:
       - src/utils/schemaHash.ts
@@ -150,13 +150,13 @@ domains:
       - onSchemaMismatch ('warn' | 'error' | 'auto-sync')
       - sync --all-users / --dry-run
       - Exponential backoff for rate limits
-      - sheet-db export --prisma / --sql
-      - sheet-db migrate script generation
-      - Migration path: sheet-db → Prisma/SQL
+      - lsdb export --prisma / --sql
+      - lsdb migrate script generation
+      - Migration path: lsdb → Prisma/SQL
 
   - name: cli
     description: >
-      The sheet-db CLI binary. Covers all commands: init (--integrate),
+      The lsdb CLI binary. Covers all commands: init (--integrate),
       generate, sync (--all-users, --dry-run, --token-file for CI),
       validate, seed (--skip-existing, --upsert, --all-actors, dynamic function
       export), mock-users, doctor, status, export, migrate.
@@ -173,19 +173,19 @@ domains:
       - src/cli/commands/export.ts
       - src/cli/commands/migrate.ts
     key_concepts:
-      - sheet-db init / --integrate
-      - sheet-db generate
-      - sheet-db sync / --all-users / --dry-run / --token-file
-      - sheet-db validate
-      - sheet-db seed / --skip-existing / --upsert / --all-actors
+      - lsdb init / --integrate
+      - lsdb generate
+      - lsdb sync / --all-users / --dry-run / --token-file
+      - lsdb validate
+      - lsdb seed / --skip-existing / --upsert / --all-actors
       - Dynamic seed file (async function export)
-      - sheet-db mock-users
-      - sheet-db doctor
-      - sheet-db status
-      - sheet-db export --prisma / --sql
-      - sheet-db migrate
-      - sheet-db.config.ts (ActorConfig with sheetIdEnv)
-      - .sheet-db-tokens.json
+      - lsdb mock-users
+      - lsdb doctor
+      - lsdb status
+      - lsdb export --prisma / --sql
+      - lsdb migrate
+      - lsdb.config.ts (ActorConfig with sheetIdEnv)
+      - .lsdb-tokens.json
 
 implicit_knowledge:
   - OAuth is mandatory — there is no API-key-only mode
@@ -204,8 +204,8 @@ failure_modes:
   - Duplicate table name within same actor
   - Manually defining auto-generated columns (_id, _created_at, etc.)
   - Upgrading chalk/inquirer/nanoid to ESM-only versions
-  - Not running sheet-db sync after schema changes
-  - Committing .sheet-db-tokens.json to version control
+  - Not running lsdb sync after schema changes
+  - Committing .lsdb-tokens.json to version control
   - Using createOAuthManager for user login (verifyToken throws — needs openid scope)
   - Setting targetRole without targetSheetId in cross-actor context
   - Looping create() instead of createMany() for bulk inserts

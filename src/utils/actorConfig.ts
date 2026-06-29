@@ -15,11 +15,11 @@ export function resolveActorName(actor: ActorNameSource): string {
 
   if (actor.role) {
     console.warn(
-      '[sheet-db] ActorConfig.role is deprecated — use name instead. ' +
+      '[lsdb] ActorConfig.role is deprecated — use name instead. ' +
       'See: https://github.com/longcelot/sheet-db#actors-vs-application-roles'
     );
     return actor.role;
   }
 
-  throw new Error('[sheet-db] ActorConfig entry requires either name or role');
+  throw new Error('[lsdb] ActorConfig entry requires either name or role');
 }

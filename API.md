@@ -544,7 +544,7 @@ Exchanges authorization code for tokens.
 
 - `code: string` - Authorization code from OAuth callback
 
-**Returns:** `Promise<unknown>` - OAuth tokens (save to `.sheet-db-tokens.json`)
+**Returns:** `Promise<unknown>` - OAuth tokens (save to `.lsdb-tokens.json`)
 
 ### `oauth.refreshTokens(refreshToken)`
 
@@ -627,30 +627,30 @@ if (!valid) {
 
 ## CLI Commands
 
-### `sheet-db init [--integrate]`
+### `lsdb init [--integrate]`
 
 Initializes a new project. With `--integrate`, merges into an existing project without overwriting files.
 
 **Creates:**
 
-- `sheet-db.config.ts` — actor config with per-actor `sheetIdEnv` mappings
+- `lsdb.config.ts` — actor config with per-actor `sheetIdEnv` mappings
 - `.env` — Google OAuth vars + one `DEV_<ROLE>_SHEET_ID` per non-admin actor
 - `schemas/admin/` — scaffolds `users`, `credentials`, `schema_versions` tables
 
 ```bash
-npx sheet-db init
-npx sheet-db init --integrate   # safe merge into existing project
+npx lsdb init
+npx lsdb init --integrate   # safe merge into existing project
 ```
 
-### `sheet-db generate <table-name>`
+### `lsdb generate <table-name>`
 
 Interactively generates a new table schema file.
 
 ```bash
-npx sheet-db generate bookings
+npx lsdb generate bookings
 ```
 
-### `sheet-db sync [--all-users] [--dry-run]`
+### `lsdb sync [--all-users] [--dry-run]`
 
 Syncs all schemas to Google Sheets. Iterates every configured actor and prints a per-actor status table: Actor | Sheet ID | Tables | Status.
 
@@ -658,12 +658,12 @@ Syncs all schemas to Google Sheets. Iterates every configured actor and prints a
 - `--dry-run` — preview `--all-users` changes without applying them (requires `--all-users`)
 
 ```bash
-npx sheet-db sync
-npx sheet-db sync --all-users
-npx sheet-db sync --all-users --dry-run
+npx lsdb sync
+npx lsdb sync --all-users
+npx lsdb sync --all-users --dry-run
 ```
 
-### `sheet-db validate`
+### `lsdb validate`
 
 Validates all schema files.
 
@@ -674,27 +674,27 @@ Validates all schema files.
 - Missing required fields
 - Invalid enum / min > max
 
-### `sheet-db seed <seed-file> [--all-actors]`
+### `lsdb seed <seed-file> [--all-actors]`
 
 Seeds data from a JS/TS file (exporting `Record<string, unknown[]>`).
 
 - `--all-actors` — distributes seed records to every user's actor sheet (reads from admin `users` table)
 
 ```bash
-npx sheet-db seed ./seeds/initial.js
-npx sheet-db seed ./seeds/initial.js --all-actors
+npx lsdb seed ./seeds/initial.js
+npx lsdb seed ./seeds/initial.js --all-actors
 ```
 
-### `sheet-db mock-users [count]`
+### `lsdb mock-users [count]`
 
 Creates `count` mock Google Sheets for development (default: 3). Rotates through configured non-admin actor roles.
 
 ```bash
-npx sheet-db mock-users
-npx sheet-db mock-users 5
+npx lsdb mock-users
+npx lsdb mock-users 5
 ```
 
-### `sheet-db export [--prisma] [--sql] [--output <dir>]`
+### `lsdb export [--prisma] [--sql] [--output <dir>]`
 
 Exports registered schemas to production DB formats.
 
@@ -703,12 +703,12 @@ Exports registered schemas to production DB formats.
 - `--output <dir>` — output directory (default: current directory)
 
 ```bash
-npx sheet-db export --prisma --output ./prisma
-npx sheet-db export --sql
-npx sheet-db export --prisma --sql --output ./migration
+npx lsdb export --prisma --output ./prisma
+npx lsdb export --sql
+npx lsdb export --prisma --sql --output ./migration
 ```
 
-### `sheet-db export-data [--table <name>] [--all-users] [--output <dir>] [--dry-run]`
+### `lsdb export-data [--table <name>] [--all-users] [--output <dir>] [--dry-run]`
 
 Generates an `export-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
 
@@ -721,28 +721,28 @@ Generates an `export-data.js` script that reads row data from Google Sheets and 
 - `--dry-run` — preview export plan without writing any files
 
 ```bash
-npx sheet-db export-data
-npx sheet-db export-data --all-users
-npx sheet-db export-data --all-users --dry-run
-npx sheet-db export-data --table bookings
+npx lsdb export-data
+npx lsdb export-data --all-users
+npx lsdb export-data --all-users --dry-run
+npx lsdb export-data --table bookings
 ```
 
-> **Deprecated alias**: `sheet-db migrate` still works but emits a deprecation warning. Rename your scripts to `sheet-db export-data`. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes; this command moves row data.
+> **Deprecated alias**: `lsdb migrate` still works but emits a deprecation warning. Rename your scripts to `lsdb export-data`. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes; this command moves row data.
 
 ### Migration scenarios
 
 | Goal | Command |
 |------|---------|
-| Copy table structure only (schema / DDL) | `sheet-db export --prisma` or `--sql` |
-| Copy structure + admin sheet row data | `sheet-db export-data` |
-| Copy structure + all user-sheet row data | `sheet-db export-data --all-users` |
+| Copy table structure only (schema / DDL) | `lsdb export --prisma` or `--sql` |
+| Copy structure + admin sheet row data | `lsdb export-data` |
+| Copy structure + all user-sheet row data | `lsdb export-data --all-users` |
 | Preview export plan without writing files | add `--dry-run` to either command |
 
-### `sheet-db doctor`
+### `lsdb doctor`
 
 Health check: validates env vars, config file, OAuth tokens, and schema directory.
 
-### `sheet-db status`
+### `lsdb status`
 
 Displays project status: actor list, env var values, OAuth token state, and all registered tables with column counts.
 
@@ -864,20 +864,20 @@ interface UserContext {
 }
 ```
 
-> **actor vs role**: `actor` is the sheet-db concept of a *data domain* (which Google Sheet, which schemas). It is **not** an application-level RBAC role. If your app has dynamic permissions (admin/manager/viewer), build those in a `roles` + `role_permissions` table and enforce them in your own middleware — sheet-db intentionally does not provide RBAC.
+> **actor vs role**: `actor` is the lsdb concept of a *data domain* (which Google Sheet, which schemas). It is **not** an application-level RBAC role. If your app has dynamic permissions (admin/manager/viewer), build those in a `roles` + `role_permissions` table and enforce them in your own middleware — lsdb intentionally does not provide RBAC.
 
 ### Actors vs Application Roles
 
 | Concept | Controls | Dynamic? | Where defined |
 |---------|----------|----------|---------------|
-| **Actor** (`actor:`) | Which Google Sheet + table schemas to use | No — fixed in `sheet-db.config.ts` | Config file |
+| **Actor** (`actor:`) | Which Google Sheet + table schemas to use | No — fixed in `lsdb.config.ts` | Config file |
 | **App RBAC role** | What a user is allowed to do in your app | Yes — rows in your app's DB | Your app layer |
 
 Every field that identifies an actor follows this naming, so it can't be mistaken for an RBAC role at the point of writing the code:
 
 | Location | Preferred | Deprecated alias |
 |---|---|---|
-| `ActorConfig` (`sheet-db.config.ts`) | `name` | `role` |
+| `ActorConfig` (`lsdb.config.ts`) | `name` | `role` |
 | `UserContext` (`withContext()`) | `actor` | `role` |
 | `UserContext` cross-actor target | `targetActor` | `targetRole` |
 

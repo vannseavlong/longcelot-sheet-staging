@@ -3,6 +3,7 @@ node_modules
 dist/
 *.log
 .DS_Store
+.lsdb-tokens.json
 .sheet-db-tokens.json
 .claude/
 .bolt/

@@ -3,6 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { TableSchema } from '../../schema/types';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath, TOKENS_FILENAME } from '../../utils/cliFiles';
 
 interface ExportDataOptions {
   output?: string;
@@ -69,7 +70,7 @@ export function generateExportDataScript(schemas: TableSchema[], allUsers = fals
     roleTablesMap[s.actor].push(s.name);
   }
 
-  const commandName = allUsers ? 'sheet-db export-data --all-users' : 'sheet-db export-data';
+  const commandName = allUsers ? 'lsdb export-data --all-users' : 'lsdb export-data';
   const scriptDesc = allUsers
     ? 'Exports admin sheet data AND all registered user sheets'
     : 'Exports admin sheet data only';
@@ -102,7 +103,7 @@ export function generateExportDataScript(schemas: TableSchema[], allUsers = fals
     '      clientSecret: process.env.GOOGLE_CLIENT_SECRET,',
     '      redirectUri: process.env.GOOGLE_REDIRECT_URI,',
     '    },',
-    "    tokens: require('./.sheet-db-tokens.json'),",
+    `    tokens: require('./${TOKENS_FILENAME}'),`,
     '  });',
     '',
     '  adapter.registerSchemas(schemas);',
@@ -175,7 +176,7 @@ export function generateExportDataScript(schemas: TableSchema[], allUsers = fals
     lines.push('');
   } else if (!allUsers && userSchemas.length > 0) {
     // Hint that --all-users exists
-    lines.push("  // Tip: run `sheet-db export-data --all-users` to also export all registered user sheets");
+    lines.push("  // Tip: run `lsdb export-data --all-users` to also export all registered user sheets");
     lines.push('');
   }
 
@@ -195,9 +196,9 @@ export async function exportDataCommand(options: ExportDataOptions) {
 
   let config: { actors: Array<{ name?: string; role?: string } | string>; schemasDir?: string };
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found. Run: sheet-db init'));
+    console.error(chalk.red('❌ lsdb.config.ts not found. Run: lsdb init'));
     process.exit(1);
   }
 
@@ -267,7 +268,7 @@ export async function exportDataCommand(options: ExportDataOptions) {
     console.log(chalk.gray(`Tip: Run with --all-users to also export all registered user sheets.`));
   }
   console.log();
-  console.log(chalk.gray('Tip: Run `sheet-db export --prisma` first to generate your Prisma schema.'));
+  console.log(chalk.gray('Tip: Run `lsdb export --prisma` first to generate your Prisma schema.'));
 
   const missingEnv: string[] = [];
   for (const envVar of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'ADMIN_SHEET_ID']) {

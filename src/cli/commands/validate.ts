@@ -3,15 +3,16 @@ import path from 'path';
 import chalk from 'chalk';
 import { TableSchema, ColumnDefinition } from '../../schema/types';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath } from '../../utils/cliFiles';
 
 export async function validateCommand() {
   console.log(chalk.blue.bold('🔍 Validating schemas...\n'));
 
   let config;
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found'));
+    console.error(chalk.red('❌ lsdb.config.ts not found'));
     process.exit(1);
   }
 

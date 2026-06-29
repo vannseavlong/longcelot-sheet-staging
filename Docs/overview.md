@@ -137,22 +137,22 @@ Install:
 pnpm add longcelot-sheet-db
 
 Initialize project:
-pnpm sheet-db init
+pnpm lsdb init
 
 Creates:
-sheet-db.config.ts
+lsdb.config.ts
 schemas/
 
 
 Generate Table
-pnpm sheet-db generate bookings
+pnpm lsdb generate bookings
 
 Creates:
 schemas/bookings.ts
 
 
 Sync Schemas to Sheets
-pnpm sheet-db sync
+pnpm lsdb sync
 
 What it does:
 Reads schemas
@@ -239,9 +239,9 @@ CRM prototype
 Internal dashboards
 
 24. Future Roadmap
-- Prisma/SQL export CLI (`sheet-db export`)
+- Prisma/SQL export CLI (`lsdb export`)
 - Cross-actor joins (`adapter.join()`)
-- Developer mock user sheets (`sheet-db mock-users`)
+- Developer mock user sheets (`lsdb mock-users`)
 - Bulk schema sync to all users (`sync --all-users`)
 - Column encryption
 - Audit logs
@@ -400,10 +400,10 @@ Failure → throw descriptive error.
 29. CLI Command Design
 
 29.1 Init
-pnpm sheet-db init
+pnpm lsdb init
 
 Creates:
-sheet-db.config.ts
+lsdb.config.ts
 schemas/
 .env.example
 
@@ -413,7 +413,7 @@ Google Secret
 Admin Sheet ID
 
 29.2 Generate Table
-pnpm sheet-db generate bookings
+pnpm lsdb generate bookings
 
 Interactive prompts:
 Actor
@@ -422,7 +422,7 @@ Types
 Generates file.
 
 29.3 Sync
-pnpm sheet-db sync
+pnpm lsdb sync
 
 Actions:
 Create missing sheets
@@ -431,7 +431,7 @@ Create index helper sheets
 Never drop data
 
 29.4 Validate Schemas
-pnpm sheet-db validate
+pnpm lsdb validate
 
 Checks:
 Duplicate table names
@@ -439,7 +439,7 @@ Invalid modifiers
 Unknown actors
 
 29.5 Push Seed Data
-pnpm sheet-db seed
+pnpm lsdb seed
 
 Reads:
 seeds/*.ts
@@ -447,7 +447,7 @@ seeds/*.ts
 Inserts starter rows.
 
 29.6 Doctor
-pnpm sheet-db doctor
+pnpm lsdb doctor
 
 Diagnostics:
 OAuth working?
@@ -455,14 +455,14 @@ Sheet access OK?
 Admin sheet reachable?
 
 29.7 Status
-pnpm sheet-db status
+pnpm lsdb status
 
 Shows:
 Tables
 Actors
 Sheet IDs
 
-30. sheet-db.config.ts
+30. lsdb.config.ts
 export default {
   projectName: "my-app",
   superAdminEmail: "admin@gmail.com",
@@ -473,9 +473,9 @@ export default {
 31. Developer Experience Goal
 A new dev should be able to:
 pnpm add longcelot-sheet-db
-pnpm sheet-db init
-pnpm sheet-db generate users
-pnpm sheet-db sync
+pnpm lsdb init
+pnpm lsdb generate users
+pnpm lsdb sync
 
 And be productive in < 5 minutes.
 

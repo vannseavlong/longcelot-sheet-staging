@@ -15,12 +15,12 @@ pnpm add longcelot-sheet-db
 Initialize the project:
 
 ```bash
-pnpm sheet-db init
+pnpm lsdb init
 ```
 
 Creates:
 
-- `sheet-db.config.ts`
+- `lsdb.config.ts`
 - `schemas/` folder
 - `.env` template with required variables
 
@@ -76,7 +76,7 @@ export default defineTable({
 ## 5. Sync Schema to Sheets
 
 ```bash
-pnpm sheet-db sync
+pnpm lsdb sync
 ```
 
 This creates or updates tables in Google Sheets.
@@ -196,17 +196,17 @@ If you already have a backend (Express, NestJS, etc.):
 pnpm add longcelot-sheet-db
 
 # 2. Initialize
-npx sheet-db init
+npx lsdb init
 
 # 3. Configure .env with OAuth credentials
 
 # 4. Define schemas
 
 # 5. Sync
-npx sheet-db sync
+npx lsdb sync
 ```
 
-**Map your existing auth to sheet-db context**:
+**Map your existing auth to lsdb context**:
 
 ```ts
 // Your Express/NestJS route
@@ -214,7 +214,7 @@ app.get('/bookings', async (req, res) => {
   // Your existing auth provides user info
   const developerUser = req.user;
 
-  // Map to sheet-db context
+  // Map to lsdb context
   const userContext = adapter.withContext({
     userId: developerUser.id,
     role: developerUser.role,

@@ -75,7 +75,7 @@ interface SheetAdapterConfig {
 
 For Drive folder organisation, actor-owned sheets, Shared Drive, `TokenStore`, and `StorageAdapter` / `DriveStorageAdapter`, see `skills/drive/SKILL.md`.
 
-> **Actor field naming**: every field that identifies an actor is named `name`/`actor`/`targetActor` — never `role` — because `role` reads as an application RBAC role at the point of writing the code. `sheet-db.config.ts` actor entries use `{ name: 'admin', sheetIdEnv: ... }`; `withContext()` uses `actor:`/`targetActor:`. The old `role`/`targetRole` fields still work as deprecated aliases (emit `console.warn`) but should not be used in new code. Modeling RBAC sub-roles as separate actors is the most common mistake this causes — see `skills/permissions/SKILL.md`.
+> **Actor field naming**: every field that identifies an actor is named `name`/`actor`/`targetActor` — never `role` — because `role` reads as an application RBAC role at the point of writing the code. `lsdb.config.ts` actor entries use `{ name: 'admin', sheetIdEnv: ... }`; `withContext()` uses `actor:`/`targetActor:`. The old `role`/`targetRole` fields still work as deprecated aliases (emit `console.warn`) but should not be used in new code. Modeling RBAC sub-roles as separate actors is the most common mistake this causes — see `skills/permissions/SKILL.md`.
 
 ---
 
@@ -113,7 +113,7 @@ const adapter = createSheetAdapter({
 | `'error'` | Throws `SchemaMismatchError` — hard-fail on stale clients |
 | `'auto-sync'` | Silently syncs and updates the schema version record |
 
-Run `sheet-db sync --all-users` to push schema changes to all registered user sheets proactively.
+Run `lsdb sync --all-users` to push schema changes to all registered user sheets proactively.
 
 ---
 
@@ -208,7 +208,7 @@ await crossCtx.table('scores').findMany();
 
 Every tab created or extended by `syncSchema()` / `createUserSheet()` is auto-formatted: columns auto-fit to content, the header row gets a fill color and is frozen, and `boolean()`/`enum()` columns get dropdown data validation (`ONE_OF_LIST` — deliberately not a native checkbox for `boolean()`, see FAQ.md #10). No config is required.
 
-The validation range is bounded (200 rows past the data that existed at sync time, not the whole sheet — see FAQ.md #10) but self-heals as rows are appended: `create()` automatically re-extends it every 100 rows so dropdown UI keeps up with organic growth between syncs. Bulk inserts via `createMany()` don't trigger this — run `sheet-db sync` after a large seed/migration to format the new rows.
+The validation range is bounded (200 rows past the data that existed at sync time, not the whole sheet — see FAQ.md #10) but self-heals as rows are appended: `create()` automatically re-extends it every 100 rows so dropdown UI keeps up with organic growth between syncs. Bulk inserts via `createMany()` don't trigger this — run `lsdb sync` after a large seed/migration to format the new rows.
 
 Override the defaults:
 

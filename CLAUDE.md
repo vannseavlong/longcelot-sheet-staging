@@ -22,13 +22,13 @@ pnpm lint       # ESLint check
 pnpm dev        # Watch mode for development
 
 # CLI commands (via npx or pnpm dlx)
-npx sheet-db init       # Initialize project structure
-npx sheet-db generate   # Interactive schema generator
-npx sheet-db sync       # Sync schemas to Google Sheets
-npx sheet-db validate   # Validate schema definitions
-npx sheet-db seed       # Seed test data
-npx sheet-db doctor     # Health check
-npx sheet-db status     # Show registered tables
+npx lsdb init       # Initialize project structure
+npx lsdb generate   # Interactive schema generator
+npx lsdb sync       # Sync schemas to Google Sheets
+npx lsdb validate   # Validate schema definitions
+npx lsdb seed       # Seed test data
+npx lsdb doctor     # Health check
+npx lsdb status     # Show registered tables
 ```
 
 ## Architecture

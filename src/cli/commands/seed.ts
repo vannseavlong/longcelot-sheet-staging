@@ -3,6 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
 import { resolveActorName } from '../../utils/actorConfig';
+import { resolveConfigPath, resolveTokensPath } from '../../utils/cliFiles';
 
 export interface SeedOptions {
   allActors?: boolean;
@@ -44,9 +45,9 @@ export async function seedCommand(seedFile: string, opts?: SeedOptions) {
   }
 
   // Load tokens
-  const tokensPath = path.join(process.cwd(), '.sheet-db-tokens.json');
+  const tokensPath = resolveTokensPath();
   if (!fs.existsSync(tokensPath)) {
-    console.error(chalk.red('❌ No OAuth tokens found. Run: sheet-db sync'));
+    console.error(chalk.red('❌ No OAuth tokens found. Run: lsdb sync'));
     process.exit(1);
   }
 
@@ -79,9 +80,9 @@ export async function seedCommand(seedFile: string, opts?: SeedOptions) {
   }
   let config: CLIConfig;
   try {
-    config = require(path.join(process.cwd(), 'sheet-db.config.ts')).default;
+    config = require(resolveConfigPath()).default;
   } catch {
-    console.error(chalk.red('❌ sheet-db.config.ts not found. Run: sheet-db init'));
+    console.error(chalk.red('❌ lsdb.config.ts not found. Run: lsdb init'));
     process.exit(1);
   }
 
