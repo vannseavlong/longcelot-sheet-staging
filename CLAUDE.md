@@ -43,6 +43,8 @@ src/
 └── utils/        # Environment validation, logging
 ```
 
+**`SheetClient.getAllRows()` has a built-in read cache** (in-memory, 2s TTL by default, enabled by default) — every `findMany()`/`findOne()`/`count()`/`update()`/`delete()` call routes through it, and every write method (`appendRow`, `appendRows`, `updateRow`, `deleteRow`, `writeHeader`) invalidates the relevant tab's entry. This exists to stay under Google's per-user Sheets API read quota; see FAQ.md #11 for the incident and `SheetReadCacheConfig` in API.md for tuning. When touching `getAllRows()`, `getDataRows()` (in `crud.ts`), or any of the write methods in `sheetClient.ts`, keep the invalidate-on-write pairing intact — a read path added without going through `getAllRows()`, or a write added without calling `invalidateCache()`, will silently reintroduce stale-read or cache-never-clears bugs.
+
 **Main exports** (`src/index.ts`):
 - `createSheetAdapter` - Create database adapter instance
 - `defineTable` - Define table schemas

@@ -172,6 +172,7 @@ Creates a new sheet adapter instance.
   tokenStore?: TokenStore;                                // per-actor token persistence
   storage?: StorageAdapter;                               // file upload provider
   sheetStyle?: SheetStyleConfig;                          // header color, frozen rows/columns (see Type Definitions)
+  cache?: SheetReadCacheConfig;                           // read cache tuning — see Type Definitions and FAQ.md #11
 }
 ```
 
@@ -380,6 +381,8 @@ await adapter.syncSchema(bookingsSchema);
 ```
 
 ## CRUD Operations
+
+> **Read caching**: `findMany()`, `findOne()`, `count()`, `update()`, and `delete()` all read through `SheetClient.getAllRows()`, which caches each tab's rows in memory for a short TTL (default 2s, enabled by default) and de-duplicates concurrent reads for the same tab into a single Sheets API request. This exists to keep normal usage under Google's read-quota limits — see [`SheetReadCacheConfig`](#sheetreadcacheconfig) to tune it and FAQ.md #11 for the incident that motivated it. Every write (`create`, `update`, `delete`, `createMany`) invalidates the cache for the tab it touched, so a read immediately after a write through the same adapter instance always sees fresh data.
 
 ### `table.create(data, options?)`
 
@@ -914,6 +917,27 @@ interface SheetStyleConfig {
 ```
 
 Passed as `sheetStyle` on `createSheetAdapter()`. Auto-fit column width and `boolean()`/`enum()` data validation dropdowns are always applied — no config needed. `booleanFormat` is the project-wide default for every `boolean()` column; override an individual column with `boolean({ format })` (see [`boolean()`](#boolean)).
+
+### `SheetReadCacheConfig`
+
+```typescript
+interface SheetReadCacheConfig {
+  enabled?: boolean; // default: true
+  ttlMs?: number;    // default: 2000 (2s)
+}
+```
+
+Passed as `cache` on `createSheetAdapter()`. Bounds and de-duplicates `values.get` calls made through `SheetClient.getAllRows()` — see the read caching note under [CRUD Operations](#crud-operations) and FAQ.md #11.
+
+```typescript
+const adapter = createSheetAdapter({
+  // ...
+  cache: { ttlMs: 5000 },     // widen the window for a read-heavy admin dashboard
+  // cache: { enabled: false } // disable entirely (not recommended — see FAQ.md #11)
+});
+```
+
+The cache is per-`SheetClient` instance and per-process — it does not know about writes made outside the adapter (a human editing the sheet directly, or another process/server instance sharing the same spreadsheet). `ttlMs` bounds how stale those external changes can appear; call `adapter.getClient().invalidateCache(spreadsheetId, sheetName)` to force a specific tab to refetch immediately.
 
 ### `SchemaMismatchBehaviour`
 

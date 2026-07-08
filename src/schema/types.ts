@@ -180,3 +180,10 @@ export interface CreateUserSheetOptions {
   /** Extra fields spread into the users table create() call. */
   extraFields?: Record<string, unknown>;
 }
+
+export interface SheetReadCacheConfig {
+  /** Enable the in-memory read cache for values.get() calls. Default: true. */
+  enabled?: boolean;
+  /** How long a cached read stays valid, in milliseconds. Default: 2000 (2s). */
+  ttlMs?: number;
+}

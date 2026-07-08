@@ -701,6 +701,19 @@ const adapter = createSheetAdapter({
 
 Override per column instead of project-wide with `boolean({ format: '1_0' })` — useful when one table needs to match an external system's convention without changing every other table.
 
+### Read Caching & Rate Limits
+
+`findMany()`, `findOne()`, `count()`, `update()`, and `delete()` all read through an in-memory cache in `SheetClient`, enabled by default with a 2-second TTL — repeated or concurrent reads of the same tab within that window are served from cache or de-duplicated into a single Sheets API call instead of one call each. This exists because Google's default quota (60 read requests/min/user) is easy to exhaust once more than a couple of concurrent users are hitting the same tables — see FAQ.md #11 for the incident that motivated it.
+
+Every write invalidates the cache for the tab it touched, so a read right after a write always sees fresh data. Tune or disable it via `cache` on `createSheetAdapter()`:
+
+```typescript
+const adapter = createSheetAdapter({
+  // ...
+  cache: { ttlMs: 5000 }, // default: 2000ms; set enabled: false to disable
+});
+```
+
 ## 🎓 Complete Example
 
 Coming Soon!

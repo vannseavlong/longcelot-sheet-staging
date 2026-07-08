@@ -301,6 +301,8 @@
 - `'invite-only'` registration policy (future)
 - Service account alternative for sync (future)
 - Column encryption, audit logs, row-level permissions (lower priority)
+- `values.batchGet` batching across tables read within one request handler (medium priority — see Phase 12 follow-ups)
+- Optional write-side rate limiter for bulk `create()`/`update()` loops (lower priority)
 
 ---
 
@@ -373,6 +375,26 @@
 
 ---
 
+## Phase 12: Bug Fixes (developer-reported, `longcelot-sheet-db@0.1.28`) — Fixed
+
+### 12.1 `getAllRows()` had no caching, causing `429 RESOURCE_EXHAUSTED` under real concurrency (Critical) — Fixed
+
+- [x] Add in-memory read cache to `SheetClient.getAllRows()`, keyed by `spreadsheetId::sheetName`, default 2s TTL, enabled by default
+- [x] De-duplicate concurrent `getAllRows()` calls for the same tab into a single in-flight request
+- [x] Invalidate the relevant tab's cache entry from every write path: `appendRow`, `appendRows`, `updateRow`, `deleteRow`, `writeHeader`
+- [x] A failed read is never cached — next call retries against the API instead of replaying the error
+- [x] Add `cache?: SheetReadCacheConfig` (`{ enabled?, ttlMs? }`) to `SheetAdapterConfig`, threaded to both the admin `SheetClient` and the actor-owned client created in `createUserSheet`
+- [x] Expose `SheetClient.invalidateCache(spreadsheetId, sheetName)` for callers writing to a sheet outside the adapter
+- [x] Tests: repeated reads cached, concurrent reads de-duplicated, per-tab isolation, TTL expiry refetches, `enabled: false` bypass, each write method invalidates, failed read doesn't poison cache
+- [x] Docs: CLAUDE.md architecture note, API.md `SheetReadCacheConfig` + CRUD Operations caching note, FAQ.md #11 incident write-up, CHANGELOG.md, README.md
+
+### Follow-ups not yet done
+
+- [ ] Batch multiple table reads within a single request handler into one `spreadsheets.values.batchGet` call instead of N separate `getAllRows()` calls (the cache collapses *repeated* reads of the *same* tab, but a handler reading 3 different tables, like `loadCatalog()` in a typical RBAC router, still makes 3 API calls)
+- [ ] Optional write-side rate limiter / token bucket for bulk `create()`/`update()` loops outside of `createMany()`, to smooth bursts the same way `sync --all-users`' exponential backoff does for schema syncing
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables
@@ -387,3 +409,4 @@
 - [x] FAQ.md: actor field naming incident write-up (#2), Sheet Formatting & Data Validation section (#10)
 - [ ] CHANGELOG.md: breaking change note for `migrate` → `export-data`
 - [ ] API.md: Migration scenarios table, `export-data` command reference alignment
+- [x] CLAUDE.md: read cache architecture note; API.md: `SheetReadCacheConfig` type + CRUD Operations caching note; FAQ.md: Rate Limits & Read Caching section (#11); README.md: Read Caching subsection; CHANGELOG.md: 0.1.28 entry

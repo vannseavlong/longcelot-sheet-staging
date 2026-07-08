@@ -1,6 +1,9 @@
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OAuth2Client, Credentials } from 'google-auth-library';
 import { Readable } from 'stream';
+import { SheetReadCacheConfig } from '../schema/types';
+
+const DEFAULT_CACHE_TTL_MS = 2000;
 
 export interface CreateSpreadsheetOptions {
   /** Place the spreadsheet inside this Drive folder ID. */
@@ -66,8 +69,18 @@ export class SheetClient {
   private sheets: sheets_v4.Sheets;
   private drive: drive_v3.Drive;
   private auth: OAuth2Client;
+  private cacheEnabled: boolean;
+  private cacheTtlMs: number;
+  /** getAllRows() results keyed by `${spreadsheetId}::${sheetName}`, valid until expiresAt. */
+  private _readCache = new Map<string, { data: string[][]; expiresAt: number }>();
+  /** Collapses concurrent getAllRows() calls for the same key into a single API request. */
+  private _inFlightReads = new Map<string, Promise<string[][]>>();
 
-  constructor(credentials: { clientId: string; clientSecret: string; redirectUri: string }, tokens: unknown) {
+  constructor(
+    credentials: { clientId: string; clientSecret: string; redirectUri: string },
+    tokens: unknown,
+    cacheConfig?: SheetReadCacheConfig
+  ) {
     this.auth = new google.auth.OAuth2(
       credentials.clientId,
       credentials.clientSecret,
@@ -76,6 +89,8 @@ export class SheetClient {
     this.auth.setCredentials(tokens as Credentials);
     this.sheets = google.sheets({ version: 'v4', auth: this.auth });
     this.drive = google.drive({ version: 'v3', auth: this.auth });
+    this.cacheEnabled = cacheConfig?.enabled ?? true;
+    this.cacheTtlMs = cacheConfig?.ttlMs ?? DEFAULT_CACHE_TTL_MS;
   }
 
   async createSpreadsheet(title: string, options?: CreateSpreadsheetOptions): Promise<string> {
@@ -207,6 +222,7 @@ export class SheetClient {
         values: [headers],
       },
     });
+    this.invalidateCache(spreadsheetId, sheetName);
   }
 
   /**
@@ -336,6 +352,7 @@ export class SheetClient {
         values: [values],
       },
     });
+    this.invalidateCache(spreadsheetId, sheetName);
     return parseRowNumber(response.data.updates?.updatedRange);
   }
 
@@ -349,14 +366,60 @@ export class SheetClient {
         values: rows,
       },
     });
+    this.invalidateCache(spreadsheetId, sheetName);
   }
 
+  /**
+   * Reads the full `A:ZZ` range for a tab. Every findMany()/findOne()/count()/update()/delete()
+   * call funnels through here, so a single request handler that touches a table more than once
+   * (e.g. checkUniqueness() calling findOne() per unique column) — or concurrent requests
+   * from different users hitting the same catalog table — used to mean one Sheets API read per
+   * call. That's what exhausts Google's default per-user read quota under any real concurrency.
+   * A short-TTL cache plus in-flight de-duplication collapses those into a single API call;
+   * see FAQ.md #11 for the incident and CacheConfig for tuning/disabling it.
+   */
   async getAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]> {
+    if (!this.cacheEnabled) return this._fetchAllRows(spreadsheetId, sheetName);
+
+    const key = this._cacheKey(spreadsheetId, sheetName);
+    const cached = this._readCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+    const inFlight = this._inFlightReads.get(key);
+    if (inFlight) return inFlight;
+
+    const promise = this._fetchAllRows(spreadsheetId, sheetName)
+      .then((data) => {
+        this._readCache.set(key, { data, expiresAt: Date.now() + this.cacheTtlMs });
+        this._inFlightReads.delete(key);
+        return data;
+      })
+      .catch((err) => {
+        this._inFlightReads.delete(key);
+        throw err;
+      });
+
+    this._inFlightReads.set(key, promise);
+    return promise;
+  }
+
+  private async _fetchAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]> {
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${sheetName}!A:ZZ`,
     });
     return response.data.values || [];
+  }
+
+  private _cacheKey(spreadsheetId: string, sheetName: string): string {
+    return `${spreadsheetId}::${sheetName}`;
+  }
+
+  /** Drops the cached read (if any) for a tab. Called automatically after every write; also exposed for callers that write to a sheet outside this client (e.g. a human editing it directly) and need to force the next read to be fresh. */
+  invalidateCache(spreadsheetId: string, sheetName: string): void {
+    const key = this._cacheKey(spreadsheetId, sheetName);
+    this._readCache.delete(key);
+    this._inFlightReads.delete(key);
   }
 
   async updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: string[]): Promise<void> {
@@ -368,6 +431,7 @@ export class SheetClient {
         values: [values],
       },
     });
+    this.invalidateCache(spreadsheetId, sheetName);
   }
 
   async deleteRow(spreadsheetId: string, sheetName: string, rowIndex: number): Promise<void> {
@@ -389,6 +453,7 @@ export class SheetClient {
         ],
       },
     });
+    this.invalidateCache(spreadsheetId, sheetName);
   }
 
   async shareWithUser(spreadsheetId: string, email: string, role: 'reader' | 'writer' = 'writer'): Promise<void> {

@@ -16,6 +16,7 @@ Answers to architectural, design, and integration questions collected during dev
 8. [Migration to Production](#8-migration-to-production)
 9. [Developer Workflow & CLI](#9-developer-workflow--cli)
 10. [Sheet Formatting & Data Validation](#10-sheet-formatting--data-validation)
+11. [Google Sheets API Rate Limits & Read Caching](#11-google-sheets-api-rate-limits--read-caching)
 
 ---
 
@@ -549,3 +550,44 @@ columns: {
 ```
 
 Existing sheets are unaffected at the data level — already-written cells already hold literal `TRUE`/`FALSE` text underneath the old checkbox widget, and `deserializeRow()` accepts both `'TRUE'` and `'1'` as true regardless of which format is currently configured, so rows written before and after a format change both read back correctly. The only visible change is cosmetic: a dropdown showing text instead of a checkbox tick, starting from the next `lsdb sync`.
+
+---
+
+## 11. Google Sheets API Rate Limits & Read Caching
+
+### Why did our backend start throwing `429 RESOURCE_EXHAUSTED` / "Read requests per minute per user" errors? (incident write-up)
+
+This was a real incident, not expected behavior at normal usage. Root cause: `SheetClient.getAllRows()` had **zero caching** — every `findMany()`, `findOne()`, `count()`, `update()`, and `delete()` call issued a brand-new `values.get` request for the entire tab (`A:ZZ`), no matter how recently the same tab had just been read.
+
+Two things made this compound quickly under real traffic:
+
+1. **A single logical operation can call `getAllRows()` several times.** `checkUniqueness()` calls `findOne()` once per `unique()` column, and `create()`/`update()` each call it independently — a table with 3 unique columns did 3+ full-tab reads for one `create()` call.
+2. **Concurrent requests don't share anything.** Multiple users (or multiple admin-portal tabs) hitting the same catalog endpoint (e.g. a roles/permissions matrix loaded on every request) each triggered their own full read, with no coordination between them.
+
+Google's default Sheets API quota is **60 read requests per minute per user** (project-level default; some projects are provisioned lower). A handful of concurrent admin users browsing a few list pages is enough to blow through that in seconds — and by the time gaxios's built-in retry (3 attempts with backoff) gives up, that's a sign of sustained overuse, not a transient blip.
+
+### How is this fixed?
+
+`SheetClient` now has a built-in in-memory read cache (default: enabled, 2-second TTL):
+
+- Repeated `getAllRows()` calls for the same `spreadsheetId` + tab within the TTL window return the cached result instead of hitting the API again.
+- Concurrent calls for the same tab — even before the first one resolves — share a single in-flight request instead of each firing their own.
+- Every write (`appendRow`, `appendRows`, `updateRow`, `deleteRow`, `writeHeader` — and therefore `create()`, `update()`, `delete()`, `createMany()`, `syncSchema()` at the adapter level) invalidates that tab's cache entry, so a read immediately after a write through the same adapter instance always sees fresh data.
+- A failed read (e.g. the 429 itself) is never cached — the next call retries against the API rather than being stuck replaying an error.
+
+```typescript
+const adapter = createSheetAdapter({
+  // ...
+  cache: { ttlMs: 5000 }, // widen the window further for read-heavy dashboards
+});
+```
+
+See [`SheetReadCacheConfig`](./API.md#sheetreadcacheconfig) in API.md for the full option shape.
+
+### Can I turn the cache off? Should I?
+
+You can (`cache: { enabled: false }`), but there's no real reason to — the cache only ever serves data that came from this same process's own reads, and every write path invalidates it automatically, so it never masks your own writes. The only staleness window is for changes made *outside* this adapter instance (a human editing the sheet directly, or a second server process sharing the same spreadsheet) — bounded by `ttlMs`, default 2 seconds. If that staleness window is a real problem for a specific table, call `adapter.getClient().invalidateCache(spreadsheetId, sheetName)` after the external change instead of disabling the cache globally.
+
+### The cache smooths out bursts, but is Google Sheets the right backing store for a busier production admin panel?
+
+The cache buys real headroom (it can turn N reads within a burst into 1 API call), but it's still a per-process, best-effort layer, not a substitute for a real database's read scalability. If you're consistently near quota even with caching — many concurrent staff users, or dashboards that poll frequently — that's a signal you're past the intended use case for lsdb (staging/MVP/internal tools) and it's time to look at [migrating to a production database](#8-migration-to-production). In the meantime, also consider: requesting a Sheets API quota increase in Google Cloud Console, reducing frontend polling/refetch frequency (e.g. React Query `staleTime`), and batching multiple table reads behind a single request handler rather than issuing them from several separate endpoints.

@@ -12,6 +12,7 @@ import {
   UploadOptions,
   CreateUserSheetOptions,
   SheetStyleConfig,
+  SheetReadCacheConfig,
 } from '../schema/types';
 
 const DEFAULT_HEADER_COLOR = '#E8F0FE';
@@ -67,6 +68,8 @@ export interface SheetAdapterConfig {
   storage?: StorageAdapter;
   /** Header fill color, frozen rows/columns. Auto-resize and boolean/enum dropdowns are always applied. */
   sheetStyle?: SheetStyleConfig;
+  /** In-memory read cache for values.get() calls — smooths out Sheets API read-quota (429) errors. Enabled by default with a 2s TTL. */
+  cache?: SheetReadCacheConfig;
 }
 
 export class SheetAdapter {
@@ -82,6 +85,7 @@ export class SheetAdapter {
   private tokenStore?: TokenStore;
   private storage?: StorageAdapter;
   private sheetStyle: Required<SheetStyleConfig>;
+  private cacheConfig?: SheetReadCacheConfig;
   /** Cached Drive folder IDs: role -> folderId */
   private _folderCache = new Map<string, string>();
   /** Pending schema version check promise set by withContext() */
@@ -89,8 +93,9 @@ export class SheetAdapter {
 
   constructor(config: SheetAdapterConfig) {
     // Allow test injection via _client (cast through unknown for type safety)
+    this.cacheConfig = config.cache;
     this.client = (config as unknown as Record<string, unknown>)._client as SheetClient
-      ?? new SheetClient(config.credentials, config.tokens);
+      ?? new SheetClient(config.credentials, config.tokens, this.cacheConfig);
     this.credentials = config.credentials;
     this.adminSheetId = config.adminSheetId;
     this.onSchemaMismatch = config.onSchemaMismatch;
@@ -221,7 +226,7 @@ export class SheetAdapter {
 
     // Choose which client to use for spreadsheet creation
     const clientForCreate = actorTokens
-      ? new SheetClient(this.credentials, actorTokens as unknown)
+      ? new SheetClient(this.credentials, actorTokens as unknown, this.cacheConfig)
       : this.client;
 
     // Resolve Drive folder for this role (respects driveFolder config + sharedDriveId)

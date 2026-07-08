@@ -18,6 +18,19 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.28] — 2026-07-08
+
+### Fixed
+
+- **`getAllRows()` had no caching, causing `429 RESOURCE_EXHAUSTED` errors under real concurrency (Critical).** Every `findMany()`/`findOne()`/`count()`/`update()`/`delete()` call issued a fresh `values.get` request for the full tab, with no de-duplication even within a single logical operation (e.g. `checkUniqueness()` calling `findOne()` once per unique column) or across concurrent requests from different users hitting the same catalog table. Google's default Sheets API quota (60 read requests/min/user) exhausts quickly under this pattern — see FAQ.md #11 for the incident write-up.
+
+### Added
+
+- **In-memory read cache in `SheetClient`**, enabled by default with a 2-second TTL. Repeated or concurrent `getAllRows()` calls for the same `spreadsheetId` + tab within the TTL window are served from cache or de-duplicated into a single in-flight request instead of hitting the Sheets API each time.
+- Every write path (`appendRow`, `appendRows`, `updateRow`, `deleteRow`, `writeHeader`) invalidates the cache entry for that tab, so a read immediately after a write through the same adapter always sees fresh data.
+- New `cache?: SheetReadCacheConfig` option on `createSheetAdapter()` — `{ enabled?: boolean; ttlMs?: number }` — to tune or disable the cache. `SheetClient.invalidateCache(spreadsheetId, sheetName)` is exposed for callers that write to a sheet outside the adapter (e.g. a human editing it directly) and need to force the next read to be fresh.
+- Tests: repeated reads served from cache, concurrent reads de-duplicated, per-tab cache isolation, TTL expiry refetches, `enabled: false` bypasses the cache, each write method invalidates its tab's cache entry, a failed read doesn't poison the cache.
+
 ## [0.1.27] — 2026-06-30
 
 ### Fixed
