@@ -1,6 +1,7 @@
 import { TableSchema, ColumnDefinition } from './types';
 import { ColumnBuilder } from './columnBuilder';
 import { SchemaError } from '../errors/SchemaError';
+import { RESERVED_COLUMN_NAMES } from './reservedColumns';
 
 interface TableInput {
   name: string;
@@ -32,16 +33,18 @@ export function defineTable(input: TableInput): TableSchema {
 
   const pkColumn = primaryColumns.length === 1 ? primaryColumns[0][0] : undefined;
 
+  const [ID, CREATED_AT, UPDATED_AT, DELETED_AT] = RESERVED_COLUMN_NAMES;
+
   if (input.timestamps) {
-    columns._created_at = { type: 'date', readonly: true };
-    columns._updated_at = { type: 'date', readonly: true };
+    columns[CREATED_AT] = { type: 'date', readonly: true };
+    columns[UPDATED_AT] = { type: 'date', readonly: true };
   }
 
   if (input.softDelete) {
-    columns._deleted_at = { type: 'date' };
+    columns[DELETED_AT] = { type: 'date' };
   }
 
-  columns._id = { type: 'string', required: true, unique: true, readonly: true };
+  columns[ID] = { type: 'string', required: true, unique: true, readonly: true };
 
   return {
     name: input.name,

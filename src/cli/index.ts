@@ -11,9 +11,13 @@ import { seedCommand } from './commands/seed';
 import { mockUsersCommand } from './commands/mock-users';
 import { doctorCommand } from './commands/doctor';
 import { statusCommand } from './commands/status';
+import { migrateCommand } from './commands/migrate';
+import { migrateDataCommand } from './commands/migrate-data';
 import { exportCommand } from './commands/export';
 import { exportDataCommand } from './commands/export-data';
-import { migrateCommand } from './commands/migrate';
+import { dropTableCommand } from './commands/drop-table';
+import { dropColumnCommand } from './commands/drop-column';
+import { renameColumnCommand } from './commands/rename-column';
 
 const invokedAs = path.basename(process.argv[1] ?? '');
 if (invokedAs === 'sheet-db') {
@@ -84,8 +88,25 @@ program
   .action(statusCommand);
 
 program
-  .command('export')
+  .command('migrate')
   .description('Export schemas to Prisma schema or SQL DDL')
+  .option('--prisma', 'Generate Prisma schema.prisma')
+  .option('--sql', 'Generate SQL DDL (CREATE TABLE statements)')
+  .option('--output <dir>', 'Output directory (default: current directory)')
+  .action((options) => migrateCommand(options));
+
+program
+  .command('migrate-data')
+  .description('Generate a data export script to move row data from Google Sheets to a production DB')
+  .option('--table <name>', 'Export a single table only')
+  .option('--all-users', 'Include all registered user sheets in addition to the admin sheet')
+  .option('--output <dir>', 'Output directory for migrate-data.js (default: current directory)')
+  .option('--dry-run', 'Preview export plan without writing any files')
+  .action((options) => migrateDataCommand({ ...options, allUsers: options.allUsers }));
+
+program
+  .command('export')
+  .description('[deprecated] Use migrate instead. Exports schemas to Prisma schema or SQL DDL.')
   .option('--prisma', 'Generate Prisma schema.prisma')
   .option('--sql', 'Generate SQL DDL (CREATE TABLE statements)')
   .option('--output <dir>', 'Output directory (default: current directory)')
@@ -93,19 +114,38 @@ program
 
 program
   .command('export-data')
-  .description('Generate a data export script to move row data from Google Sheets to a production DB')
+  .description('[deprecated] Use migrate-data instead. Generates a data export script.')
   .option('--table <name>', 'Export a single table only')
   .option('--all-users', 'Include all registered user sheets in addition to the admin sheet')
-  .option('--output <dir>', 'Output directory for export-data.js (default: current directory)')
+  .option('--output <dir>', 'Output directory (default: current directory)')
   .option('--dry-run', 'Preview export plan without writing any files')
   .action((options) => exportDataCommand({ ...options, allUsers: options.allUsers }));
 
 program
-  .command('migrate')
-  .description('[deprecated] Use export-data instead. Generates a data export script.')
-  .option('--table <name>', 'Export a single table only')
-  .option('--output <dir>', 'Output directory (default: current directory)')
-  .option('--dry-run', 'Preview plan without writing any files')
-  .action((options) => migrateCommand(options));
+  .command('drop-table [table-names...]')
+  .description('Delete table schema file(s) and the corresponding Google Sheet tab(s)')
+  .option('--all-users', 'Also drop from every registered user sheet')
+  .option('--yes', 'Skip the confirmation prompt')
+  .option('--dry-run', 'Preview without making changes')
+  .option('--token-file <path>', 'Path to existing tokens JSON file (for CI/CD — skips interactive OAuth prompt)')
+  .action((tableNames, options) => dropTableCommand(tableNames, options));
+
+program
+  .command('drop-column [table-name] [column-names...]')
+  .description('Delete column(s) from a table schema file and the live Google Sheet')
+  .option('--all-users', 'Also drop from every registered user sheet')
+  .option('--yes', 'Skip the confirmation prompt')
+  .option('--dry-run', 'Preview without making changes')
+  .option('--token-file <path>', 'Path to existing tokens JSON file (for CI/CD — skips interactive OAuth prompt)')
+  .action((tableName, columnNames, options) => dropColumnCommand(tableName, columnNames, options));
+
+program
+  .command('rename-column [table-name] [old-name] [new-name]')
+  .description('Rename a column in a table schema file and the live Google Sheet header, preserving existing data')
+  .option('--all-users', 'Also rename on every registered user sheet')
+  .option('--yes', 'Skip the confirmation prompt')
+  .option('--dry-run', 'Preview without making changes')
+  .option('--token-file <path>', 'Path to existing tokens JSON file (for CI/CD — skips interactive OAuth prompt)')
+  .action((tableName, oldName, newName, options) => renameColumnCommand(tableName, oldName, newName, options));
 
 program.parse(process.argv);

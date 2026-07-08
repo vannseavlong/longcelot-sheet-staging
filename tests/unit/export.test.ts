@@ -1,4 +1,4 @@
-import { generatePrismaModel, generateSQLTable } from '../../src/cli/commands/export';
+import { generatePrismaModel, generateSQLTable } from '../../src/cli/commands/migrate';
 import { defineTable } from '../../src/schema/defineTable';
 import { string, number, boolean, date, json } from '../../src/schema/columnBuilder';
 

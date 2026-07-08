@@ -220,20 +220,20 @@
 - [x] Keep `migrate` as deprecated alias with warning
 - [x] Update README.md migration section
 - [x] Tests: renamed command runs, deprecated alias emits warning
-- [ ] Update API.md command reference section
-- [ ] Update CHANGELOG.md with breaking change note
+- [x] Update API.md command reference section (superseded/completed by Phase 13's `export`/`export-data` → `migrate`/`migrate-data` rename — see below)
+- [x] Update CHANGELOG.md with breaking change note (see Phase 13)
 
 ### 9.2 README and API.md contradiction on `export --prisma/--sql`
 
 - [x] Remove "coming soon" markers from README.md for implemented commands
-- [ ] Audit API.md — confirm `export` examples match actual CLI behaviour
+- [x] Audit API.md — confirm CLI examples match actual CLI behaviour (re-audited as part of Phase 13's rename)
 - [ ] Add single source-of-truth note in README.md pointing to API.md
 - [ ] Mark genuinely unimplemented flags as `[planned]` consistently in both files
 
 ### 9.3 Schema-only vs schema+data export guidance
 
 - [x] Add "Which export command do I need?" decision table to README.md
-- [ ] Mirror decision table in API.md under a "Migration scenarios" section
+- [x] Mirror decision table in API.md under a "Migration scenarios" section
 
 ### 9.4 `export-data --all-users`
 
@@ -269,7 +269,7 @@
 
 - PK auto-generation (nanoid) and readonly enforcement on update
 - FK validation via `ref()` with `skipFKValidation` option
-- `export --prisma` and `export --sql`
+- `migrate --prisma` and `migrate --sql` (renamed from `export`, Phase 13)
 - `sheet-db mock-users` CLI
 - `seed --all-actors`, `seed --skip-existing`, `seed --upsert`, dynamic seed file format
 - `init --integrate`
@@ -285,16 +285,15 @@
 - `mock-users` PermissionError fix
 - `createUserSheet` with `extraFields`, actor-owned sheet, `TokenStore`, `DriveFolderConfig`, `sharedDriveId`
 - `DriveStorageAdapter` + `StorageAdapter` interface + `adapter.upload()` / `adapter.deleteFile()`
-- `export-data` (renamed from `migrate`) with `--all-users` and `--dry-run`
+- `migrate-data` (renamed from `export-data`, itself renamed from `migrate`, Phase 13) with `--all-users` and `--dry-run`
 - `withContext({ actor })` rename with `role` deprecation alias
 - `ActorConfig.role` → `name`, `UserContext.targetRole` → `targetActor` (both with deprecation aliases)
 - Automatic sheet formatting: auto-fit columns, header fill/freeze, boolean/enum data validation dropdowns, `sheetStyle` config
+- `lsdb drop-table` / `lsdb drop-column` / `lsdb rename-column` — interactive or scripted, `--all-users`-aware, `rename-column` preserves data via in-place header edit (Phase 13)
 
 ### To Do ⏳
 
 - `adapter.join()` — cross-actor join queries (medium priority)
-- API.md: `UserContext` rename, Migration scenarios table, `export-data` command reference
-- CHANGELOG.md: breaking change note for `migrate` → `export-data`
 - `Docs/architecture.md`: Actors vs Application Roles section
 - `mock-users` output: dev vs prod topology note
 - NestJS auth guard variant (future)
@@ -395,6 +394,33 @@
 
 ---
 
+## Phase 13: Schema Drop/Rename CLI + `migrate`/`migrate-data` rename (2026-07-08)
+
+### 13.1 `lsdb drop-table` / `lsdb drop-column` / `lsdb rename-column`
+
+- [x] `SheetClient.deleteSheet()` — strict sheetId lookup (throws instead of the `getSheetId()` `|| 0` fallback), invalidates cache
+- [x] `SheetClient.deleteColumns()` — batches multiple `deleteDimension` requests sorted descending so indexes don't shift mid-batch
+- [x] `SheetClient.updateHeaderCell()` — single-cell header overwrite (`columnIndexToA1Letter()` helper), used by rename to preserve existing row data instead of drop + re-add
+- [x] `src/schema/reservedColumns.ts` — `RESERVED_COLUMN_NAMES`, shared by `defineTable.ts` and the new commands so they can't drift
+- [x] `src/utils/schemaFileMutator.ts` — `removeColumnLine()`/`renameColumnKey()`, text-level schema file edits that return `ok:false` instead of guessing on anything they can't confirm is safe (e.g. a column definition spanning multiple lines)
+- [x] `src/utils/suggest.ts` — Levenshtein-based `closestMatch()` for "did you mean" errors
+- [x] `src/cli/lib/oauthFlow.ts`, `src/cli/lib/backoff.ts` — extracted from `sync.ts` (now 4 call sites: `sync`, `drop-table`, `drop-column`, `rename-column`)
+- [x] `src/cli/lib/schemaLoader.ts`, `src/cli/lib/resolveTable.ts`, `src/cli/lib/adminAdapter.ts` — shared schema loading (with file paths), table-name resolution/disambiguation, and adapter/`--all-users` sheet-target setup
+- [x] `lsdb drop-table [table-names...]` — interactive checkbox or positional args, `--all-users`/`--yes`/`--dry-run`/`--token-file`, warns on dangling `ref()`s, best-effort `schema_versions` cleanup
+- [x] `lsdb drop-column [table-name] [column-names...]` — blocks dropping reserved columns and the primary key, resolves column position from the live header row (not schema file order)
+- [x] `lsdb rename-column [table-name] [old-name] [new-name]` — renames the sheet header cell in place, updates `schema_versions` hash for touched sheets
+- [x] Tests: `sheetClientDestructive`, `schemaFileMutator`, `suggest`, `resolveTable`
+
+### 13.2 Rename `export`/`export-data` → `migrate`/`migrate-data`
+
+- [x] Reclaim `migrate` for schema/DDL export (was a deprecated alias for row-data export pre-9.1 — that old alias is removed, not kept, since it would otherwise silently mean two different things)
+- [x] `migrate-data` replaces `export-data` for row-data export; `export`/`export-data` become the new deprecated aliases (forward with a warning), matching the project's existing alias-on-rename convention
+- [x] `src/cli/commands/migrate.ts` (was `export.ts`), `src/cli/commands/migrate-data.ts` (was `export-data.ts`) — `generatePrismaModel`/`generateSQLTable` keep their names; `generateExportDataScript` → `generateMigrateDataScript`
+- [x] Tests: `tests/unit/export.test.ts` import path updated; `tests/unit/migrate.test.ts` → `tests/unit/migrate-data.test.ts`, covers both the renamed generator and the deprecated `export-data.ts` alias re-export
+- [x] Docs: README.md, API.md, FAQ.md, skills/cli/SKILL.md, skills/migrations/SKILL.md, Docs/overview.md, skills/_artifacts/skill_spec.md
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables
@@ -407,6 +433,7 @@
 - [x] API.md: `UserContext` type rename (`targetActor`), `ActorConfig` rename (`name`), `SheetStyleConfig` added
 - [x] Docs/architecture.md: Actors vs Application Roles section
 - [x] FAQ.md: actor field naming incident write-up (#2), Sheet Formatting & Data Validation section (#10)
-- [ ] CHANGELOG.md: breaking change note for `migrate` → `export-data`
-- [ ] API.md: Migration scenarios table, `export-data` command reference alignment
+- [x] CHANGELOG.md: breaking change note for `migrate` → `export-data` (historical; superseded by Phase 13's `export`/`export-data` → `migrate`/`migrate-data` rename)
+- [x] API.md: Migration scenarios table, `export-data` command reference alignment (superseded — see Phase 13)
 - [x] CLAUDE.md: read cache architecture note; API.md: `SheetReadCacheConfig` type + CRUD Operations caching note; FAQ.md: Rate Limits & Read Caching section (#11); README.md: Read Caching subsection; CHANGELOG.md: 0.1.28 entry
+- [x] README.md, API.md, FAQ.md, TODO.md, CHANGELOG.md, skills/cli/SKILL.md, skills/migrations/SKILL.md, Docs/overview.md, skills/_artifacts/skill_spec.md: `drop-table`/`drop-column`/`rename-column` commands, `export`/`export-data` → `migrate`/`migrate-data` rename (see Phase 13)

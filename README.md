@@ -24,7 +24,7 @@ Instead of running MySQL, PostgreSQL, or MongoDB for staging:
 - 🔄 **Auto CRUD**: `create`, `createMany`, `findMany`, `findOne`, `count`, `update`, `upsert`, `delete`
 - 🎭 **Role-Based Permissions**: Built-in security boundaries + cross-actor access matrix
 - 🔑 **Authentication**: `createAuthRouter` wires Google Sign-In + JWT in one call; role-based registration policy
-- 🛠️ **CLI Tools**: Initialize, generate, sync, validate, seed, export, mock-users
+- 🛠️ **CLI Tools**: Initialize, generate, sync, validate, seed, migrate, drop/rename schema elements, mock-users
 - 📊 **Type-Safe**: Full TypeScript support
 - 💰 **Cost-Free**: No infrastructure costs for staging
 - 🔒 **Schema Integrity**: Hash-based version tracking detects stale user sheets at runtime
@@ -727,39 +727,39 @@ When you're ready for production:
 3. Update CRUD calls (minimal changes)
 4. No logic trapped in Sheets
 
-### Which export command do I need?
+### Which migrate command do I need?
 
 | Goal | Command |
 |------|---------|
-| Copy table structure only (schema / DDL) | `lsdb export --prisma` or `--sql` |
-| Copy structure + admin sheet row data | `lsdb export-data` |
-| Copy structure + all user-sheet row data | `lsdb export-data --all-users` |
+| Copy table structure only (schema / DDL) | `lsdb migrate --prisma` or `--sql` |
+| Copy structure + admin sheet row data | `lsdb migrate-data` |
+| Copy structure + all user-sheet row data | `lsdb migrate-data --all-users` |
 | Preview export plan without writing files | add `--dry-run` to either command |
 
 ### Schema export (structure only)
 
 ```bash
 # Export to Prisma schema
-npx lsdb export --prisma --output ./prisma
+npx lsdb migrate --prisma --output ./prisma
 
 # Export to SQL DDL (CREATE TABLE statements)
-npx lsdb export --sql --output ./migrations
+npx lsdb migrate --sql --output ./migrations
 ```
 
 ### Data export (row data → production DB)
 
 ```bash
 # Admin sheet only
-npx lsdb export-data
+npx lsdb migrate-data
 
 # Admin sheet + all registered user sheets
-npx lsdb export-data --all-users
+npx lsdb migrate-data --all-users
 
 # Preview without writing
-npx lsdb export-data --all-users --dry-run
+npx lsdb migrate-data --all-users --dry-run
 ```
 
-`export-data` generates a `export-data.js` script. Replace the `insertRow()` stub with your real DB client (Prisma, Sequelize, etc.) and run it once.
+`migrate-data` generates a `migrate-data.js` script. Replace the `insertRow()` stub with your real DB client (Prisma, Sequelize, etc.) and run it once.
 
 ```typescript
 // Development (Sheets)
@@ -769,7 +769,37 @@ const adapter = createSheetAdapter({ ... });
 const adapter = createSQLAdapter({ ... });
 ```
 
-> **Note**: `lsdb migrate` is deprecated — use `lsdb export-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes. `export-data` correctly names what this command does: move row data.
+> **Note**: `lsdb export` and `lsdb export-data` are deprecated — use `lsdb migrate` and `lsdb migrate-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes, so the schema/DDL export command is now the one named `migrate`; the row-data export command is `migrate-data`.
+
+## 🗑️ Dropping & Renaming Schema Elements
+
+`lsdb sync` is deliberately **additive-only** — it creates tabs and appends missing columns, but never removes or renames anything, so it can never lose data on its own. Once a table or column is no longer needed (or needs a better name), use these commands to update the schema file *and* the live Google Sheet together:
+
+```bash
+# Drop table(s) — deletes the schema file and the Google Sheet tab
+npx lsdb drop-table bookings
+npx lsdb drop-table                    # interactive checkbox — pick any number of tables
+npx lsdb drop-table --all-users        # also drop from every registered user's personal sheet
+
+# Drop column(s) from a table
+npx lsdb drop-column bookings notes
+npx lsdb drop-column bookings          # interactive checkbox over that table's columns
+npx lsdb drop-column                   # interactive: pick the table, then its columns
+
+# Rename a column — updates the header cell in place, existing row data is preserved
+npx lsdb rename-column bookings notes remarks
+npx lsdb rename-column                 # interactive: pick table, pick column, type new name
+```
+
+All three:
+- Print a plan and ask for confirmation before touching anything (skip with `--yes`)
+- Support `--dry-run` to preview without making changes
+- Support `--all-users` to also apply the change to every registered user's personal sheet (reads `actor_sheet_id` from the admin `users` table, same as `sync --all-users`)
+- Support `--token-file <path>` for CI
+- Refuse to touch reserved auto-generated columns (`_id`, `_created_at`, `_updated_at`, `_deleted_at`); `drop-column` also refuses to drop a table's primary key column (drop the whole table instead)
+- Warn — but don't block — if another table's `ref()` points at the table/column being dropped or renamed, since `ref()` strings in *other* schema files aren't rewritten automatically
+
+`rename-column` is the safe way to fix a column name: it edits the Google Sheet header cell in place instead of dropping and re-adding the column, so every existing row keeps its data. This matters most for production, where a bad rename that instead did drop+re-add would silently wipe that column's data across every registered user's sheet the next time it synced.
 
 ## ⚡ Performance
 

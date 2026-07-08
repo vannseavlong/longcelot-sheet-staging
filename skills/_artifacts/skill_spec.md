@@ -111,7 +111,7 @@ Each skill must be independently useful. An agent reading only one skill must be
 - Common mistakes: hardcoding targetSheetId, missing targetSheetId, unregistered target schema
 
 ### migrations
-**Goal**: Agent can configure schema version tracking, push schema changes to all user sheets, export schemas to Prisma/SQL, and generate a data migration script.
+**Goal**: Agent can configure schema version tracking, push schema changes to all user sheets, export schemas to Prisma/SQL, generate a data migration script, and safely drop/rename schema elements.
 
 **Must cover:**
 - `schema_versions` built-in table columns and purpose
@@ -120,23 +120,25 @@ Each skill must be independently useful. An agent reading only one skill must be
 - `SchemaMismatchError`
 - `sync --all-users` and `--dry-run`
 - Exponential backoff for rate limits
-- `lsdb export --prisma` and `--sql` output format
-- `lsdb migrate` script generation and insertRow stub
-- Full migration path (export → review → migrate data → swap adapter)
+- `lsdb migrate --prisma` and `--sql` output format (deprecated alias: `lsdb export`)
+- `lsdb migrate-data` script generation and insertRow stub (deprecated alias: `lsdb export-data`)
+- Full migration path (migrate → review → migrate-data → swap adapter)
 - What persists after migration (user_id yes, actor_sheet_id no)
-- Common mistakes: modifying schema_versions manually, not doing dry-run first
+- `lsdb drop-table`/`drop-column`/`rename-column` and why `rename-column` edits the header in place instead of drop+re-add
+- Common mistakes: modifying schema_versions manually, not doing dry-run first, hand-editing a schema file instead of using drop/rename commands
 
 ### cli
-**Goal**: Agent can run any `lsdb` CLI command correctly, understand what each command does, use new flags (`--token-file`, `--skip-existing`, `--upsert`), and troubleshoot common CLI failures.
+**Goal**: Agent can run any `lsdb` CLI command correctly, understand what each command does, use new flags (`--token-file`, `--skip-existing`, `--upsert`, `--all-users`, `--yes`), and troubleshoot common CLI failures.
 
 **Must cover:**
-- All 11 commands: init (--integrate), generate, sync, validate, seed, mock-users, doctor, status, export, migrate
+- All 14 commands: init (--integrate), generate, sync, validate, seed, mock-users, doctor, status, migrate, migrate-data, drop-table, drop-column, rename-column (plus deprecated aliases export, export-data)
 - `sync --all-users`, `--dry-run`, `--token-file` (CI usage)
 - `seed --skip-existing`, `--upsert`, `--all-actors`
 - Static vs dynamic seed file format
 - `lsdb.config.ts` full structure with `ActorConfig` (name + sheetIdEnv; `role` is a deprecated alias for `name`)
 - `.lsdb-tokens.json` lifecycle
-- Common mistakes: missing env vars, committing token file, not syncing after schema change, re-seeding without --skip-existing, CI hangs without --token-file
+- `drop-table`/`drop-column`/`rename-column`: interactive selection UX, `--all-users`/`--yes`/`--dry-run`, reserved-column/primary-key guards, ref() warnings
+- Common mistakes: missing env vars, committing token file, not syncing after schema change, re-seeding without --skip-existing, CI hangs without --token-file, expecting drop commands to be additive-safe like sync
 
 ### drive
 **Goal**: Agent can configure Drive folder organisation (`driveFolder`), target a Shared Drive (`sharedDriveId`), create user sheets in the actor's own Drive (`actorTokens` / `TokenStore`), upload and delete files (`StorageAdapter`, `DriveStorageAdapter`, `adapter.upload()`, `adapter.deleteFile()`), and use a custom storage provider.

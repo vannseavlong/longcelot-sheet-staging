@@ -697,7 +697,7 @@ npx lsdb mock-users
 npx lsdb mock-users 5
 ```
 
-### `lsdb export [--prisma] [--sql] [--output <dir>]`
+### `lsdb migrate [--prisma] [--sql] [--output <dir>]`
 
 Exports registered schemas to production DB formats.
 
@@ -706,14 +706,14 @@ Exports registered schemas to production DB formats.
 - `--output <dir>` — output directory (default: current directory)
 
 ```bash
-npx lsdb export --prisma --output ./prisma
-npx lsdb export --sql
-npx lsdb export --prisma --sql --output ./migration
+npx lsdb migrate --prisma --output ./prisma
+npx lsdb migrate --sql
+npx lsdb migrate --prisma --sql --output ./migration
 ```
 
-### `lsdb export-data [--table <name>] [--all-users] [--output <dir>] [--dry-run]`
+### `lsdb migrate-data [--table <name>] [--all-users] [--output <dir>] [--dry-run]`
 
-Generates an `export-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
+Generates a `migrate-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
 
 > **Actors vs RBAC roles** — see [Actors vs Application Roles](#actors-vs-application-roles) below.
 
@@ -724,22 +724,72 @@ Generates an `export-data.js` script that reads row data from Google Sheets and 
 - `--dry-run` — preview export plan without writing any files
 
 ```bash
-npx lsdb export-data
-npx lsdb export-data --all-users
-npx lsdb export-data --all-users --dry-run
-npx lsdb export-data --table bookings
+npx lsdb migrate-data
+npx lsdb migrate-data --all-users
+npx lsdb migrate-data --all-users --dry-run
+npx lsdb migrate-data --table bookings
 ```
 
-> **Deprecated alias**: `lsdb migrate` still works but emits a deprecation warning. Rename your scripts to `lsdb export-data`. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes; this command moves row data.
+> **Deprecated aliases**: `lsdb export` and `lsdb export-data` still work but emit a deprecation warning — they forward to `lsdb migrate` and `lsdb migrate-data` respectively. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes, which is why the schema/DDL export command is named `migrate`; the row-data export command is `migrate-data`.
 
 ### Migration scenarios
 
 | Goal | Command |
 |------|---------|
-| Copy table structure only (schema / DDL) | `lsdb export --prisma` or `--sql` |
-| Copy structure + admin sheet row data | `lsdb export-data` |
-| Copy structure + all user-sheet row data | `lsdb export-data --all-users` |
+| Copy table structure only (schema / DDL) | `lsdb migrate --prisma` or `--sql` |
+| Copy structure + admin sheet row data | `lsdb migrate-data` |
+| Copy structure + all user-sheet row data | `lsdb migrate-data --all-users` |
 | Preview export plan without writing files | add `--dry-run` to either command |
+
+### `lsdb drop-table [table-names...] [--all-users] [--yes] [--dry-run] [--token-file <path>]`
+
+Deletes table schema file(s) and the corresponding Google Sheet tab(s). `sync` never removes anything on its own — this is the explicit, confirmed way to remove a table from both the codebase and the live sheet(s).
+
+- No positional args — interactive checkbox over every defined table (space to toggle, enter to confirm)
+- Positional args — one or more `tableName` or `actor/tableName` (use the `actor/` form when the same table name exists under more than one actor)
+- `--all-users` — also drops the tab from every registered user's personal sheet (reads `actor_sheet_id` from the admin `users` table)
+- `--yes` — skip the confirmation prompt
+- `--dry-run` — print the plan without making any changes
+- `--token-file <path>` — CI/CD, same as `sync --token-file`
+
+```bash
+npx lsdb drop-table bookings
+npx lsdb drop-table bookings old_notifications --all-users
+npx lsdb drop-table --dry-run
+npx lsdb drop-table                      # interactive
+```
+
+Invalid table names produce a clear error (with a "did you mean" suggestion when close to a real name) instead of silently doing nothing. Warns if another table's `ref()` points at a table being dropped, since it doesn't rewrite `ref()` strings in other schema files.
+
+### `lsdb drop-column [table-name] [column-names...] [--all-users] [--yes] [--dry-run] [--token-file <path>]`
+
+Removes column(s) from a table's schema file and deletes the matching column(s) from the live Google Sheet, including all data in them.
+
+- Table omitted — interactive single-select list
+- Column names omitted — interactive checkbox over that table's columns
+- Refuses to drop reserved auto-generated columns (`_id`, `_created_at`, `_updated_at`, `_deleted_at`) or the table's primary key column (drop the whole table instead)
+- Resolves each column's *live* position in the sheet's current header row before deleting — not the schema file's declared order, since `sync` appends new columns at the end
+- Same `--all-users`/`--yes`/`--dry-run`/`--token-file` flags as `drop-table`
+
+```bash
+npx lsdb drop-column bookings notes
+npx lsdb drop-column bookings                 # interactive column checkbox
+npx lsdb drop-column                          # interactive table + column
+```
+
+### `lsdb rename-column [table-name] [old-name] [new-name] [--all-users] [--yes] [--dry-run] [--token-file <path>]`
+
+Renames a column in the schema file and overwrites the corresponding Google Sheet **header cell in place** — existing row data is preserved, unlike a drop-and-re-add. This is the safe way to fix a column name without losing data the next time the sheet syncs or a mismatch triggers `auto-sync`.
+
+- Any of `table-name`/`old-name`/`new-name` omitted — prompts interactively (list, list, then text input)
+- New name must be a valid identifier (`^[a-zA-Z_][a-zA-Z0-9_]*$`), not already used on the table, and not a reserved name
+- Warns (doesn't block) if another table's `ref()` points at `table.oldName` — those `ref()` strings aren't rewritten automatically
+- Same `--all-users`/`--yes`/`--dry-run`/`--token-file` flags as `drop-table`
+
+```bash
+npx lsdb rename-column bookings notes remarks
+npx lsdb rename-column                        # fully interactive
+```
 
 ### `lsdb doctor`
 

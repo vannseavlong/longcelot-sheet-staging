@@ -1,94 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-import inquirer from 'inquirer';
 import { createSheetAdapter } from '../../adapter/sheetAdapter';
 import { createOAuthManager } from '../../auth/oauth';
 import { TableSchema, ActorConfig } from '../../schema/types';
 import { computeSchemaHash } from '../../utils/schemaHash';
 import { resolveActorName } from '../../utils/actorConfig';
-import { resolveConfigPath, resolveTokensPath, TOKENS_FILENAME } from '../../utils/cliFiles';
-
-function isRateLimitError(err: unknown): boolean {
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    return msg.includes('429') || msg.includes('quota') || msg.includes('rate limit');
-  }
-  return false;
-}
-
-async function withBackoff<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (isRateLimitError(err) && attempt < maxRetries) {
-        const delayMs = Math.min(Math.pow(2, attempt) * 1000, 32_000);
-        console.log(chalk.yellow(`  ⏳ Rate limited — retrying in ${delayMs / 1000}s (attempt ${attempt + 1}/${maxRetries})...`));
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw new Error('Max retries exceeded');
-}
-
-function readTokens(): unknown | null {
-  const tokenPath = resolveTokensPath();
-  if (!fs.existsSync(tokenPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
-
-function saveTokens(tokens: unknown): void {
-  fs.writeFileSync(
-    path.join(process.cwd(), TOKENS_FILENAME),
-    JSON.stringify(tokens, null, 2),
-    'utf-8'
-  );
-}
-
-async function resolveTokens(
-  oauth: ReturnType<typeof createOAuthManager>
-): Promise<unknown> {
-  const stored = readTokens() as Record<string, unknown> | null;
-
-  if (stored?.refresh_token) {
-    try {
-      console.log(chalk.cyan('🔄 Refreshing OAuth tokens...\n'));
-      const refreshed = await oauth.refreshTokens(stored.refresh_token as string);
-      const merged = { ...stored, ...(refreshed as Record<string, unknown>) };
-      saveTokens(merged);
-      return merged;
-    } catch {
-      console.log(chalk.yellow('⚠️  Token refresh failed. Re-authorizing...\n'));
-    }
-  }
-
-  const authUrl = oauth.getAuthUrl();
-  console.log(chalk.cyan('🔐 Authorization required.\n'));
-  console.log(chalk.white('Open the following URL in your browser:\n'));
-  console.log(chalk.bold.underline(authUrl));
-  console.log();
-
-  const { code } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'code',
-      message: 'Paste the authorization code from the redirect URL:',
-      validate: (v) => (v.trim().length > 0 ? true : 'Code cannot be empty'),
-    },
-  ]);
-
-  const tokens = await oauth.getTokens(code.trim());
-  saveTokens(tokens);
-  console.log(chalk.green(`✅ Tokens saved to ${TOKENS_FILENAME}\n`));
-  return tokens;
-}
+import { resolveConfigPath } from '../../utils/cliFiles';
+import { withBackoff } from '../lib/backoff';
+import { resolveTokens } from '../lib/oauthFlow';
 
 function loadSchemasForActor(role: string, schemasRoot: string): TableSchema[] {
   const schemas: TableSchema[] = [];

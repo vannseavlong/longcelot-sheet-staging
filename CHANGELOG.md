@@ -18,6 +18,22 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.29] — 2026-07-08
+
+### Changed
+
+- **`lsdb export` → `lsdb migrate`, `lsdb export-data` → `lsdb migrate-data` (breaking for the old `migrate` alias).** In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema/DDL export, so `migrate` now names that command (`--prisma`/`--sql`) and `migrate-data` names row-data export. `lsdb export`/`lsdb export-data` still work as deprecated aliases and forward to the new names with a warning. **The pre-existing deprecated `lsdb migrate` alias (which forwarded to row-data export) has been removed**, not kept — it can't mean both "schema export" and "row-data export" under the same name. Anyone still using the old `lsdb migrate` for row-data export must switch to `lsdb migrate-data`.
+
+### Added
+
+- **`lsdb drop-table [table-names...]`** — deletes a table's schema file and its corresponding Google Sheet tab together. Interactive checkbox selection when no names are given; `--all-users` to also drop from every registered user's personal sheet; `--yes`/`--dry-run`/`--token-file`. `sync` has always been additive-only (never deletes), so this is the first CLI path for actually removing a table.
+- **`lsdb drop-column [table-name] [column-names...]`** — same, for individual columns. Resolves each column's position from the sheet's live header row (not the schema file's declared order, since `sync` appends new columns at the end) before deleting. Refuses to drop reserved auto-generated columns or a table's primary key.
+- **`lsdb rename-column [table-name] [old-name] [new-name]`** — renames a column in the schema file and overwrites the Google Sheet header cell **in place**, preserving all existing row data (unlike a drop + re-add, which would lose it). This is the safe fix for the real risk this closes: a schema-file rename with no corresponding sheet update desyncs every existing row, and a subsequent `auto-sync`/`sync --all-users` has no way to recover the old data under the new name.
+- All three commands: typo-tolerant "did you mean" errors for invalid table/column names, a printed plan + confirmation prompt before making changes, and a warning (non-blocking) when another schema's `ref()` points at the table/column being dropped or renamed.
+- `SheetClient.deleteSheet()`, `SheetClient.deleteColumns()`, `SheetClient.updateHeaderCell()` — new low-level primitives backing the above.
+
+---
+
 ## [0.1.28] — 2026-07-08
 
 ### Fixed

@@ -65,6 +65,18 @@ function parseRowNumber(updatedRange: string | undefined | null): number {
   return match ? parseInt(match[1], 10) : 0;
 }
 
+/** Converts a 0-based column index to A1 column letters (0 -> 'A', 25 -> 'Z', 26 -> 'AA'). */
+export function columnIndexToA1Letter(index: number): string {
+  let n = index + 1;
+  let letters = '';
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
 export class SheetClient {
   private sheets: sheets_v4.Sheets;
   private drive: drive_v3.Drive;
@@ -467,9 +479,79 @@ export class SheetClient {
     });
   }
 
+  /**
+   * Deletes an entire tab. Unlike the private getSheetId() used elsewhere (which falls back to
+   * sheetId 0 when a title isn't found — fine for formatting calls, not for a delete), this
+   * throws if the tab doesn't exist so callers can distinguish "already gone" from "about to
+   * delete the wrong tab."
+   */
+  async deleteSheet(spreadsheetId: string, sheetName: string): Promise<void> {
+    const sheetId = await this.getSheetIdStrict(spreadsheetId, sheetName);
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ deleteSheet: { sheetId } }],
+      },
+    });
+    this.invalidateCache(spreadsheetId, sheetName);
+  }
+
+  /**
+   * Deletes one or more columns from a tab in a single batchUpdate. `columnIndexes` may be
+   * given in any order — they're sorted descending internally so earlier deletions don't shift
+   * the indexes of later ones within the same batch.
+   */
+  async deleteColumns(spreadsheetId: string, sheetName: string, columnIndexes: number[]): Promise<void> {
+    if (columnIndexes.length === 0) return;
+    const sheetId = await this.getSheetIdStrict(spreadsheetId, sheetName);
+    const descending = [...columnIndexes].sort((a, b) => b - a);
+    const requests: sheets_v4.Schema$Request[] = descending.map((columnIndex) => ({
+      deleteDimension: {
+        range: {
+          sheetId,
+          dimension: 'COLUMNS',
+          startIndex: columnIndex,
+          endIndex: columnIndex + 1,
+        },
+      },
+    }));
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
+    this.invalidateCache(spreadsheetId, sheetName);
+  }
+
+  /**
+   * Overwrites a single header cell in place — used for column rename so existing data rows
+   * are left untouched (unlike a drop + re-add, which would lose every value in that column).
+   */
+  async updateHeaderCell(spreadsheetId: string, sheetName: string, columnIndex: number, value: string): Promise<void> {
+    const column = columnIndexToA1Letter(columnIndex);
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!${column}1`,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [[value]],
+      },
+    });
+    this.invalidateCache(spreadsheetId, sheetName);
+  }
+
   private async getSheetId(spreadsheetId: string, sheetName: string): Promise<number> {
     const response = await this.sheets.spreadsheets.get({ spreadsheetId });
     const sheet = response.data.sheets?.find((s) => s.properties?.title === sheetName);
     return sheet?.properties?.sheetId || 0;
+  }
+
+  private async getSheetIdStrict(spreadsheetId: string, sheetName: string): Promise<number> {
+    const response = await this.sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = response.data.sheets?.find((s) => s.properties?.title === sheetName);
+    const sheetId = sheet?.properties?.sheetId;
+    if (sheetId === undefined || sheetId === null) {
+      throw new Error(`Sheet tab "${sheetName}" not found in spreadsheet ${spreadsheetId}`);
+    }
+    return sheetId;
   }
 }

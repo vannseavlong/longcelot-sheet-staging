@@ -239,10 +239,11 @@ CRM prototype
 Internal dashboards
 
 24. Future Roadmap
-- Prisma/SQL export CLI (`lsdb export`)
+- Prisma/SQL export CLI (`lsdb migrate`, renamed from `lsdb export`)
 - Cross-actor joins (`adapter.join()`)
 - Developer mock user sheets (`lsdb mock-users`)
 - Bulk schema sync to all users (`sync --all-users`)
+- Safe table/column drop and column rename (`lsdb drop-table`, `lsdb drop-column`, `lsdb rename-column`)
 - Column encryption
 - Audit logs
 - Row-level permissions

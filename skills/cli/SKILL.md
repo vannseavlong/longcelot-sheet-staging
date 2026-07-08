@@ -1,10 +1,10 @@
 ---
 name: cli
-description: Use the longcelot-sheet-db CLI (lsdb). Use when running lsdb init, generate, sync, validate, seed, mock-users, doctor, status, export, or migrate commands — or when scaffolding a new project, generating schema files, syncing schemas to Google Sheets (including CI-friendly --token-file), seeding with --skip-existing or --upsert, diagnosing configuration issues, exporting schemas to Prisma/SQL, or pushing schema changes to all user sheets.
+description: Use the longcelot-sheet-db CLI (lsdb). Use when running lsdb init, generate, sync, validate, seed, mock-users, doctor, status, migrate, migrate-data, drop-table, drop-column, or rename-column commands — or when scaffolding a new project, generating schema files, syncing schemas to Google Sheets (including CI-friendly --token-file), seeding with --skip-existing or --upsert, diagnosing configuration issues, exporting schemas to Prisma/SQL, pushing schema changes to all user sheets, or removing/renaming a table or column safely (schema file + live sheet together).
 license: MIT
 metadata:
   package: longcelot-sheet-db
-  version: "0.1.15"
+  version: "0.1.29"
 ---
 
 # longcelot-sheet-db — CLI Reference (`lsdb`)
@@ -184,26 +184,69 @@ Displays registered tables, actors, sheet IDs, schema counts, and token info.
 
 ---
 
-## export — Export schemas to SQL/Prisma
+## migrate — Export schemas to SQL/Prisma
 
 ```bash
-npx lsdb export --prisma --output ./prisma    # generate schema.prisma
-npx lsdb export --sql --output ./migrations   # generate CREATE TABLE DDL
+npx lsdb migrate --prisma --output ./prisma    # generate schema.prisma
+npx lsdb migrate --sql --output ./migrations   # generate CREATE TABLE DDL
 ```
 
 Exports all table schemas to a target format. Use as a starting point when migrating from Google Sheets to a production database. For the full migration guide see `skills/migrations/SKILL.md`.
 
+> Deprecated alias: `lsdb export` still works but emits a deprecation warning.
+
 ---
 
-## migrate — Generate data migration script
+## migrate-data — Generate data migration script
 
 ```bash
-npx lsdb migrate
-npx lsdb migrate --table users --output ./scripts
-npx lsdb migrate --dry-run   # preview plan without writing files
+npx lsdb migrate-data
+npx lsdb migrate-data --table users --output ./scripts
+npx lsdb migrate-data --all-users              # also export every registered user sheet
+npx lsdb migrate-data --dry-run                # preview plan without writing files
 ```
 
-Generates a `migrate.js` script with `insertRow()` stubs. Replace the stubs with your production DB client to transfer data row-by-row.
+Generates a `migrate-data.js` script with `insertRow()` stubs. Replace the stubs with your production DB client to transfer data row-by-row.
+
+> Deprecated alias: `lsdb export-data` still works but emits a deprecation warning.
+
+---
+
+## drop-table — Delete a table's schema file + Google Sheet tab
+
+```bash
+npx lsdb drop-table bookings
+npx lsdb drop-table bookings old_notifications --all-users
+npx lsdb drop-table                            # interactive checkbox over every table
+npx lsdb drop-table --dry-run
+```
+
+`sync` never deletes anything on its own (see `skills/migrations/SKILL.md`) — this is the explicit way to remove a table from both the schema file and the live sheet. Deletes the schema file, then the corresponding Google Sheet tab (and, with `--all-users`, the tab in every registered user's personal sheet). Prints a plan and asks for confirmation first (`--yes` to skip). Warns if another table's `ref()` points at the one being dropped.
+
+---
+
+## drop-column — Delete column(s) from a table
+
+```bash
+npx lsdb drop-column bookings notes
+npx lsdb drop-column bookings                  # interactive checkbox over that table's columns
+npx lsdb drop-column                           # interactive: pick table, then columns
+npx lsdb drop-column bookings notes --all-users --yes
+```
+
+Removes column(s) from the schema file and deletes the matching column(s) — and all data in them — from the live Google Sheet. Resolves each column's *current* position from the sheet's header row, not the schema file's declared order (`sync` appends new columns at the end, so they can differ). Refuses to drop reserved columns (`_id`, `_created_at`, `_updated_at`, `_deleted_at`) or a table's primary key column — drop the whole table instead if that's really the intent.
+
+---
+
+## rename-column — Rename a column without losing data
+
+```bash
+npx lsdb rename-column bookings notes remarks
+npx lsdb rename-column                         # fully interactive: table, column, new name
+npx lsdb rename-column bookings notes remarks --all-users
+```
+
+Renames the column's key in the schema file and overwrites the Google Sheet **header cell in place** — existing row data is preserved, unlike a drop-and-re-add. This is what prevents the real risk it closes: renaming a column in the schema file alone desyncs every existing row from that point on, and a later `sync`/`auto-sync` has no way to recover data under the old header name. Warns (doesn't block) if another table's `ref()` points at the old name — those `ref()` strings in other schema files aren't rewritten automatically.
 
 ---
 
@@ -236,3 +279,6 @@ The `sheetIdEnv` field tells each CLI command which env var holds the sheet ID f
 - **Re-seeding without `--skip-existing`** — Running `seed` twice throws `ValidationError: Unique constraint violation` for any unique column. Use `--skip-existing` for idempotent seeds or `--upsert` to update.
 - **Forgetting `--token-file` in CI** — Without it, `sync` blocks waiting for interactive input and the CI job hangs.
 - **Using a dynamic seed file without `export default async function`** — Named exports or non-function defaults are treated as the static plain-object format and must return `Record<string, unknown[]>` directly.
+- **Expecting `drop-column`/`drop-table` to be additive-safe like `sync`** — They're destructive by design: real Google Sheets columns/tabs (and all data in them) are deleted. Always run with `--dry-run` first if unsure, especially with `--all-users`.
+- **Renaming a column in the schema file by hand instead of `rename-column`** — A manual rename leaves the live sheet's header on the old name, silently desyncing every existing row. Use `lsdb rename-column` so the schema file and sheet header change together.
+- **Expecting `rename-column`/`drop-column` to update `ref()` strings in other schema files** — They warn if another table's `ref('table.column')` points at what's being renamed/dropped, but don't rewrite it for you. Update those `ref()` calls manually.

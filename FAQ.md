@@ -17,6 +17,7 @@ Answers to architectural, design, and integration questions collected during dev
 9. [Developer Workflow & CLI](#9-developer-workflow--cli)
 10. [Sheet Formatting & Data Validation](#10-sheet-formatting--data-validation)
 11. [Google Sheets API Rate Limits & Read Caching](#11-google-sheets-api-rate-limits--read-caching)
+12. [Dropping & Renaming Schema Elements](#12-dropping--renaming-schema-elements)
 
 ---
 
@@ -379,8 +380,8 @@ The implementation will run parallel queries to both actor sheets and perform an
 
 ```
 longcelot-sheet-db (dev/staging)
-    ↓  npx lsdb export --prisma / --sql
-    ↓  npx lsdb export-data --all-users
+    ↓  npx lsdb migrate --prisma / --sql
+    ↓  npx lsdb migrate-data --all-users
 MySQL / PostgreSQL + Prisma / Sequelize (production)
 ```
 
@@ -389,18 +390,18 @@ Every schema maps cleanly to SQL tables. The code swap is minimal:
 2. Update CRUD calls (same method names — `create`, `findMany`, `update`, `delete`)
 3. No business logic is trapped in Google Sheets
 
-### Which export command do I need?
+### Which migrate command do I need?
 
 | Goal | Command |
 |---|---|
-| Copy table structure only (DDL / schema) | `lsdb export --prisma` or `lsdb export --sql` |
-| Copy structure + admin sheet row data | `lsdb export-data` |
-| Copy structure + all user-sheet row data | `lsdb export-data --all-users` |
+| Copy table structure only (DDL / schema) | `lsdb migrate --prisma` or `lsdb migrate --sql` |
+| Copy structure + admin sheet row data | `lsdb migrate-data` |
+| Copy structure + all user-sheet row data | `lsdb migrate-data --all-users` |
 | Preview export plan without writing files | Add `--dry-run` to either command |
 
-### Why is the command called `export-data` and not `migrate`?
+### Why is the schema/DDL export command called `migrate` and the row-data one `migrate-data`?
 
-In standard tooling (Prisma Migrate, Rails, Flyway, Liquibase), "migrate" means schema-only DDL changes. `export-data` correctly names what the command actually does: read row data from Google Sheets and generate an insertion script. The old `lsdb migrate` alias still works but emits a deprecation warning.
+In standard tooling (Prisma Migrate, Rails, Flyway, Liquibase), "migrate" means schema-only DDL changes — so `migrate` is the command that emits Prisma/SQL schema, and `migrate-data` is the (separately named, separately run) command that moves row data. This package briefly used `export`/`export-data` naming instead; that turned out to be more confusing precisely *because* "migrate" already has an established meaning in the ecosystem this package is meant to hand off to. `lsdb export` and `lsdb export-data` still work as deprecated aliases but emit a deprecation warning.
 
 ---
 
@@ -459,11 +460,14 @@ Actors whose `DEV_*_SHEET_ID` env var is not set are skipped with a warning (non
 | `lsdb seed <file> --upsert` | Update on unique conflict instead of throwing |
 | `lsdb seed <file> --all-actors` | Distribute seed data to all registered user sheets |
 | `lsdb mock-users [count]` | Create mock Google Sheets for dev/testing (default: 3) |
-| `lsdb export --prisma` | Export schemas to `schema.prisma` |
-| `lsdb export --sql` | Export schemas to SQL `CREATE TABLE` DDL |
-| `lsdb export-data` | Generate data export script (admin sheet) |
-| `lsdb export-data --all-users` | Generate data export script (admin + all user sheets) |
-| `lsdb export-data --all-users --dry-run` | Preview export plan without writing files |
+| `lsdb migrate --prisma` | Export schemas to `schema.prisma` |
+| `lsdb migrate --sql` | Export schemas to SQL `CREATE TABLE` DDL |
+| `lsdb migrate-data` | Generate data export script (admin sheet) |
+| `lsdb migrate-data --all-users` | Generate data export script (admin + all user sheets) |
+| `lsdb migrate-data --all-users --dry-run` | Preview export plan without writing files |
+| `lsdb drop-table [names...]` | Delete table schema file(s) + Google Sheet tab(s) — interactive if no names given |
+| `lsdb drop-column [table] [cols...]` | Delete column(s) from a table's schema file + live sheet |
+| `lsdb rename-column [table] [old] [new]` | Rename a column in place — schema file + sheet header, data preserved |
 | `lsdb doctor` | Health check: env vars, config, OAuth tokens, schema directory |
 | `lsdb status` | Show actors, env var values, OAuth state, all registered tables |
 
@@ -591,3 +595,37 @@ You can (`cache: { enabled: false }`), but there's no real reason to — the cac
 ### The cache smooths out bursts, but is Google Sheets the right backing store for a busier production admin panel?
 
 The cache buys real headroom (it can turn N reads within a burst into 1 API call), but it's still a per-process, best-effort layer, not a substitute for a real database's read scalability. If you're consistently near quota even with caching — many concurrent staff users, or dashboards that poll frequently — that's a signal you're past the intended use case for lsdb (staging/MVP/internal tools) and it's time to look at [migrating to a production database](#8-migration-to-production). In the meantime, also consider: requesting a Sheets API quota increase in Google Cloud Console, reducing frontend polling/refetch frequency (e.g. React Query `staleTime`), and batching multiple table reads behind a single request handler rather than issuing them from several separate endpoints.
+
+---
+
+## 12. Dropping & Renaming Schema Elements
+
+### `sync` never deletes anything. How do I remove a table or column I no longer need?
+
+`sync`/`syncSchema()` is deliberately additive-only — see [§5](#5-schema-versioning--keeping-user-sheets-in-sync) and [§9](#9-developer-workflow--cli): it creates missing tabs and appends missing columns, but never removes or renames anything, so it can never silently lose data on its own. That's a feature, not a gap — but it means deleting a table/column from the schema file alone does nothing to the live sheet.
+
+Use the dedicated commands instead, each of which touches the schema file *and* the live Google Sheet together, with a confirmation prompt and `--dry-run`:
+
+```bash
+npx lsdb drop-table bookings                     # deletes the schema file + the sheet tab
+npx lsdb drop-column bookings notes               # deletes the column from schema file + sheet
+npx lsdb rename-column bookings notes remarks     # renames in place — data preserved
+```
+
+All three accept `--all-users` to also apply the change to every registered user's personal sheet (same `actor_sheet_id` lookup from the admin `users` table that `sync --all-users` and `migrate-data --all-users` use), `--yes` to skip the confirmation prompt for scripting, and `--token-file` for CI.
+
+### Why does `rename-column` edit the header cell in place instead of dropping the old column and adding the new one?
+
+Drop-and-re-add would work syntactically (schema file ends up correct either way) but it's a real data-loss trap: deleting a Google Sheets column deletes every value in it, and there's no way to "re-add" that data under the new name afterward — it's already gone. `rename-column` instead resolves the column's current position in the sheet's live header row and overwrites just that one header cell (`SheetClient.updateHeaderCell()`), leaving every data row completely untouched. This is the whole point of having a dedicated rename command rather than telling developers to "drop it and add a new one" — the naive approach is the one that loses data, especially painful if it happens across every registered user's sheet on the next `--all-users` run.
+
+### If I rename or drop a column that another table's `ref()` points at, does lsdb fix that for me?
+
+No — this is a real limitation, not an oversight. `ref('table.column')` is a plain string embedded in a *different* schema file (`.ref('bookings.notes')` inside, say, `schemas/user/comments.ts`). `rename-column`/`drop-column`/`drop-table` scan every loaded schema for a matching `ref()` and print a warning listing which other tables are affected, but they don't rewrite those strings automatically — editing another table's schema file as a side effect of an unrelated command felt more surprising than helpful, and `ref()` values are also used for genuinely intentional FK relationships you may want to review by hand anyway. Treat the warning as a checklist: go update those `ref()` calls yourself, then re-run `lsdb sync` (or the app will start throwing `SchemaError: Referenced table 'X' is not registered`-style FK validation failures against the old name).
+
+### Can I drop a table's primary key column, or the auto-generated `_id`/`_created_at`/`_updated_at`/`_deleted_at` columns?
+
+No, both are blocked on purpose. The reserved columns (`_id`, `_created_at`, `_updated_at`, `_deleted_at`) are managed entirely by `defineTable()` — see [Schema Definition](./skills/schema/SKILL.md) — and were never meant to be hand-edited. The primary key is blocked from `drop-column` specifically (renaming it is fine) because dropping a table's identity column is a strictly bigger operation than removing a regular column; if you actually want to get rid of the whole data domain, `drop-table` is the explicit way to say that.
+
+### Does `drop-column`/`rename-column` know which column is which if `sync` appended new columns out of order?
+
+Yes — they resolve each column's position from the sheet's *current* header row (a fresh read via `getAllRows()`) rather than from the schema file's declared column order. Those two orders can genuinely differ: `syncSchema()` appends newly-added columns to the end of the header row rather than reordering existing ones, so a schema file's top-to-bottom column order is not guaranteed to match what's actually in row 1 of the sheet. Resolving live, per sheet, per run avoids deleting or renaming the wrong column when file order and sheet order have drifted apart.
