@@ -625,6 +625,22 @@ npx lsdb status
 
 Shows all registered tables, actors, and their sheet IDs.
 
+### ER Diagram
+
+```bash
+npx lsdb erdiagram
+# pnpm dlx lsdb erdiagram
+# yarn dlx lsdb erdiagram
+# bunx lsdb erdiagram
+```
+
+Generates `ER-DIAGRAM.md` (Mermaid `erDiagram`) mapping every registered table, its columns, and `ref()` relationships — offline, no Google Sheets calls. If the file already exists, prompts to overwrite, save under a different name, or cancel; pass `--yes` to overwrite non-interactively, or `--output <file>` to target a different path.
+
+```bash
+npx lsdb erdiagram --output docs/schema.md
+npx lsdb erdiagram --yes
+```
+
 ## 🔐 Authentication
 
 ### Google OAuth

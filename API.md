@@ -791,6 +791,24 @@ npx lsdb rename-column bookings notes remarks
 npx lsdb rename-column                        # fully interactive
 ```
 
+### `lsdb erdiagram [--output <file>] [--yes]`
+
+Generates a Markdown file containing a Mermaid `erDiagram` of every registered table and its `ref()` relationships — a quick visual map of the schema, viewable directly on GitHub/GitLab or in any Mermaid-aware Markdown viewer. Offline — reads schema files only, no Google Sheets/OAuth calls.
+
+- Entities list every column with its type and, where applicable, a key marker: `PK` (primary key), `FK` (`ref()` column), or `UK` (`unique()` column) — `PK` takes priority over `FK`/`UK` on the same column
+- Relationship lines connect the referenced table to the referencing table, labeled with the FK column name; cardinality is `||--||` (one-to-one) when the FK column is also `unique()`, otherwise `||--o{` (one-to-many)
+- A `ref()` pointing at a table not registered on this adapter is skipped from the diagram rather than emitting a broken relationship line
+- `--output <file>` — output file path (default: `ER-DIAGRAM.md` in the current directory)
+- `--yes` — overwrite an existing output file without prompting
+
+```bash
+npx lsdb erdiagram
+npx lsdb erdiagram --output docs/schema.md
+npx lsdb erdiagram --yes
+```
+
+If the target file already exists and `--yes` isn't passed, prompts to overwrite, save under a different name (looped until you pick a free/confirmed name), or cancel.
+
 ### `lsdb doctor`
 
 Health check: validates env vars, config file, OAuth tokens, and schema directory.

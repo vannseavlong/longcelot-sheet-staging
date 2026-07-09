@@ -18,6 +18,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.30] — 2026-07-09
+
+### Added
+
+- **`lsdb erdiagram [--output <file>] [--yes]`** — generates a Markdown file (default `ER-DIAGRAM.md`) containing a Mermaid `erDiagram` of every registered table: columns with type + `PK`/`FK`/`UK` markers, and a relationship line per `ref()` column (`||--||` when the FK column is `unique()`, otherwise `||--o{`). Offline — reads schema files only, no Google Sheets/OAuth calls. If the target file already exists, prompts to overwrite, save under a different name, or cancel; `--yes` overwrites non-interactively for scripting/CI.
+
+---
+
 ## [0.1.29] — 2026-07-08
 
 ### Changed

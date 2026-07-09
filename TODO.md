@@ -421,6 +421,20 @@
 
 ---
 
+## Phase 14: ER Diagram CLI (2026-07-09)
+
+### 14.1 `lsdb erdiagram`
+
+- [x] `src/cli/commands/erdiagram.ts` — `generateMermaidERDiagram()` builds a Mermaid `erDiagram` block from loaded `TableSchema[]`: entity blocks with column type + `PK`/`FK`/`UK` markers (PK takes priority), relationship lines per `ref()` column (`||--||` when the FK column is `unique()`, otherwise `||--o{`), dangling `ref()`s (target table not in the loaded set) skipped rather than emitting a broken line
+- [x] Wraps the diagram in a Markdown file (`# ER Diagram` header, tables-by-actor summary, ` ```mermaid ` fenced block) — default output `ER-DIAGRAM.md` in the project root, overridable via `--output <file>`
+- [x] Re-run behavior: if the target file exists, interactive prompt to overwrite / save under a different name (looped via `resolveOutputPath()` until a free/confirmed path is chosen) / cancel; `--yes` skips the prompt and always overwrites
+- [x] Offline — uses `loadSchemasWithPaths()` (schema files only), no adapter/OAuth/Google Sheets calls, consistent with `lsdb migrate`
+- [x] Registered in `src/cli/index.ts` with `--output`/`--yes` options
+- [x] Tests: entity blocks, PK/FK/UK marker precedence (`_id` fallback vs explicit `primary()`, FK winning over UK), one-to-one vs one-to-many cardinality, dangling `ref()` skipped, empty schema list
+- [x] Docs: README.md (CLI section), API.md (CLI Commands reference), FAQ.md (§9 command table), CLAUDE.md (Common Commands), CHANGELOG.md (`[Unreleased]`)
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables

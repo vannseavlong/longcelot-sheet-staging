@@ -18,6 +18,7 @@ import { exportDataCommand } from './commands/export-data';
 import { dropTableCommand } from './commands/drop-table';
 import { dropColumnCommand } from './commands/drop-column';
 import { renameColumnCommand } from './commands/rename-column';
+import { erdiagramCommand } from './commands/erdiagram';
 
 const invokedAs = path.basename(process.argv[1] ?? '');
 if (invokedAs === 'sheet-db') {
@@ -120,6 +121,13 @@ program
   .option('--output <dir>', 'Output directory (default: current directory)')
   .option('--dry-run', 'Preview export plan without writing any files')
   .action((options) => exportDataCommand({ ...options, allUsers: options.allUsers }));
+
+program
+  .command('erdiagram')
+  .description('Generate a Mermaid ER diagram of table schemas and relationships as a Markdown file')
+  .option('--output <file>', 'Output file path (default: ER-DIAGRAM.md in project root)')
+  .option('--yes', 'Overwrite an existing output file without prompting')
+  .action((options) => erdiagramCommand(options));
 
 program
   .command('drop-table [table-names...]')

@@ -468,6 +468,7 @@ Actors whose `DEV_*_SHEET_ID` env var is not set are skipped with a warning (non
 | `lsdb drop-table [names...]` | Delete table schema file(s) + Google Sheet tab(s) — interactive if no names given |
 | `lsdb drop-column [table] [cols...]` | Delete column(s) from a table's schema file + live sheet |
 | `lsdb rename-column [table] [old] [new]` | Rename a column in place — schema file + sheet header, data preserved |
+| `lsdb erdiagram [--output <file>] [--yes]` | Generate a Mermaid ER diagram (`ER-DIAGRAM.md`) of tables and `ref()` relationships |
 | `lsdb doctor` | Health check: env vars, config, OAuth tokens, schema directory |
 | `lsdb status` | Show actors, env var values, OAuth state, all registered tables |
 

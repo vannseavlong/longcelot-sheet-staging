@@ -29,6 +29,7 @@ npx lsdb validate   # Validate schema definitions
 npx lsdb seed       # Seed test data
 npx lsdb doctor     # Health check
 npx lsdb status     # Show registered tables
+npx lsdb erdiagram  # Generate Mermaid ER diagram (ER-DIAGRAM.md)
 ```
 
 ## Architecture
