@@ -1,6 +1,6 @@
 import { CRUDOperations } from '../../src/adapter/crud';
 import { defineTable } from '../../src/schema/defineTable';
-import { string, number, boolean, json } from '../../src/schema/columnBuilder';
+import { string, number, boolean, json, date } from '../../src/schema/columnBuilder';
 import { MockSheetClient } from '../fixtures/mockSheetClient';
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
@@ -191,6 +191,79 @@ describe('CRUDOperations boolean() value-pair', () => {
 
     expect(record!.active).toBe(true); // stored as 'TRUE'
     expect(record!.legacy_flag).toBe(true); // stored as '1'
+  });
+});
+
+// ── date() serialization (regression — reported downstream as double-quoted /
+// unparseable schedule dates crashing a consuming app's render) ────────────────
+
+describe('CRUDOperations date() serialization', () => {
+  const eventSchema = defineTable({
+    name: 'events',
+    actor: 'admin',
+    columns: {
+      label: string().required(),
+      starts_at: date(),
+    },
+  });
+
+  it('writes a Date object as a clean ISO string, not JSON.stringify-wrapped', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, eventSchema);
+
+    await crud.create({ label: 'Launch', starts_at: new Date('2026-07-14T03:00:00.000Z') });
+
+    const headers = client.getRows(SHEET_ID, 'events')[0];
+    const row = client.getRows(SHEET_ID, 'events')[1];
+    // No embedded quote characters — this is the exact corruption that made the cell
+    // unparseable by any downstream `new Date(value)` call.
+    expect(row[headers.indexOf('starts_at')]).toBe('2026-07-14T03:00:00.000Z');
+  });
+
+  it('round-trips a Date object through create() + findOne() as a plain ISO string', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, eventSchema);
+
+    await crud.create({ label: 'Launch', starts_at: new Date('2026-07-14T03:00:00.000Z') });
+    const record = await crud.findOne({ where: { label: 'Launch' } });
+
+    expect(record!.starts_at).toBe('2026-07-14T03:00:00.000Z');
+  });
+
+  it('accepts an ISO string directly, unchanged', async () => {
+    const client = new MockSheetClient();
+    const crud = new CRUDOperations(client as any, SHEET_ID, eventSchema);
+
+    await crud.create({ label: 'Launch', starts_at: '2026-07-14T03:00:00.000Z' });
+    const record = await crud.findOne({ where: { label: 'Launch' } });
+
+    expect(record!.starts_at).toBe('2026-07-14T03:00:00.000Z');
+  });
+
+  it('cleans up a legacy JSON.stringify-corrupted cell written before this fix', async () => {
+    const client = new MockSheetClient();
+    // Simulates a row written by a pre-fix version of the package (or by any other
+    // writer that pushed a raw Date through the old generic JSON.stringify() branch).
+    client.seed(SHEET_ID, 'events', [
+      ['_id', 'label', 'starts_at'],
+      ['evt_1', 'Legacy', '"2026-07-14T03:00:00.000Z"'],
+    ]);
+    const crud = new CRUDOperations(client as any, SHEET_ID, eventSchema);
+
+    const record = await crud.findOne({ where: { label: 'Legacy' } });
+    expect(record!.starts_at).toBe('2026-07-14T03:00:00.000Z');
+  });
+
+  it('falls back to the raw unwrapped value when the cell is not a parseable date', async () => {
+    const client = new MockSheetClient();
+    client.seed(SHEET_ID, 'events', [
+      ['_id', 'label', 'starts_at'],
+      ['evt_1', 'Garbage', 'not-a-date'],
+    ]);
+    const crud = new CRUDOperations(client as any, SHEET_ID, eventSchema);
+
+    const record = await crud.findOne({ where: { label: 'Garbage' } });
+    expect(record!.starts_at).toBe('not-a-date');
   });
 });
 

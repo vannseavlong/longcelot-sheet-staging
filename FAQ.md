@@ -556,6 +556,18 @@ columns: {
 
 Existing sheets are unaffected at the data level — already-written cells already hold literal `TRUE`/`FALSE` text underneath the old checkbox widget, and `deserializeRow()` accepts both `'TRUE'` and `'1'` as true regardless of which format is currently configured, so rows written before and after a format change both read back correctly. The only visible change is cosmetic: a dropdown showing text instead of a checkbox tick, starting from the next `lsdb sync`.
 
+### Why did a `date()` column read back as unparseable, wrapped in literal quote characters? (incident write-up)
+
+This was a real bug (fixed in `longcelot-sheet-db@0.1.31` — see CHANGELOG.md), not expected behavior. A downstream app called `create()` with a native `Date` instance for a `date()` column (e.g. `schedule_date: new Date(payload.scheduleStartDate)`) instead of pre-converting it with `.toISOString()`. `serializeValue()` had no special case for `Date` — `typeof value === 'object'` is true for a `Date`, so it fell straight into the generic `JSON.stringify(value)` branch meant for plain objects/arrays. `JSON.stringify()` on a `Date` calls its `.toJSON()` method, which returns the ISO string, but `JSON.stringify` still wraps *any* string result in a literal pair of `"` characters — so the cell ended up holding the 28-character text `"2026-07-14T03:00:00.000Z"`, quotes included, instead of the 24-character ISO string.
+
+The second-order effect is what made this a crash, not just a cosmetic wart: every consumer that read that cell back and called `new Date(cellValue)` — the exact pattern used everywhere else in this package for `_created_at`/`_updated_at` — got an Invalid Date, because `new Date('"2026-07-14T03:00:00.000Z"')` (with the quote characters as part of the string) does not parse. One downstream admin dashboard piped that straight into a date-formatting call with no guard, which throws on an invalid date and — with no error boundary — took down the entire page render.
+
+Two independent fixes, both now shipped:
+- `serializeValue()` now checks `value instanceof Date` *before* the generic object branch and normalizes it with `.toISOString()` — a `Date` and an ISO string passed to `create()`/`update()` now produce byte-identical cell text.
+- `deserializeRow()` gained a `case 'date'` that strips a wrapping quote pair if present and re-parses the result, so **rows already corrupted by the old behavior self-heal automatically on the next read** — no backfill script or manual sheet edit needed. If the cell still isn't a parseable date after unwrapping (e.g. someone hand-typed garbage into the sheet), it's returned unwrapped and unchanged rather than silently discarded.
+
+If you're on an older version and can't upgrade immediately, the safe workaround on the write side is the same discipline `_created_at`/`_updated_at` already use internally: always call `.toISOString()` yourself before passing a value into a `date()` column, never pass a raw `Date` instance.
+
 ---
 
 ## 11. Google Sheets API Rate Limits & Read Caching

@@ -59,7 +59,7 @@ import { string, number, boolean, date, json } from 'longcelot-sheet-db';
 | `string()` | Plain text | |
 | `number()` | Numeric text | Deserialized to `Number` on read |
 | `boolean()` | `"TRUE"`/`"FALSE"` (or `"1"`/`"0"` — see `format` below) | Deserialized to `true`/`false` on read; both pairs accepted regardless of configured format |
-| `date()` | ISO 8601 string | Store ISO strings; no auto-conversion |
+| `date()` | ISO 8601 string | Accepts a `Date` instance or an ISO string on write, both normalized to the same clean ISO string (see FAQ.md #10) — always deserialized back to a plain ISO string, never a `Date` instance |
 | `json()` | JSON string | Serialized with `JSON.stringify`, parsed on read |
 
 ### `boolean()` value pair

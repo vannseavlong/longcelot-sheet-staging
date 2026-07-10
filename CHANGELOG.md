@@ -18,6 +18,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.31] — 2026-07-10
+
+### Fixed
+
+- **`date()` columns corrupted by a raw `Date` object write, produced unparseable values on read (Critical).** `serializeValue()` had no special case for `Date` instances — they fell into the generic `typeof value === 'object'` branch and got `JSON.stringify()`'d, which wraps the ISO string in a literal pair of quote characters (`'"2026-07-14T03:00:00.000Z"'`) that then got written into the cell as text. `deserializeRow()` had no `case 'date'` to strip that back out, so every later `new Date(cellValue)` on the consuming end produced an Invalid Date — reported downstream as an admin dashboard crashing on render for exactly this reason. Fixed in both directions: `serializeValue()` now normalizes any `Date` instance to `.toISOString()` before it can reach the `JSON.stringify()` path, and `deserializeRow()` gained a `date` case that strips a wrapping quote pair (if present) and re-normalizes to a clean ISO string — so rows already corrupted by the old behavior self-heal on the next read, no migration needed. See FAQ.md #10 for the incident write-up.
+
+---
+
 ## [0.1.30] — 2026-07-09
 
 ### Added

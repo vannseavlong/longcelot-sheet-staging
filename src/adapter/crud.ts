@@ -370,6 +370,15 @@ export class CRUDOperations {
       const [trueValue, falseValue] = format === '1_0' ? ['1', '0'] : ['TRUE', 'FALSE'];
       return value ? trueValue : falseValue;
     }
+    // A raw Date must never reach the generic JSON.stringify() branch below —
+    // JSON.stringify(date) produces a *quoted* ISO string ('"2026-01-01T00:00:00.000Z"'),
+    // and that literal quote pair gets written into the cell as text, corrupting every
+    // later `new Date(cellValue)` read. date()-typed columns already store a plain ISO
+    // string elsewhere (_created_at/_updated_at are written as `new Date().toISOString()`,
+    // never a Date instance) — normalize any Date the same way regardless of which
+    // column it's headed for, so passing a Date instead of remembering .toISOString()
+    // is safe rather than a silent data-corruption footgun.
+    if (value instanceof Date) return value.toISOString();
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   }
@@ -407,12 +416,29 @@ export class CRUDOperations {
             result[header] = value;
           }
           break;
+        case 'date':
+          result[header] = this.cleanDateValue(value);
+          break;
         default:
           result[header] = value;
       }
     });
 
     return result;
+  }
+
+  /**
+   * Normalizes a date() cell back to a clean ISO string. Also defends against rows
+   * written before the serializeValue() fix above (or by any other writer that passed
+   * a raw Date object through the generic JSON.stringify() path) — those cells carry a
+   * literal quote pair around the ISO string, which `new Date(value)` on the consuming
+   * end fails to parse. Falls back to the unwrapped raw value, unchanged, if it still
+   * doesn't parse as a valid date rather than discarding whatever was actually stored.
+   */
+  private cleanDateValue(value: string): string {
+    const unwrapped = value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+    const parsed = new Date(unwrapped);
+    return isNaN(parsed.getTime()) ? unwrapped : parsed.toISOString();
   }
 
   private async checkUniqueness(data: Record<string, unknown>, excludeId: string | null): Promise<void> {

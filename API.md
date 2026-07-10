@@ -120,6 +120,11 @@ legacy_flag: boolean({ format: '1_0' }) // overrides the project-wide default fo
 
 Creates a date column (stored as ISO string).
 
+Accepts either a `Date` instance or an ISO string on `create()`/`update()` — a `Date` is
+normalized to `.toISOString()` before being written, so both forms produce the same clean
+cell text. `findMany()`/`findOne()` always return a plain ISO string (never a `Date`
+instance), matching the auto-managed `_created_at`/`_updated_at` columns.
+
 **Modifiers:**
 
 - `.required()`
@@ -130,6 +135,10 @@ Creates a date column (stored as ISO string).
 ```typescript
 birth_date: date().required()
 expires_at: date()
+
+// Both write the same clean ISO string — pass either directly, no manual .toISOString() needed:
+await table('events').create({ expires_at: new Date() })
+await table('events').create({ expires_at: '2026-07-14T03:00:00.000Z' })
 ```
 
 ### `json()`

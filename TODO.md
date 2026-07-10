@@ -435,6 +435,17 @@
 
 ---
 
+## Phase 15: Bug Fix (developer-reported, 2026-07-10)
+
+### 15.1 `date()` columns corrupted by a raw `Date` object write (Critical) — Fixed
+
+- [x] `serializeValue()`: check `value instanceof Date` before the generic `typeof value === 'object'` → `JSON.stringify()` branch; normalize to `.toISOString()` instead, so a `Date` and an ISO string produce identical cell text
+- [x] `deserializeRow()`: added `case 'date'` — strips a wrapping quote pair if present (self-heals rows already corrupted by the old behavior, no backfill needed) and re-normalizes to a clean ISO string; falls back to the raw unwrapped value if it still isn't a parseable date
+- [x] Tests: `Date` object writes clean, round-trips through `create()`/`findOne()`, ISO string input unchanged, legacy quote-wrapped cell self-heals on read, unparseable cell falls back to raw value
+- [x] Docs: FAQ.md #10 incident write-up, API.md `date()` section (accepted input types), CHANGELOG.md `[Unreleased]`
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables
@@ -451,3 +462,4 @@
 - [x] API.md: Migration scenarios table, `export-data` command reference alignment (superseded — see Phase 13)
 - [x] CLAUDE.md: read cache architecture note; API.md: `SheetReadCacheConfig` type + CRUD Operations caching note; FAQ.md: Rate Limits & Read Caching section (#11); README.md: Read Caching subsection; CHANGELOG.md: 0.1.28 entry
 - [x] README.md, API.md, FAQ.md, TODO.md, CHANGELOG.md, skills/cli/SKILL.md, skills/migrations/SKILL.md, Docs/overview.md, skills/_artifacts/skill_spec.md: `drop-table`/`drop-column`/`rename-column` commands, `export`/`export-data` → `migrate`/`migrate-data` rename (see Phase 13)
+- [x] API.md: `date()` accepted-input clarification; FAQ.md: `date()` corruption incident write-up (§10); CHANGELOG.md: `[Unreleased]` entry (see Phase 15)
