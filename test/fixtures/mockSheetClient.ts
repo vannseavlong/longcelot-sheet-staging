@@ -86,6 +86,14 @@ export class MockSheetClient {
     return rows.length; // 1-based row number of the row just written (header is row 1)
   }
 
+  async appendRows(spreadsheetId: string, sheetName: string, rows: any[][]): Promise<void> {
+    this._ensureSheet(spreadsheetId, sheetName);
+    const sheetRows = this.spreadsheets.get(spreadsheetId)!.get(sheetName)!;
+    for (const row of rows) {
+      sheetRows.push([...row]);
+    }
+  }
+
   async getAllRows(spreadsheetId: string, sheetName: string): Promise<any[][]> {
     this._ensureSheet(spreadsheetId, sheetName);
     return this.spreadsheets.get(spreadsheetId)!.get(sheetName)!.map((r) => [...r]);

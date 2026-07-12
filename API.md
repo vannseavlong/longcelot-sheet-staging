@@ -5,6 +5,7 @@
 - [Schema Definition](#schema-definition)
 - [Column Builders](#column-builders)
 - [Sheet Adapter](#sheet-adapter)
+- [SQL Adapters](#sql-adapters)
 - [CRUD Operations](#crud-operations)
 - [Authentication](#authentication)
 - [CLI Commands](#cli-commands)
@@ -389,6 +390,92 @@ Syncs a schema to Google Sheets. Creates the tab if missing, appends any new col
 await adapter.syncSchema(bookingsSchema);
 ```
 
+## SQL Adapters
+
+Postgres, MySQL, and Prisma-backed alternatives to `createSheetAdapter` — all implement the same `DatabaseAdapter`/`TableOperations` contract (see [Type Definitions](#databaseadapter)), so `adapter.withContext({...}).table(name).create({...})` calls are identical regardless of engine. See [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy) for the tenancy design (`tenant_id` column injection) and the cross-engine bugs found while building these.
+
+### createPostgresAdapter(config)
+
+```typescript
+function createPostgresAdapter(config: PostgresAdapterConfig): SQLAdapterBase; // implements DatabaseAdapter
+```
+
+`pg` is an optional peerDependency, lazily `require()`'d only inside this factory — throws `SchemaError` with an install hint if missing and no `pool` was passed. See [`PostgresAdapterConfig`](#postgresadapterconfig).
+
+```typescript
+const adapter = createPostgresAdapter({ connectionString: process.env.DATABASE_URL });
+adapter.registerSchemas([productsSchema, ordersSchema]);
+```
+
+### createMySQLAdapter(config)
+
+```typescript
+function createMySQLAdapter(config: MySQLAdapterConfig): SQLAdapterBase; // implements DatabaseAdapter
+```
+
+Same shape as `createPostgresAdapter`, backed by `mysql2/promise` (also an optional peerDependency, lazily required). See [`MySQLAdapterConfig`](#mysqladapterconfig).
+
+### createPrismaAdapter(config)
+
+```typescript
+function createPrismaAdapter(config: PrismaAdapterConfig): PrismaAdapterBase; // implements DatabaseAdapter
+```
+
+Takes an **already-constructed, already-`prisma generate`'d `PrismaClient` instance** — this package never performs Prisma codegen or migrations itself (see FAQ.md §13 for why). Run `lsdb migrate --prisma` to produce `schema.prisma`, then `prisma generate` as a normal build step.
+
+```typescript
+import { PrismaClient } from '@prisma/client';
+
+const adapter = createPrismaAdapter({ client: new PrismaClient() });
+adapter.registerSchemas([productsSchema, ordersSchema]);
+```
+
+### createDatabaseAdapter(config?)
+
+```typescript
+function createDatabaseAdapter(config?: DatabaseAdapterFactoryConfig): DatabaseAdapter;
+```
+
+Single top-level factory — picks the engine from `config.driver`, falling back to `$DB_DRIVER`, falling back to `'sheets'`. Simultaneously the "one config value picks the engine" story and the env-driven CI/CD story (a dev's `.env` sets `DB_DRIVER=sheets`; a pipeline's env sets `DB_DRIVER=postgres` + `$DATABASE_URL`), with zero application code branching. **Does not support `driver: 'prisma'`** — there's no env var that can hold a live `PrismaClient` object; Prisma-track consumers keep one line of branching in their own app instead (see FAQ.md §13).
+
+```typescript
+const adapter = createDatabaseAdapter(); // reads $DB_DRIVER, or defaults to 'sheets'
+adapter.registerSchemas(schemas);
+```
+
+**Config shapes:**
+
+```typescript
+interface PostgresAdapterConfig {
+  connectionString?: string;  // falls back to $DATABASE_URL
+  pool?: unknown;              // pass a pre-built pg.Pool instead of letting the adapter construct one
+  tenantColumn?: string;       // default: 'tenant_id'
+  permissions?: Record<string, ActorPermission>;
+}
+
+interface MySQLAdapterConfig {
+  connectionString?: string;  // falls back to $DATABASE_URL
+  pool?: unknown;              // pass a pre-built mysql2/promise pool
+  tenantColumn?: string;       // default: 'tenant_id'
+  permissions?: Record<string, ActorPermission>;
+}
+
+interface PrismaAdapterConfig {
+  client: unknown;             // an already-constructed, already-generated PrismaClient
+  tenantColumn?: string;       // default: 'tenant_id'
+  permissions?: Record<string, ActorPermission>;
+}
+
+interface DatabaseAdapterFactoryConfig {
+  driver?: 'sheets' | 'postgres' | 'mysql';  // falls back to $DB_DRIVER, then 'sheets'
+  sheets?: SheetAdapterConfig;
+  postgres?: PostgresAdapterConfig;
+  mysql?: MySQLAdapterConfig;
+}
+```
+
+> **Config that doesn't carry over**: `sheetStyle`, `cache`, `driveFolder`, `sharedDriveId`, and `onSchemaMismatch` are Sheets-specific and have no equivalent on the SQL adapters — they were never part of the shared `DatabaseAdapter` contract. The SQL adapters also never auto-create/alter tables at runtime (unlike `SheetAdapter.syncSchema()`); schema application is a deploy-time step — see [`lsdb migrate --apply`](#lsdb-migrate).
+
 ## CRUD Operations
 
 > **Read caching**: `findMany()`, `findOne()`, `count()`, `update()`, and `delete()` all read through `SheetClient.getAllRows()`, which caches each tab's rows in memory for a short TTL (default 2s, enabled by default) and de-duplicates concurrent reads for the same tab into a single Sheets API request. This exists to keep normal usage under Google's read-quota limits — see [`SheetReadCacheConfig`](#sheetreadcacheconfig) to tune it and FAQ.md #11 for the incident that motivated it. Every write (`create`, `update`, `delete`, `createMany`) invalidates the cache for the tab it touched, so a read immediately after a write through the same adapter instance always sees fresh data.
@@ -706,37 +793,54 @@ npx lsdb mock-users
 npx lsdb mock-users 5
 ```
 
-### `lsdb migrate [--prisma] [--sql] [--output <dir>]`
+### `lsdb migrate [--prisma] [--sql] [--output <dir>] [--apply] [--connection-string <url>] [--driver <driver>] [--dry-run]`
 
-Exports registered schemas to production DB formats.
+Exports registered schemas to production DB formats, and optionally applies them to a live database.
 
 - `--prisma` — writes `schema.prisma` (Prisma DSL)
 - `--sql` — writes `schema.sql` (SQL DDL `CREATE TABLE` statements)
 - `--output <dir>` — output directory (default: current directory)
+- `--apply` — apply the generated DDL to a live database. With `--sql`, executes each statement (lazy-requires `pg`/`mysql2`, same optional-peerDependency pattern as `createPostgresAdapter`/`createMySQLAdapter`) and treats a native "already exists" error as success, so reruns are idempotent even though plain `CREATE INDEX` has no `IF NOT EXISTS` clause on MySQL. With `--prisma`, shells out to `npx prisma migrate deploy` (needs an existing `migrations/` folder — run `prisma migrate dev` once locally first).
+- `--connection-string <url>` — target DB for `--apply` (falls back to `$DATABASE_URL`)
+- `--driver <postgres|mysql>` — inferred from the connection string's scheme when omitted (`postgres://`/`postgresql://` → postgres, `mysql://` → mysql)
+- `--dry-run` — with `--apply`, print the statements/command that would run without executing them
 
 ```bash
 npx lsdb migrate --prisma --output ./prisma
 npx lsdb migrate --sql
 npx lsdb migrate --prisma --sql --output ./migration
+
+npx lsdb migrate --sql --apply --connection-string postgres://user:pass@host/db
+npx lsdb migrate --sql --apply --driver mysql --dry-run
+npx lsdb migrate --prisma --apply
 ```
 
-### `lsdb migrate-data [--table <name>] [--all-users] [--output <dir>] [--dry-run]`
+### `lsdb migrate-data [--table <name>] [--all-users] [--output <dir>] [--dry-run] [--run] [--connection-string <url>] [--driver <driver>] [--token-file <path>]`
 
-Generates a `migrate-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
+Without `--run`: generates a `migrate-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
+
+With `--run`: skips the generated script and executes the same admin-then-per-user traversal immediately, upserting every row into a real `createPostgresAdapter`/`createMySQLAdapter` target by `_id` (unconditionally idempotent — safe to rerun from CI without a separate `--upsert` flag). `--driver prisma` is not supported for `--run` — there's no way for a CLI process to construct a consumer's typed `PrismaClient`; use `--driver postgres`/`mysql` for the one-time cutover regardless of which client the app uses long-term (see [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy)).
 
 > **Actors vs RBAC roles** — see [Actors vs Application Roles](#actors-vs-application-roles) below.
 
 **Flags:**
-- `--table <name>` — export a single table only
-- `--all-users` — also reads every registered user's `actor_sheet_id` from the admin `users` table and exports their actor sheets. The generated script includes a per-user loop with `userId` passed to `insertRow` so target DB rows can be associated with the correct user FK.
-- `--output <dir>` — output directory (default: current directory)
-- `--dry-run` — preview export plan without writing any files
+- `--table <name>` — migrate a single table only
+- `--all-users` — also reads every registered user's `actor_sheet_id` from the admin `users` table and migrates their actor sheets. Without `--run`, the generated script includes a per-user loop with `userId` passed to `insertRow`; with `--run`, each user's rows are upserted under their own tenant-scoped context.
+- `--output <dir>` — output directory for the generated script (default: current directory; ignored with `--run`)
+- `--dry-run` — without `--run`, preview the export plan without writing a file; with `--run`, print row counts without writing anything
+- `--run` — execute the cutover now, in-process, instead of generating a script
+- `--connection-string <url>` — target DB for `--run` (falls back to `$DATABASE_URL`)
+- `--driver <postgres|mysql>` — inferred from the connection string when omitted
+- `--token-file <path>` — pre-stored OAuth tokens for `--run`'s Sheets read side, skips interactive login (CI-friendly, same convention as `sync --token-file`)
 
 ```bash
 npx lsdb migrate-data
 npx lsdb migrate-data --all-users
 npx lsdb migrate-data --all-users --dry-run
 npx lsdb migrate-data --table bookings
+
+npx lsdb migrate-data --run --connection-string $DATABASE_URL --driver postgres
+npx lsdb migrate-data --run --all-users --driver mysql --token-file token.json
 ```
 
 > **Deprecated aliases**: `lsdb export` and `lsdb export-data` still work but emit a deprecation warning — they forward to `lsdb migrate` and `lsdb migrate-data` respectively. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes, which is why the schema/DDL export command is named `migrate`; the row-data export command is `migrate-data`.
@@ -746,9 +850,11 @@ npx lsdb migrate-data --table bookings
 | Goal | Command |
 |------|---------|
 | Copy table structure only (schema / DDL) | `lsdb migrate --prisma` or `--sql` |
+| Apply that DDL to a live Postgres/MySQL database | `lsdb migrate --sql --apply --connection-string $DATABASE_URL` |
 | Copy structure + admin sheet row data | `lsdb migrate-data` |
 | Copy structure + all user-sheet row data | `lsdb migrate-data --all-users` |
-| Preview export plan without writing files | add `--dry-run` to either command |
+| Run the data cutover now, no generated script | `lsdb migrate-data --run --connection-string $DATABASE_URL --driver postgres` |
+| Preview any of the above without writing/executing | add `--dry-run` |
 
 ### `lsdb drop-table [table-names...] [--all-users] [--yes] [--dry-run] [--token-file <path>]`
 
@@ -884,6 +990,51 @@ await ctx.table('scores').delete({ where: { _id: 'score_001' } });
 ---
 
 ## Type Definitions
+
+### `DatabaseAdapter`
+
+The formal contract every storage engine implements (`SheetAdapter`, and the [SQL adapters](#sql-adapters)) — `src/adapter/types.ts`. Implement this to back `adapter.table(name)` with a storage engine of your own without reaching into internals.
+
+```typescript
+interface DatabaseAdapter {
+  withContext(context: UserContext): DatabaseAdapter;
+  asActor(targetActor: string, targetSheetId: string): DatabaseAdapter;
+  table(tableName: string): TableOperations;
+}
+```
+
+### `TableOperations`
+
+`CRUDOperations`' public shape, extracted so a non-Sheets storage engine can back `adapter.table(name)` with its own implementation.
+
+```typescript
+interface TableOperations {
+  create(data: Record<string, unknown>, options?: CreateOptions): Promise<Record<string, unknown>>;
+  createMany(records: Record<string, unknown>[], options?: CreateOptions): Promise<Record<string, unknown>[]>;
+  findMany(options?: FindOptions): Promise<Record<string, unknown>[]>;
+  findOne(options?: FindOptions): Promise<Record<string, unknown> | null>;
+  update(options: UpdateOptions): Promise<number>;
+  upsert(options: UpsertOptions): Promise<Record<string, unknown>>;
+  delete(options: DeleteOptions): Promise<number>;
+  count(options?: Pick<FindOptions, 'where' | 'includeDeleted'>): Promise<number>;
+}
+```
+
+### `StorageClient`
+
+The subset of `SheetClient` that `CRUDOperations` actually depends on — decoupling it from the concrete class means a SQL-backed equivalent can implement this interface directly instead of `SheetClient`. `extendValidation` is optional: it re-applies Sheets checkbox/dropdown validation ranges and has no equivalent concept in a SQL engine.
+
+```typescript
+interface StorageClient {
+  getAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]>;
+  appendRow(spreadsheetId: string, sheetName: string, values: string[]): Promise<number>;
+  appendRows(spreadsheetId: string, sheetName: string, rows: string[][]): Promise<void>;
+  updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: string[]): Promise<void>;
+  deleteRow(spreadsheetId: string, sheetName: string, rowIndex: number): Promise<void>;
+  writeHeader(spreadsheetId: string, sheetName: string, headers: string[]): Promise<void>;
+  extendValidation?(spreadsheetId: string, sheetName: string, rules: ColumnValidationRule[], dataRowCount: number): Promise<void>;
+}
+```
 
 ### `TableSchema`
 

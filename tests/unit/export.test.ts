@@ -82,10 +82,14 @@ describe('generatePrismaModel()', () => {
     expect(output).toMatch(/age\s+Float\?/);
   });
 
-  it('adds @unique for unique columns', () => {
+  it('adds a composite @@unique([tenant_id, col]) for unique columns on a tenant-scoped table', () => {
+    // uniqueSchema.actor is 'user' (non-admin/tenant-scoped) — a bare field-level @unique would
+    // enforce uniqueness globally across every tenant instead of per-tenant, so it's emitted as
+    // a model-level @@unique constraint instead. See generateSQLTable()'s matching fix and
+    // FAQ.md #13 for why (found via real `prisma db push` + cross-tenant integration testing).
     const output = generatePrismaModel(uniqueSchema);
-    expect(output).toContain('@unique');
-    expect(output).toMatch(/username\s+String.*@unique/);
+    expect(output).not.toMatch(/username\s+String.*@unique/);
+    expect(output).toContain('@@unique([tenant_id, username])');
   });
 
   it('maps all DataTypes to Prisma types correctly', () => {
@@ -115,9 +119,10 @@ describe('generatePrismaModel()', () => {
 // ── generateSQLTable ──────────────────────────────────────────────────────────
 
 describe('generateSQLTable()', () => {
-  it('opens with CREATE TABLE and the schema name', () => {
+  it('opens with CREATE TABLE IF NOT EXISTS and the schema name', () => {
+    // IF NOT EXISTS makes --apply (Phase 16.7) idempotent on rerun — see FAQ.md #13.
     const output = generateSQLTable(simpleSchema);
-    expect(output).toMatch(/^CREATE TABLE users \(/);
+    expect(output).toMatch(/^CREATE TABLE IF NOT EXISTS users \(/);
   });
 
   it('closes with );', () => {
@@ -156,7 +161,7 @@ describe('generateSQLTable()', () => {
     expect(output).toContain('VARCHAR(255)');  // string
     expect(output).toContain('DECIMAL(10,2)'); // number
     expect(output).toContain('BOOLEAN');       // boolean
-    expect(output).toContain('DATETIME');      // date
+    expect(output).toContain('TIMESTAMP');     // date — valid on both Postgres and MySQL
     expect(output).toContain('JSON');          // json
   });
 

@@ -9,3 +9,7 @@ coverage/
 .claude/
 .bolt/
 thesis/
+
+# Generated Prisma Client for the Phase 16.2 Prisma-adapter integration test — regenerate via
+# `npx prisma generate --schema=test/integration/sql/prisma/schema.prisma` (see that test file).
+test/integration/sql/prisma/generated/

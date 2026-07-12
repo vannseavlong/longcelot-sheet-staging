@@ -18,6 +18,7 @@ Answers to architectural, design, and integration questions collected during dev
 10. [Sheet Formatting & Data Validation](#10-sheet-formatting--data-validation)
 11. [Google Sheets API Rate Limits & Read Caching](#11-google-sheets-api-rate-limits--read-caching)
 12. [Dropping & Renaming Schema Elements](#12-dropping--renaming-schema-elements)
+13. [SQL Backend Portability & Tenancy](#13-sql-backend-portability--tenancy)
 
 ---
 
@@ -642,3 +643,69 @@ No, both are blocked on purpose. The reserved columns (`_id`, `_created_at`, `_u
 ### Does `drop-column`/`rename-column` know which column is which if `sync` appended new columns out of order?
 
 Yes — they resolve each column's position from the sheet's *current* header row (a fresh read via `getAllRows()`) rather than from the schema file's declared column order. Those two orders can genuinely differ: `syncSchema()` appends newly-added columns to the end of the header row rather than reordering existing ones, so a schema file's top-to-bottom column order is not guaranteed to match what's actually in row 1 of the sheet. Resolving live, per sheet, per run avoids deleting or renaming the wrong column when file order and sheet order have drifted apart.
+
+---
+
+## 13. SQL Backend Portability & Tenancy
+
+### What is `DatabaseAdapter`, and why does it exist?
+
+`SheetAdapter`'s public shape (`withContext()`, `asActor()`, `table()`) and `CRUDOperations`' public shape (`create`, `createMany`, `findMany`, `findOne`, `update`, `upsert`, `delete`, `count`) are formalized as the `DatabaseAdapter` and `TableOperations` interfaces (`src/adapter/types.ts`). `SheetAdapter` implements `DatabaseAdapter`; so do the Postgres/MySQL/Prisma adapters described below. The point: application code written against `adapter.withContext({...}).table('products').create({...})` doesn't know or care which storage engine is underneath, so swapping `createSheetAdapter` for `createPostgresAdapter`/`createMySQLAdapter`/`createPrismaAdapter`/`createDatabaseAdapter` at production cutover is a config/factory change, not a CRUD-call rewrite. This is the whole premise of the Sheets-for-staging, SQL-for-production story documented in [§8](#8-migration-to-production).
+
+### ADR: how does Sheets' per-user isolation map onto a shared SQL table?
+
+In Sheets, an *actor* (`TableSchema.actor`, e.g. `'seller'`) is a data domain/table-set, but physical tenant isolation happens per **user** — `createUserSheet()` creates one physical spreadsheet per user in production, and `context.actorSheetId` is the ID of one specific user's spreadsheet, not a shared per-actor-type store. SQL has no equivalent "separate physical storage per user" primitive. Three options were considered:
+
+- **Shared tables + a `tenant_id` column, WHERE-scoped in the adapter layer (chosen).** Every non-admin table gets an injected `tenant_id` column; every query the adapter issues is scoped by it. Simplest to implement and test, works identically on Postgres and MySQL, and the enforcement logic lives in one place (`accessControl.ts`) instead of the database.
+- **Postgres Row-Level Security.** More defense-in-depth (the database itself enforces isolation, not just adapter code), but Postgres-only — no MySQL equivalent — and requires session-scoped connection handling (`SET app.tenant_id` per connection) that doesn't fit a simple pooled-connection model.
+- **Schema-per-tenant.** Closest physical analogue to "actor = separate Sheet," but means dynamic schema/database creation at user-onboarding time and connection/search_path routing per request — the heaviest operationally, for isolation guarantees a shared-table approach already provides at the adapter layer.
+
+`tenant_id` deliberately reuses `UserContext.actorSheetId`/`targetSheetId` as an **opaque string** rather than inventing a new context field: for `SheetAdapter` it's a real spreadsheet ID, for the SQL adapters it's just written into `tenant_id` and used in `WHERE tenant_id = $N`. Application code calling `adapter.withContext({ userId, actor, actorSheetId })` needs zero changes to switch adapters. Admin tables (`schema.actor === 'admin'`) get **no** `tenant_id` column at all — global data, matching Sheets' single admin sheet. The default column name is configurable per adapter (`tenantColumn` config option) if `tenant_id` collides with an existing column in your schema.
+
+### Does the cross-actor permission matrix work the same way on SQL?
+
+Yes — `hasPermission()` and `resolveNonAdminTenantKey()` (`src/adapter/accessControl.ts`) were extracted out of `SheetAdapter`'s former private methods specifically so every adapter enforces identical semantics; `SheetAdapter` itself now just delegates to them. The Postgres/MySQL/Prisma adapters call the exact same functions. FK checks are tenant-scoped the same way too: `SheetAdapter.createFKResolver()` resolves a referenced row within the *current context's* sheet (so a same-actor FK stays inside one tenant's data, not a global check) — the SQL/Prisma FK resolvers (`createSQLFKResolver`/`createPrismaFKResolver`) do the identical thing via `resolveNonAdminTenantKey()`. Getting this wrong would be a cross-tenant data-existence leak, not just a wrong-answer bug, which is why it's called out explicitly here.
+
+### `skipFKValidation` behaves differently on SQL than on Sheets — is that a bug?
+
+No, it's intentional. On Sheets, `skipFKValidation: true` means the FK relationship is never checked at all, because Sheets has no native foreign-key enforcement. On the SQL adapters, `skipFKValidation` still skips the app-level pre-check (`validateForeignKeys()`), but once the target table's DDL includes a real `FOREIGN KEY` constraint (see `generateSQLTable()`/`generatePrismaModel()`), the *database itself* still enforces it underneath. A `create()`/`update()` racing against a concurrent delete of the referenced row, or a genuinely dangling reference, gets caught by the database and translated back into the same `ValidationError` type the pre-check would have thrown (`errorTranslation.ts` for SQL, the Prisma error-code translator for Prisma) — so application error-handling code doesn't have to branch on which layer caught the problem. This is a deliberate strengthening over Sheets' behavior (concurrent-write races are now caught), not a semantic mismatch to work around.
+
+### Why does `unique()` get a composite `UNIQUE(tenant_id, col)` constraint on SQL instead of a plain column-level `UNIQUE`? (incident write-up)
+
+Found via real-Postgres integration testing: the SQL adapters' `checkUniqueness()` pre-check is tenant-scoped (it queries via a tenant-scoped `findOne()`), matching Sheets' behavior where two different users' physically separate sheets can obviously both have a row with `sku: 'ABC'` without conflicting. But `generateSQLTable()` originally emitted `unique()` as a **bare column-level `UNIQUE`**, which enforces uniqueness *globally across every tenant* at the database layer — the second tenant's insert failed with a native unique-violation despite passing the tenant-scoped pre-check. Fixed by emitting a composite `UNIQUE (tenant_id, col)` constraint for non-admin tables instead (admin tables, which have no `tenant_id` column, keep a plain column-level `UNIQUE`).
+
+### A handful of other real bugs were caught by testing against actual Postgres/MySQL/Prisma — what were they?
+
+All found by running generated DDL through real engines rather than only string-matching test output, and all fixed:
+
+- **`date()` columns mapped to `DATETIME`** in `generateSQLTable()`, which is MySQL-only syntax — Postgres has no `DATETIME` type at all. Fixed to `TIMESTAMP`, which both engines accept.
+- **`CREATE INDEX ... IF NOT EXISTS`** is not valid MySQL syntax in any version (unlike `CREATE TABLE IF NOT EXISTS`, which both engines support) — a rerun of generated DDL failed with a syntax error on MySQL specifically. Fixed by dropping `IF NOT EXISTS` from `CREATE INDEX` entirely and making `lsdb migrate --apply` (§16.7) catch-and-ignore the native "already exists" error instead, so idempotency doesn't depend on DDL syntax support.
+- **ISO 8601 datetime strings (`...T...Z`) are rejected by MySQL's `DATETIME`/`TIMESTAMP` columns** (`ER_TRUNCATED_WRONG_VALUE`) — MySQL expects the space-separated `'YYYY-MM-DD HH:MM:SS.sss'` form. `SQLTableOperations` now normalizes every date value to that form before sending it, which both Postgres and MySQL accept.
+- **A bare literal `DEFAULT` on a `json()`-typed column is rejected by MySQL 8.0.13+** (`ER_BLOB_CANT_HAVE_DEFAULT`) — JSON/BLOB/TEXT columns require a *parenthesized expression* default. `generateSQLTable()` now wraps JSON-column defaults in parens (`DEFAULT ('{}')`), which is also valid, equivalent syntax on Postgres.
+- **Prisma field names can't start with `_`** (a hard parse error) — every schema has `_id` (`defineTable()` injects it unconditionally), so `_id`/`_created_at`/`_updated_at`/`_deleted_at` broke `lsdb migrate --prisma`'s output for *every* table, not an edge case. Fixed by stripping the leading underscore for the Prisma field name and preserving the real column name via `@map("_id")`; `createPrismaAdapter()`'s runtime layer applies the identical transform (`toPrismaFieldName()`/`buildPrismaFieldMap()`, `src/utils/prismaNaming.ts`) so `where`/`data` objects keyed by `_id` translate correctly to/from the Prisma Client's `id` property.
+- **A one-sided `@relation` needs a matching "opposite" field on the referenced model** — Prisma rejects a `ref()`-derived relation field with no back-reference on the target model. `generatePrismaModel()` only ever saw one schema at a time, so it couldn't discover this itself; `collectPrismaBackRelations()` does one pass over every schema first and injects the missing list-relation fields.
+- **A bare field-level `@unique` on a tenant-scoped table enforces uniqueness globally across every tenant** — the exact same bug class as the SQL composite-`UNIQUE` fix above, just not caught in the Prisma path until a real `prisma db push` plus a cross-tenant duplicate-value test surfaced it (`Unique constraint failed on the fields: (sku)` when two different tenants both used the same `sku`). Fixed identically: `generatePrismaModel()` now emits a model-level `@@unique([tenant_id, col])` for `unique()` columns on non-admin tables instead of a field-level `@unique`; admin tables keep the plain field-level form.
+- **`prisma db push --force-reset`, invoked by an AI coding agent, is refused by Prisma's own CLI** without explicit human consent (it detects agent invocation and halts). This isn't a bug in this package, but is worth knowing if you automate schema application: Prisma's own safety guard paused this exact verification mid-development until a human ran `db push` directly in their own terminal — `lsdb migrate --apply --prisma` instead shells out to `prisma migrate deploy`, which doesn't carry the same reset semantics (see next question).
+
+All three engines' arms of the Phase 16.4 contract suite (`tests/contract/runContractSuite.ts`) — SheetAdapter, Postgres, MySQL, and Prisma — pass in full against real infrastructure, including the human-run `prisma db push` step above.
+
+### `createPrismaAdapter()` doesn't generate `schema.prisma` or run `prisma generate` — why?
+
+`createPrismaAdapter({ client })` takes an **already-constructed, already-`prisma generate`'d `PrismaClient` instance** from the consumer's own project, rather than performing codegen itself at runtime. The consumer runs `lsdb migrate --prisma` (existing tool) to get `schema.prisma`, then `prisma generate` as a normal build step — exactly like any other Prisma project. The alternative (this package writing `schema.prisma` to disk and shelling out to `prisma generate` in-process) was considered and rejected: it couples this package to whatever Prisma CLI version happens to be installed, has to guess the generated-client output path, and turns a library import into a build-time side effect. Because `createPrismaAdapter()` never touches Prisma's codegen or migration tooling itself, it also never triggers the AI-agent safety guard mentioned above — that's purely a property of running `prisma generate`/`db push`/`migrate deploy` directly, which only `lsdb migrate --apply --prisma` (or the consumer) does.
+
+### Why doesn't `createDatabaseAdapter({ driver })` support `'prisma'`?
+
+`createDatabaseAdapter()` (`src/adapter/createDatabaseAdapter.ts`) is the single env-driven factory behind both the "one config value picks the engine" goal and CI/CD's "zero application code branching" goal (§16.7) — but `'prisma'` can't participate, because `createPrismaAdapter()` requires an already-constructed `PrismaClient` object, and there is no environment variable that can contain a live object. Prisma-track consumers keep exactly one line of branching in their own app: `driver === 'prisma' ? createPrismaAdapter({ client: new PrismaClient() }) : createDatabaseAdapter()`. The same reasoning means `lsdb migrate-data --run` doesn't support `--driver prisma` either — there's no way for a standalone CLI process to construct a consumer's typed client. Prisma-track consumers use `--run --driver postgres`/`mysql` for the one-time data cutover regardless of which client their app uses long-term, since the *data* doesn't care which client inserted it.
+
+### Do `sheetStyle`, `cache`, `driveFolder`, `sharedDriveId`, and `onSchemaMismatch` carry over to the SQL adapters?
+
+No, and this is by design rather than an oversight: those are Sheets-specific config that were never part of the `DatabaseAdapter`/`TableOperations` contract — they only ever existed on `SheetAdapterConfig`. `PostgresAdapterConfig`/`MySQLAdapterConfig`/`PrismaAdapterConfig` simply don't have equivalents. Similarly, the SQL adapters never auto-create or alter tables at runtime the way `SheetAdapter.syncSchema()` lazily creates sheets/headers on first use — schema application is a deploy-time concern (`lsdb migrate --apply`, §16.7), consistent with normal SQL production practice.
+
+### When does "ship to production" actually happen — an env flip, or a one-time cutover?
+
+Two models, and it's worth picking deliberately rather than defaulting into one:
+
+- **Dual-write-then-flip (recommended)**: keep writing to Sheets as normal during a transition window, rerun `migrate-data --run` periodically to keep the SQL side current (safe to repeat — always idempotent, upserts by `_id`), then flip the `DB_DRIVER` env var (read by `createDatabaseAdapter()`) at deploy time once you're confident. Rollback is just flipping the env var back, since Sheets was never turned off.
+- **One-shot cutover**: run `migrate-data --run` once, flip the driver, stop writing to Sheets. Simpler operationally, but harder to roll back from — because SQL adapters deliberately never auto-create/alter schema at runtime (§16.2's decision), there's no automatic "flip back and resync" path once Sheets stops being the source of truth; rolling back means manually reconciling whatever changed on the SQL side back onto Sheets.
+
+Neither is "more correct" — dual-write costs a bit of ongoing `migrate-data --run` bookkeeping during the transition window in exchange for a cheap rollback; one-shot is simpler but commits harder. See the [reference CI/CD pipeline](./README.md#reference-cicd-pipeline) in README.md for what the dual-write model looks like in practice.

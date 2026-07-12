@@ -45,3 +45,30 @@ export type {
   GoogleProfile,
   RegistrationPolicy,
 } from './auth/router';
+
+// Phase 16: formal adapter contract — implement these to back `adapter.table(name)` with a
+// non-Sheets storage engine (e.g. Postgres/MySQL) without reaching into internals.
+export type { DatabaseAdapter, TableOperations, StorageClient } from './adapter/types';
+export type { ColumnValidationRule } from './adapter/sheetClient';
+
+// Phase 16.2: SQL backends — Postgres/MySQL (pg/mysql2 are optional peerDependencies, lazily
+// required only inside these factories) and Prisma (wraps a consumer-provided PrismaClient; see
+// PrismaAdapterConfig for why this package doesn't generate/`prisma generate` a client itself).
+export { createPostgresAdapter } from './adapter/sql/postgresAdapter';
+export type { PostgresAdapterConfig } from './adapter/sql/postgresAdapter';
+export { createMySQLAdapter } from './adapter/sql/mysqlAdapter';
+export type { MySQLAdapterConfig } from './adapter/sql/mysqlAdapter';
+export { createPrismaAdapter, PrismaAdapterBase } from './adapter/sql/prismaAdapter';
+export type { PrismaAdapterConfig } from './adapter/sql/prismaAdapter';
+export { SQLAdapterBase } from './adapter/sql/sqlAdapterBase';
+export type { SQLAdapterConfig } from './adapter/sql/sqlAdapterBase';
+export type { SQLConnection, SQLQueryResult } from './adapter/sql/connection';
+export type { SQLDialect } from './adapter/sql/dialect';
+export { PostgresDialect, MySQLDialect } from './adapter/sql/dialect';
+export { createDatabaseAdapter } from './adapter/createDatabaseAdapter';
+export type { DBDriver, DatabaseAdapterFactoryConfig } from './adapter/createDatabaseAdapter';
+
+// Phase 16.3: shared access-control primitives — SheetAdapter and the SQL adapters both delegate
+// to these instead of reimplementing the cross-actor permission matrix (see FAQ.md #13).
+export { hasPermission, resolveNonAdminTenantKey } from './adapter/accessControl';
+export type { AccessControlContext } from './adapter/accessControl';

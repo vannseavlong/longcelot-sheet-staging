@@ -2,6 +2,7 @@ import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OAuth2Client, Credentials } from 'google-auth-library';
 import { Readable } from 'stream';
 import { SheetReadCacheConfig } from '../schema/types';
+import type { StorageClient } from './types';
 
 const DEFAULT_CACHE_TTL_MS = 2000;
 
@@ -77,7 +78,7 @@ export function columnIndexToA1Letter(index: number): string {
   return letters;
 }
 
-export class SheetClient {
+export class SheetClient implements StorageClient {
   private sheets: sheets_v4.Sheets;
   private drive: drive_v3.Drive;
   private auth: OAuth2Client;

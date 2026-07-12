@@ -18,6 +18,35 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.32] — 2026-07-12
+
+### Added
+
+- **Pluggable SQL adapters — Postgres, MySQL, and Prisma (Phase 16.2).** `createPostgresAdapter()`, `createMySQLAdapter()`, and `createPrismaAdapter()` all implement the same `DatabaseAdapter`/`TableOperations` contract as `createSheetAdapter()` (Phase 16.1), so application CRUD code doesn't change when swapping engines at production cutover. `pg`/`mysql2` are optional peerDependencies, lazily required only inside their respective factories. `createPrismaAdapter({ client })` takes an already-`prisma generate`'d `PrismaClient` from the consumer rather than performing codegen itself — see FAQ.md #13.
+- **`createDatabaseAdapter({ driver? })`** — single top-level factory picking the engine from config or `$DB_DRIVER` (defaults to `'sheets'`), serving both the "one config value" and CI/CD env-driven-selection stories at once. Does not support `driver: 'prisma'` (no env var can hold a live client instance) — documented as an intentional exception.
+- **Actor → SQL tenancy model (Phase 16.3 ADR).** Every non-admin table gets an injected `tenant_id` column (configurable via `tenantColumn`), generalizing Sheets' per-user physical spreadsheet isolation onto shared SQL tables; `UserContext.actorSheetId`/`targetSheetId` are reused as the opaque tenant value, so `withContext()` call sites need zero changes across adapters. New `src/adapter/accessControl.ts` holds the cross-actor permission matrix and tenant-key resolution shared by every adapter; `SheetAdapter` now delegates to it instead of duplicating the logic. See FAQ.md #13.
+- **Cross-adapter contract test suite (Phase 16.4).** `tests/contract/runContractSuite.ts` — one behavioral spec (CRUD, upsert, createMany, count, soft-delete, timestamps, uniqueness, FK validation, cross-actor permissions) run against `SheetAdapter`, and against real Postgres/MySQL/Prisma via opt-in `test/integration/sql/*.contract.test.ts` (`RUN_SQL_INTEGRATION_TESTS=1`), so adapter parity is enforced by running the same tests rather than by manual comparison.
+- **`lsdb migrate --apply [--connection-string <url>] [--driver postgres|mysql] [--dry-run]`** — applies generated SQL DDL to a live database, or (`--prisma --apply`) shells out to `prisma migrate deploy`. Idempotent: `CREATE TABLE IF NOT EXISTS` handles tables; a native "already exists" error on `CREATE INDEX` (which has no `IF NOT EXISTS` in MySQL) is caught and treated as success.
+- **`lsdb migrate-data --run [--connection-string <url>] [--driver postgres|mysql] [--token-file <path>]`** — runs the Sheets → SQL data cutover immediately, upserting every row by `_id` (unconditionally idempotent), instead of generating a `migrate-data.js` script with a stub `insertRow()` to fill in by hand. `--driver prisma` isn't supported (no way for a CLI process to construct a consumer's typed client).
+- `generateSQLTable()`/`generatePrismaModel()` DDL fidelity (Phase 16.5): now emit `UNIQUE`/composite `UNIQUE(tenant_id, col)`, `DEFAULT`, `CREATE INDEX` for `index()` columns, `CHECK (col IN (...))`/a real Prisma `enum` block (or a doc-comment fallback for non-string-identifier-safe enums) for `enum()` columns, and the `tenant_id` column/field itself for non-admin tables.
+
+### Fixed
+
+Found via real Postgres/MySQL/Prisma integration testing while building the SQL adapters above (not previously caught since DDL output was only string-matched, never actually run through a real engine or parser) — see FAQ.md #13 for the full incident write-up:
+
+- `date()` columns mapped to MySQL-only `DATETIME` in `generateSQLTable()`; Postgres has no such type. Now `TIMESTAMP`, valid on both.
+- A bare column-level `UNIQUE` on a tenant-scoped table enforced uniqueness *globally* across every tenant instead of per-tenant, contradicting the adapters' own tenant-scoped uniqueness checks. Now a composite `UNIQUE(tenant_id, col)` on non-admin tables.
+- `CREATE INDEX ... IF NOT EXISTS` is not valid MySQL syntax in any version (only `CREATE TABLE` supports it there) — removed; idempotency for indexes now lives in `migrate --apply`'s error handling instead.
+- ISO 8601 datetime strings (`...T...Z`) are rejected by MySQL's `DATETIME`/`TIMESTAMP` columns (`ER_TRUNCATED_WRONG_VALUE`) — `SQLTableOperations` now normalizes to the space-separated form both engines accept.
+- A bare literal `DEFAULT` on a `json()` column is rejected by MySQL 8.0.13+ (`ER_BLOB_CANT_HAVE_DEFAULT`) — now parenthesized (`DEFAULT ('{}')`), also valid on Postgres.
+- Prisma field names can't start with `_` — broke `lsdb migrate --prisma`'s output for every table, since `_id` is always present. Now stripped for the Prisma field name with the real column name preserved via `@map()`; `createPrismaAdapter()` applies the identical transform at runtime.
+- A one-sided `@relation` needs a matching back-relation field on the referenced model — `generatePrismaModel()` only saw one schema at a time and couldn't add it; a new `collectPrismaBackRelations()` pass fixes this.
+- A bare field-level `@unique` on a tenant-scoped table enforced uniqueness *globally* across every tenant in Prisma too (same bug class as the SQL composite-`UNIQUE` fix above, found later via a real `prisma db push` + cross-tenant integration test). `generatePrismaModel()` now emits a model-level `@@unique([tenant_id, col])` for non-admin tables instead.
+
+All four `DatabaseAdapter` implementations (Sheets, Postgres, MySQL, Prisma) now pass the full Phase 16.4 contract suite against real infrastructure.
+
+---
+
 ## [0.1.31] — 2026-07-10
 
 ### Fixed

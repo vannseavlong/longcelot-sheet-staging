@@ -1,6 +1,6 @@
 {
   "name": "longcelot-sheet-db",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "description": "Google Sheets-backed staging database adapter for Node.js with schema-first design",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -50,7 +50,10 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "unrs-resolver"
+      "unrs-resolver",
+      "@prisma/engines",
+      "@prisma/client",
+      "prisma"
     ]
   },
   "dependencies": {
@@ -64,13 +67,27 @@
     "nanoid": "^3.3.12",
     "zod": "^4.4.3"
   },
+  "peerDependencies": {
+    "mysql2": ">=3",
+    "pg": ">=8"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@prisma/client": "^6.19.3",
     "@tanstack/intent": "latest",
     "@testing-library/dom": "^10.4.1",
     "@types/bcryptjs": "^3.0.0",
     "@types/inquirer": "^8.2.12",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.9.1",
+    "@types/pg": "^8.20.0",
     "@typescript-eslint/eslint-plugin": "^8.60.0",
     "@typescript-eslint/parser": "^8.60.0",
     "eslint": "^10.4.0",
@@ -79,7 +96,10 @@
     "jest": "^30.4.2",
     "jsdom": "^29.1.1",
     "lint-staged": "^17.0.5",
+    "mysql2": "^3.15.3",
+    "pg": "^8.16.3",
     "prettier": "^3.8.3",
+    "prisma": "^6.19.3",
     "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }

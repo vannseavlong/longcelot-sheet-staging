@@ -94,6 +94,10 @@ program
   .option('--prisma', 'Generate Prisma schema.prisma')
   .option('--sql', 'Generate SQL DDL (CREATE TABLE statements)')
   .option('--output <dir>', 'Output directory (default: current directory)')
+  .option('--apply', 'Apply the generated DDL to a live database (--sql), or run `prisma migrate deploy` (--prisma)')
+  .option('--connection-string <url>', 'Target DB connection string for --apply (falls back to $DATABASE_URL)')
+  .option('--driver <driver>', '--apply target driver: postgres|mysql (inferred from --connection-string if omitted)')
+  .option('--dry-run', 'Preview what --apply would do without executing it')
   .action((options) => migrateCommand(options));
 
 program
@@ -102,7 +106,11 @@ program
   .option('--table <name>', 'Export a single table only')
   .option('--all-users', 'Include all registered user sheets in addition to the admin sheet')
   .option('--output <dir>', 'Output directory for migrate-data.js (default: current directory)')
-  .option('--dry-run', 'Preview export plan without writing any files')
+  .option('--dry-run', 'Preview export plan (or, with --run, row counts) without writing/migrating anything')
+  .option('--run', 'Run the cutover now, in-process, instead of generating a stub migrate-data.js')
+  .option('--connection-string <url>', 'Target DB connection string for --run (falls back to $DATABASE_URL)')
+  .option('--driver <driver>', '--run target driver: postgres|mysql (inferred from --connection-string if omitted)')
+  .option('--token-file <path>', 'Pre-stored OAuth tokens file for --run, skips interactive login (CI-friendly)')
   .action((options) => migrateDataCommand({ ...options, allUsers: options.allUsers }));
 
 program

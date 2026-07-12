@@ -4,12 +4,21 @@ import chalk from 'chalk';
 import { TableSchema } from '../../schema/types';
 import { resolveActorName } from '../../utils/actorConfig';
 import { resolveConfigPath, TOKENS_FILENAME } from '../../utils/cliFiles';
+import { loadCLIConfig, buildAdminAdapter } from '../lib/adminAdapter';
+import { createPostgresAdapter } from '../../adapter/sql/postgresAdapter';
+import { createMySQLAdapter } from '../../adapter/sql/mysqlAdapter';
+import { inferDriverFromConnectionString } from './migrate';
 
 interface MigrateDataOptions {
   output?: string;
   table?: string;
   allUsers?: boolean;
   dryRun?: boolean;
+  /** Run the cutover now, in-process, instead of generating a stub migrate-data.js. Phase 16.7. */
+  run?: boolean;
+  connectionString?: string;
+  driver?: 'postgres' | 'mysql';
+  tokenFile?: string;
 }
 
 function loadSchemas(
@@ -189,7 +198,129 @@ export function generateMigrateDataScript(schemas: TableSchema[], allUsers = fal
   return lines.join('\n');
 }
 
+/**
+ * Validates --run's own required flags before touching the filesystem for lsdb.config.ts, so a
+ * misconfigured --run fails fast with the relevant error instead of an unrelated config error.
+ */
+export function resolveRunDriver(options: MigrateDataOptions): { connectionString: string; driver: 'postgres' | 'mysql' } {
+  const connectionString = options.connectionString ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.error(chalk.red('❌ --connection-string or $DATABASE_URL is required for --run'));
+    process.exit(1);
+  }
+
+  const driver = options.driver ?? inferDriverFromConnectionString(connectionString);
+  if (driver !== 'postgres' && driver !== 'mysql') {
+    console.error(
+      chalk.red(
+        "❌ --run only supports --driver postgres|mysql (not prisma — this CLI process can't " +
+          'construct a consumer PrismaClient; see FAQ.md #13). Pass --driver explicitly if it could not be inferred.'
+      )
+    );
+    process.exit(1);
+  }
+
+  return { connectionString, driver };
+}
+
+/**
+ * `--run`: executes the same admin-then-per-user traversal generateMigrateDataScript() encodes
+ * as a generated script, but in-process against a real SQL adapter as the write target instead
+ * of emitting a stub insertRow() for a human to fill in (Phase 16.7). Always upserts by `_id` —
+ * unconditionally idempotent, no separate opt-in flag, since unattended CI reruns need this safe
+ * by default (matches `seed --upsert`'s existing conflict-handling convention). `--driver prisma`
+ * isn't supported: there's no way for this CLI process to construct a consumer's typed
+ * PrismaClient — Prisma-track consumers use `--run --driver postgres`/`mysql` for the one-time
+ * cutover regardless of their app's long-term client, since the data doesn't care which client
+ * inserted it (see FAQ.md #13).
+ */
+async function runMigrateData(schemas: TableSchema[], connectionString: string, driver: 'postgres' | 'mysql', options: MigrateDataOptions): Promise<void> {
+  const config = loadCLIConfig();
+  const { adapter: sourceAdapter, adminCtx } = await buildAdminAdapter({ config, schemas, tokenFile: options.tokenFile });
+
+  const targetAdapter = driver === 'postgres' ? createPostgresAdapter({ connectionString }) : createMySQLAdapter({ connectionString });
+  targetAdapter.registerSchemas(schemas);
+
+  const adminSchemas = schemas.filter((s) => s.actor === 'admin');
+  const userSchemas = schemas.filter((s) => s.actor !== 'admin');
+  let totalRows = 0;
+
+  console.log(chalk.blue.bold(`\n📦 ${options.dryRun ? '[DRY RUN] ' : ''}Running data cutover to ${driver}...\n`));
+
+  for (const schema of adminSchemas) {
+    const rows = await adminCtx.table(schema.name).findMany({});
+    console.log(chalk.cyan(`${schema.name}: ${rows.length} row(s)`));
+    if (!options.dryRun) {
+      const targetCtx = targetAdapter.withContext({ userId: 'migrate-data-cli', actor: 'admin' });
+      for (const row of rows) {
+        await targetCtx.table(schema.name).upsert({ where: { _id: row._id }, data: row, skipFKValidation: true });
+      }
+    }
+    totalRows += rows.length;
+  }
+
+  if (options.allUsers && userSchemas.length > 0) {
+    const roleSchemasMap: Record<string, TableSchema[]> = {};
+    for (const s of userSchemas) {
+      (roleSchemasMap[s.actor] ??= []).push(s);
+    }
+
+    const users = await adminCtx.table('users').findMany({});
+    console.log(chalk.cyan(`\nFound ${users.length} user(s) for per-user cutover`));
+
+    for (const user of users) {
+      const actorSheetId = user.actor_sheet_id as string | undefined;
+      const role = user.role as string | undefined;
+      if (!actorSheetId || !role) continue;
+
+      const roleSchemas = roleSchemasMap[role] ?? [];
+      if (roleSchemas.length === 0) continue;
+
+      const sourceUserCtx = sourceAdapter.withContext({ userId: user.user_id as string, actor: role, actorSheetId });
+
+      for (const schema of roleSchemas) {
+        const rows = await sourceUserCtx.table(schema.name).findMany({});
+        console.log(`  ${role}:${user.user_id} → ${schema.name}: ${rows.length} row(s)`);
+        if (!options.dryRun) {
+          // Tenant key for the SQL target reuses actorSheetId as an opaque tenant value — the
+          // same generalization resolveNonAdminTenantKey() documents (see FAQ.md #13).
+          const targetUserCtx = targetAdapter.withContext({ userId: user.user_id as string, actor: role, actorSheetId });
+          for (const row of rows) {
+            await targetUserCtx.table(schema.name).upsert({ where: { _id: row._id }, data: row, skipFKValidation: true });
+          }
+        }
+        totalRows += rows.length;
+      }
+    }
+  } else if (!options.allUsers && userSchemas.length > 0) {
+    console.log(chalk.gray('\nTip: pass --all-users to also migrate all registered user sheets.'));
+  }
+
+  console.log(chalk.green(`\n✅ ${options.dryRun ? 'Would migrate' : 'Migrated'} ${totalRows} row(s) total.`));
+}
+
 export async function migrateDataCommand(options: MigrateDataOptions) {
+  if (options.run) {
+    const { connectionString, driver } = resolveRunDriver(options);
+
+    require('dotenv').config();
+    const config = loadCLIConfig();
+    let schemas = loadSchemas(config);
+    if (options.table) {
+      schemas = schemas.filter((s) => s.name === options.table);
+      if (schemas.length === 0) {
+        console.error(chalk.red(`❌ No schema found for table: ${options.table}`));
+        process.exit(1);
+      }
+    }
+    if (schemas.length === 0) {
+      console.log(chalk.yellow('⚠️  No schemas found. Nothing to migrate.'));
+      return;
+    }
+    await runMigrateData(schemas, connectionString, driver, options);
+    return;
+  }
+
   console.log(chalk.blue.bold('📦 Generating data export script...\n'));
 
   require('dotenv').config();

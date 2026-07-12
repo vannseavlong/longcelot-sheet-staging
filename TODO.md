@@ -290,10 +290,11 @@
 - `ActorConfig.role` → `name`, `UserContext.targetRole` → `targetActor` (both with deprecation aliases)
 - Automatic sheet formatting: auto-fit columns, header fill/freeze, boolean/enum data validation dropdowns, `sheetStyle` config
 - `lsdb drop-table` / `lsdb drop-column` / `lsdb rename-column` — interactive or scripted, `--all-users`-aware, `rename-column` preserves data via in-place header edit (Phase 13)
+- `DatabaseAdapter` / `TableOperations` / `StorageClient` formal adapter contract in `src/adapter/types.ts`, `SheetAdapter`/`CRUDOperations`/`SheetClient` now implement them explicitly (Phase 16.1)
 
 ### To Do ⏳
 
-- **Production backend portability (Phase 16, not started)** — no formal `DatabaseAdapter` interface exists yet and no runtime SQL adapter exists; today's `migrate`/`migrate-data` are one-time export tools, not a drop-in replacement for `createSheetAdapter`
+- **Production backend portability (Phase 16, 16.1 done)** — the `DatabaseAdapter`/`TableOperations`/`StorageClient` contract now exists (`src/adapter/types.ts`), but no runtime SQL adapter implements it yet; today's `migrate`/`migrate-data` are still one-time export tools, not a drop-in replacement for `createSheetAdapter`
 - `adapter.join()` — cross-actor join queries (medium priority)
 - `Docs/architecture.md`: Actors vs Application Roles section
 - `mock-users` output: dev vs prod topology note
@@ -447,65 +448,95 @@
 
 ---
 
-## Phase 16: Production Backend Portability — Pluggable SQL Adapters (not started)
+## Phase 16: Production Backend Portability — Pluggable SQL Adapters (16.1–16.7 done)
 
 > Goal: swapping `createSheetAdapter` for a real-DB adapter (Postgres/MySQL/etc.) at production cutover should be a config/factory change, not a rewrite of application CRUD code. Today it is not — `SheetAdapter` and `CRUDOperations` are concrete classes with `SheetClient` calls wired directly into them ([crud.ts:19](src/adapter/crud.ts#L19)), and no runtime SQL adapter exists — only DDL/data *export* tooling (`migrate`, `migrate-data`).
 
-### 16.1 Extract a formal adapter contract
+### 16.1 Extract a formal adapter contract — Done
 
-- [ ] Define a `DatabaseAdapter` interface (`withContext()`, `asActor()`, `table()`) and a `CRUDOperations`-shaped interface (`create`, `createMany`, `findMany`, `findOne`, `update`, `upsert`, `delete`, `count`) in `src/adapter/types.ts`, derived from `SheetAdapter`'s current public shape
-- [ ] Make `SheetAdapter` implement `DatabaseAdapter` explicitly (`class SheetAdapter implements DatabaseAdapter`) instead of the interface being implicit
-- [ ] Decouple `CRUDOperations` from `SheetClient` — introduce a narrower storage-client interface (`getRows`, `appendRow(s)`, `updateRow`, `deleteRow`, `writeHeader`) that `SheetClient` implements, so `CRUDOperations` (or its SQL equivalent) depends on the interface, not the concrete class
-- [ ] Export the new interfaces from `src/index.ts` so a third-party adapter package can implement them without reaching into internals
+- [x] Define a `DatabaseAdapter` interface (`withContext()`, `asActor()`, `table()`) and a `CRUDOperations`-shaped interface (`TableOperations`: `create`, `createMany`, `findMany`, `findOne`, `update`, `upsert`, `delete`, `count`) in `src/adapter/types.ts`, derived from `SheetAdapter`'s current public shape
+- [x] Make `SheetAdapter` implement `DatabaseAdapter` explicitly (`class SheetAdapter implements DatabaseAdapter`) instead of the interface being implicit
+- [x] Decouple `CRUDOperations` from `SheetClient` — introduce a narrower `StorageClient` interface (`getAllRows`, `appendRow`/`appendRows`, `updateRow`, `deleteRow`, `writeHeader`, optional `extendValidation` since it's Sheets-only) that `SheetClient` implements; `CRUDOperations` now depends on `StorageClient`, not the concrete class (`implements TableOperations`)
+- [x] Export the new interfaces (`DatabaseAdapter`, `TableOperations`, `StorageClient`, `ColumnValidationRule`) from `src/index.ts` so a third-party adapter package can implement them without reaching into internals
+- [x] Tests: `tests/unit/adapterContract.test.ts` — compile-time-only assertions that `SheetAdapter`/`SheetClient` structurally satisfy `DatabaseAdapter`/`StorageClient`; fails the build if either contract drifts
 
-### 16.2 Build SQL adapters — all shipped from the single `longcelot-sheet-db` package
+### 16.2 Build SQL adapters — all shipped from the single `longcelot-sheet-db` package — Done
 
-> Constraint: consumers must not need a separate `longcelot-sheet-db-postgres` / `longcelot-sheet-db-mysql` package per engine — every adapter (Postgres, MySQL, and whatever else is added later) ships inside this one npm package (`package.json` name stays `longcelot-sheet-db`), so `npm install longcelot-sheet-db` is the only install step regardless of target DB.
+> Constraint met: no `longcelot-sheet-db-postgres`/`-mysql` split — `createPostgresAdapter`/`createMySQLAdapter`/`createPrismaAdapter` all ship from this one package.
 
-- [ ] `createPrismaAdapter(config)` implementing `DatabaseAdapter` as the reference implementation, pairing naturally with the existing `migrate --prisma` DDL export (Prisma's own driver adapters cover Postgres/MySQL/SQLite under one client, which is why this is the first target)
-- [ ] Add `pg` (Postgres) and `mysql2` (MySQL) as **optional peerDependencies**, not regular `dependencies` — today's `dependencies` block (`googleapis`, `bcryptjs`, etc., see `package.json`) has no DB drivers at all, and hard-installing every driver for every user would bloat installs for people who only ever use one engine or stay on Sheets
-- [ ] Lazy-`require()`/dynamic-`import()` each driver only inside the matching adapter factory (`createPostgresAdapter`, `createMySQLAdapter`), so `import { createSheetAdapter } from 'longcelot-sheet-db'` never pulls in `pg`/`mysql2` transitively, and a missing peer dep throws a clear `SchemaError` ("install `pg` to use createPostgresAdapter") instead of a cryptic module-not-found
-- [ ] Implement CRUD methods against each engine, matching `SheetAdapter`'s documented semantics exactly: `default()` applied only on `create()` (11.2), soft-delete filtering on `findMany`/`findOne`/`count` with `includeDeleted` (11.3), PK auto-gen for `primary()` string columns, FK validation via `ref()` with `skipFKValidation` escape hatch
-- [ ] `withContext()`/`asActor()` no-op or map cleanly onto the tenancy strategy chosen in 16.3 (no `actorSheetId` concept in SQL)
-- [ ] Errors: reuse existing `ValidationError`/`PermissionError`/`SchemaError`/`SchemaMismatchError` classes so error-handling code in the app layer doesn't change across adapters or engines
-- [ ] Decide fate of Sheets-only config (`sheetStyle`, `cache`, `driveFolder`, `sharedDriveId`, `onSchemaMismatch`) — either ignored no-ops on the SQL adapters or documented as adapter-specific config, not part of the shared contract
-- [ ] Single top-level `createDatabaseAdapter({ driver: 'sheets' | 'postgres' | 'mysql', ... })` factory (or an env-driven equivalent, see 16.7) so the driver choice is one config value, not a different import per environment
+- [x] `createPrismaAdapter(config)` implementing `DatabaseAdapter` (`src/adapter/sql/prismaAdapter.ts`) — **deviation from the literal plan**: takes an already-constructed, already-`prisma generate`'d `PrismaClient` instance (`{ client }`) rather than this package generating `schema.prisma`/running `prisma generate` itself, to avoid in-process codegen fragility (unknown consumer Prisma version, generated-client output path, needing the CLI present). See FAQ.md #13.
+- [x] `pg`/`mysql2` added as **optional peerDependencies** (`peerDependenciesMeta.optional: true`), not regular `dependencies`; also present in `devDependencies` for this repo's own tests (`@types/pg` too, for the Postgres integration test's typed `import`)
+- [x] Lazy-`require()` each driver only inside its factory, via a shared `lazyRequireDriver()` helper (`src/adapter/sql/lazyRequireDriver.ts`, reused by `createPostgresAdapter`/`createMySQLAdapter`/`migrate --apply`) — throws `SchemaError` with an `npm install <pkg>` hint on missing peer dep
+- [x] CRUD parity with `CRUDOperations`: `default()` on create only, soft-delete + `includeDeleted`, PK auto-gen (`_id` always + `pkColumn` separately), FK via `ref()` + `skipFKValidation` — implemented in `SQLTableOperations`/`PrismaTableOperations` (duplicated, not shared, as a deliberate first-pass tradeoff; a `columnValidation.ts` extraction is a documented follow-up now that the Phase 16.4 contract suite exists as a safety net)
+- [x] `withContext()`/`asActor()` map onto the Phase 16.3 tenancy model — `actorSheetId`/`targetSheetId` reused as an opaque `tenant_id` value, not Sheets-specific concepts
+- [x] Errors: `ValidationError`/`PermissionError`/`SchemaError` reused as designed; `SchemaMismatchError` intentionally **not** reused (it's Sheets-specific by construction — hardcodes `lsdb sync --all-users` wording — and the SQL adapters have no runtime schema-drift detection at all, see next bullet)
+- [x] Sheets-only config (`sheetStyle`, `cache`, `driveFolder`, `sharedDriveId`, `onSchemaMismatch`) — resolved as "not part of the shared contract," simply absent from `PostgresAdapterConfig`/`MySQLAdapterConfig`/`PrismaAdapterConfig`; SQL adapters also never auto-create/alter tables at runtime (unlike `SheetAdapter.syncSchema()`) — schema application is `migrate --apply` (16.7), a deploy-time step
+- [x] `createDatabaseAdapter({ driver })` (`src/adapter/createDatabaseAdapter.ts`) — single top-level factory, driver from config or `$DB_DRIVER`, default `'sheets'`; `'prisma'` deliberately excluded (see 16.7)
+- [x] Verified against real `postgres:16` and `mysql:8` Docker containers (ad hoc scripts + the Phase 16.4 contract suite) — this caught and fixed real cross-engine bugs (DATETIME vs TIMESTAMP, MySQL's lack of `CREATE INDEX IF NOT EXISTS`, ISO datetime rejection, JSON `DEFAULT` needing parens, Prisma's leading-underscore field-name restriction, Prisma's one-sided-`@relation` requirement) — see FAQ.md #13 for the full write-up
+- [x] `createPrismaAdapter()` verified against a live `PrismaClient` + real Postgres — `prisma db push --force-reset` needed a human terminal (Prisma's CLI detects AI-agent invocation and refuses without explicit consent), so the user ran it directly; found one more real bug this way: `generatePrismaModel()` emitted a bare field-level `@unique` even on tenant-scoped tables, which — like `generateSQLTable()`'s pre-fix behavior — enforced uniqueness *globally* across every tenant instead of per-tenant. Fixed identically: a composite `@@unique([tenant_id, col])` model-level constraint for non-admin tables, plain `@unique` retained for admin tables. All 18 contract-suite cases pass against the real database. See FAQ.md #13.
 
-### 16.3 Actor → tenancy mapping for SQL (design decision, not just code)
+### 16.3 Actor → tenancy mapping for SQL (design decision, not just code) — Done
 
-- [ ] Write an ADR: in Sheets, an actor = a physically separate sheet; SQL has no equivalent, so pick one of: (a) shared tables + `tenant_id`/`actor_id` column + WHERE-clause scoping in the adapter, (b) shared tables + Postgres Row-Level Security policies keyed off a session variable, (c) schema-per-tenant
-- [ ] Re-implement the cross-actor permission matrix (`ActorPermission.canAccess`/`tables`, see API.md Cross-Actor Operations) at the SQL adapter's query layer, since today that logic lives inside `SheetAdapter.hasPermission()`
-- [ ] Tests: same-actor access, cross-actor with permission, cross-actor without permission, wrong table, admin bypass — mirrored 1:1 against the existing Sheets adapter test suite (Phase 4)
+- [x] ADR written: shared tables + `tenant_id` column + adapter-level WHERE-scoping, chosen over Postgres RLS (Postgres-only, needs session-variable connection handling) and schema-per-tenant (heaviest operationally) — full rationale in **FAQ.md §13**
+- [x] Cross-actor permission matrix re-implemented at the SQL/Prisma adapter layer — but via **extraction, not reimplementation**: `hasPermission()`/`resolveNonAdminTenantKey()` moved out of `SheetAdapter`'s former private methods into shared `src/adapter/accessControl.ts`; `SheetAdapter` now delegates to them too, so all adapters share one implementation instead of three independent copies
+- [x] Tests: `tests/unit/accessControl.test.ts` (same-actor / cross-actor-with-permission / cross-actor-without-permission / admin-bypass, direct against the extracted functions) plus the cross-actor case matrix repeated in the Phase 16.4 contract suite against every adapter; `tests/unit/crossActorPermissions.test.ts` (Sheets-specific) verified to pass **unmodified** after the extraction, proving it's behavior-preserving
 
-### 16.4 Cross-adapter contract test suite
+### 16.4 Cross-adapter contract test suite — Done
 
-- [ ] `tests/contract/` — a single behavioral test suite (CRUD, `upsert`, `createMany`, `count`, soft-delete, timestamps, uniqueness, FK validation, cross-actor permissions) that runs against both `SheetAdapter` and the new SQL adapter via the `DatabaseAdapter` interface, so parity is enforced by CI rather than manual review
-- [ ] Wire into `pnpm test` so a change to one adapter that breaks parity fails the build
+- [x] `tests/contract/runContractSuite.ts` — one behavioral spec (CRUD, upsert, createMany, count, soft-delete, timestamps, uniqueness, FK validation tenant-scoped both ways, cross-actor permission matrix) run against `SheetAdapter` (`tests/contract/sheetAdapter.contract.test.ts`, always on) and against real Postgres/MySQL/Prisma (`test/integration/sql/*.contract.test.ts`, opt-in via `RUN_SQL_INTEGRATION_TESTS=1` — kept out of default `pnpm test` since they need a live database; all three engines verified passing, 18/18 each)
+- [x] Picked up automatically by `jest.config.js`'s existing `testMatch` glob — no config change needed; the opt-in gating is handled inside each integration test file (`describe.skip` fallback), not via jest config
 
-### 16.5 Close DDL/schema export fidelity gaps
+### 16.5 Close DDL/schema export fidelity gaps — Done
 
-- [ ] `generateSQLTable()`/`generatePrismaModel()` in `migrate.ts` currently emit `required`, `unique`, `primary`, `ref`, `default` but silently drop `index()` and `enum()` — add `CREATE INDEX` statements (SQL) / `@@index([...])` (Prisma) for `index()` columns, and `CHECK (col IN (...))` (SQL) / string union or Prisma `enum` (Prisma) for `enum()` columns
-- [ ] Tests: index/enum columns round-trip through `migrate --sql`/`--prisma` output
+- [x] `generateSQLTable()`/`generatePrismaModel()` now emit `UNIQUE` (composite `UNIQUE(tenant_id, col)` on non-admin tables — see FAQ.md #13 for why a bare column `UNIQUE` was wrong), `DEFAULT` (parenthesized for `json()` columns — MySQL requirement), `CREATE INDEX`/`@@index([...])` for `index()` columns, and `CHECK (col IN (...))`/a real Prisma `enum` block (falling back to a doc-comment for non-string-identifier-safe enum values) for `enum()` columns
+- [x] Also fixed along the way (found via real-engine testing, not originally scoped but necessary for correctness): `date()` → `TIMESTAMP` not MySQL-only `DATETIME`; dropped invalid `CREATE INDEX ... IF NOT EXISTS` (not valid MySQL syntax ever); Prisma field names can't start with `_` (`@map()` + `toPrismaFieldName()` fix, affects every table since `_id` is always present); one-sided `@relation` needs a back-relation field (`collectPrismaBackRelations()`)
+- [x] Tests: `tests/unit/migrate.test.ts`, `tests/unit/migrateApply.test.ts` — index/enum/default/unique/tenant_id columns round-trip through `migrate --sql`/`--prisma` output; existing `tests/unit/export.test.ts` updated for the `TIMESTAMP`/`IF NOT EXISTS` changes
 
-### 16.6 Documentation
+### 16.6 Documentation — Done
 
-- [ ] README.md "Migration Path" section: replace the illustrative `createSQLAdapter({...})` snippet with the real adapter(s) once built, and correct "Update CRUD calls (minimal changes)" to reflect the actual cutover story once 16.1–16.4 land
-- [ ] FAQ.md: new entry on the actor→tenancy decision from 16.3 and why Sheets' physical-isolation model doesn't carry over
-- [ ] CLAUDE.md: architecture note once a second adapter exists, pointing at the shared `DatabaseAdapter` interface
-- [ ] README.md: document optional-peerDependency install story from 16.2 (`npm install longcelot-sheet-db` + `npm install pg` only if targeting Postgres)
+- [x] README.md "Migration Path": real `createPostgresAdapter`/`createMySQLAdapter`/`createPrismaAdapter`/`createDatabaseAdapter` examples replacing the illustrative `createSQLAdapter` snippet, `--apply`/`--run` usage, optional-peerDependency install story
+- [x] FAQ.md: new **§13 SQL Backend Portability & Tenancy** — the tenancy ADR, `skipFKValidation`+native-constraint interaction, the full incident list from real-engine testing, and the `createPrismaAdapter`/`createDatabaseAdapter` design-decision write-ups
+- [x] CLAUDE.md: architecture note pointing at `src/adapter/sql/`, `accessControl.ts`, `createDatabaseAdapter.ts`, and the shared `DatabaseAdapter` contract
+- [x] API.md: new **SQL Adapters** section (config shapes, all four factories) plus `DatabaseAdapter`/`TableOperations`/`StorageClient` added to Type Definitions (a gap left over from 16.1) and CLI flag docs for `migrate --apply`/`migrate-data --run`
+- [x] CHANGELOG.md: new `[Unreleased]` section covering all of 16.1–16.7
 
-### 16.7 CI/CD — automated staging (Sheets) → production (SQL) cutover
+### 16.7 CI/CD — automated staging (Sheets) → production (SQL) cutover — Done
 
-> Scope note: this is about the **consuming application's** deploy pipeline, not this package's own `.github/workflows/ci.yml` (which only builds/tests/lints/publishes `longcelot-sheet-db` itself to npm). The deliverable here is the primitives + a documented reference pipeline so a consumer can wire dev-on-Sheets → CI-ships-to-production without hand-editing scripts each release.
+> Scope note honored: `.github/workflows/ci.yml` (this package's own build/test/lint/publish) was not touched — the deliverable is primitives + a documented reference pipeline for a **consuming application's** deploy pipeline.
 
-- [ ] Env-driven adapter selection: application code calls one factory (e.g. `createDatabaseAdapter()` from 16.2) that reads `DB_DRIVER=sheets|postgres|mysql` (+ driver-specific env vars) and returns the right adapter — so a dev's `.env` points at Sheets while the CI/CD pipeline's env points at the production DB, with **zero application code branching**
-- [ ] Non-interactive schema apply for CI: `migrate --sql`/`--prisma` already run offline (no OAuth), but there's currently no command that *applies* the generated DDL/Prisma migration to a live database — add one (e.g. `lsdb migrate --apply --connection-string $DATABASE_URL`, or lean on `prisma migrate deploy` under the hood) so a pipeline step can run schema changes automatically instead of a human pasting DDL
-- [ ] Non-interactive data cutover for CI: `migrate-data` currently generates a script with a stub `insertRow()` a human fills in (see README "migrate-data generates a migrate-data.js script... replace the stub") — add a mode that runs end-to-end against a real connection string with no manual edit required, so it's safe to invoke unattended from a pipeline
-- [ ] Idempotency: both the schema-apply and data-cutover steps must be safe to re-run (e.g. on a re-triggered deploy) without erroring or duplicating rows — reuse the existing `--upsert`/unique-conflict handling patterns from `seed --upsert` (6.3) rather than inventing new semantics
-- [ ] `--dry-run` support on both new commands (consistent with every other destructive/bulk command in this CLI — `sync --all-users`, `drop-table`, `migrate-data`), so a pipeline can gate the real run behind a diff review step
-- [ ] Secrets handling: production DB connection string comes from CI secrets (`DATABASE_URL` env var / secret manager), same pattern as `sync --token-file` already established for OAuth tokens in CI — document the equivalent for DB credentials, don't invent a second convention
-- [ ] Reference pipeline doc/example: a sample GitHub Actions job showing the full flow — build → `migrate --sql --apply` against staging DB → smoke test → same against production DB on tag push (mirrors the existing `publish` job's `if: startsWith(github.ref, 'refs/tags/v')` gate pattern in `.github/workflows/ci.yml`)
-- [ ] Decide and document the cutover moment: whether "ship to production" means the app switches its adapter env var at deploy time (Sheets and SQL both populated, then a config flip) vs. a one-time migration after which Sheets is no longer read at all — affects whether rollback is possible
+- [x] Env-driven adapter selection: `createDatabaseAdapter()` (16.2) reads `DB_DRIVER=sheets|postgres|mysql` — same function serves both 16.2's "single factory" goal and this bullet, not two separate implementations. `'prisma'` is **not** a supported `DB_DRIVER` value — `createPrismaAdapter()` requires a live `PrismaClient` object, which no env var can hold; documented as the one place a Prisma-track consumer keeps a line of branching in their own app
+- [x] Non-interactive schema apply: `lsdb migrate --sql --apply --connection-string <url> [--driver postgres|mysql] [--dry-run]` executes generated DDL statement-by-statement against a live DB; `lsdb migrate --prisma --apply` shells out to `npx prisma migrate deploy` (documented prerequisite: consumer needs an existing `migrations/` folder, created via `prisma migrate dev` once locally — this package doesn't generate migration history, only `schema.prisma`)
+- [x] Non-interactive data cutover: `lsdb migrate-data --run --connection-string <url> --driver postgres|mysql [--token-file <path>]` runs the same admin-then-per-user traversal `generateMigrateDataScript()` encodes, but in-process against a real target adapter instead of emitting a stub `insertRow()` script. `--driver prisma` unsupported for the same reason as above — Prisma-track consumers run `--run --driver postgres`/`mysql` for the cutover regardless of their app's long-term client
+- [x] Idempotency: `--apply` treats a native "already exists" error as success (`isAlreadyExistsError()`); `--run` always upserts by `_id` (unconditional, no separate `--upsert` opt-in — matches `seed --upsert`'s convention but made the default here since unattended CI reruns need safety by default)
+- [x] `--dry-run` on both new commands — `--apply` prints the statements/command that would run; `--run` prints row counts without writing
+- [x] Secrets: `--connection-string` falls back to `$DATABASE_URL`, documented as the DB-credential analog of `sync --token-file`'s established OAuth-secrets CI convention
+- [x] Reference pipeline: sample GitHub Actions job documented in README.md's Migration Path section (build → `migrate --sql --apply` against staging → smoke test → same on tag push), mirroring this repo's own `publish` job's tag-gate pattern
+- [x] Cutover-moment guidance documented in FAQ.md §13: dual-write-then-flip (both stores populated during a transition window via repeated `migrate-data --run`, then a `DB_DRIVER` env flip at deploy — rollback stays possible) recommended as the default over a one-shot cutover, which is harder to roll back from given SQL adapters never auto-create schema at runtime
+
+---
+
+## Phase 17: Additional ORM Adapters — Sequelize & Drizzle (not started)
+
+> Goal: extend the Phase 16 `DatabaseAdapter` roster beyond raw Postgres/MySQL + Prisma. Not equally easy — see design note below before starting either.
+
+### 17.1 Sequelize adapter (straightforward — same shape as Prisma)
+
+- [ ] `createSequelizeAdapter({ sequelize })` — takes an already-constructed, already-`sequelize.sync()`'d (or migrated) `Sequelize` instance with models already defined by the consumer, same "consumer provides the configured instance" pattern as `createPrismaAdapter` (avoids this package generating Sequelize model definitions/migrations itself)
+- [ ] `SequelizeTableOperations implements TableOperations` — per-model methods (`Model.create()`, `Model.findAll()`, `Model.update()`, `Model.destroy()`, `Model.count()`) mirror `PrismaTableOperations`'s structure closely
+- [ ] Field-name mapping: Sequelize supports `field: '_id'`-style column mapping (or `underscored: true`) analogous to Prisma's `@map()` — reuse the same "raw column name ↔ ORM property name" translation approach as `toPrismaFieldName()`/`buildPrismaFieldMap()` (`src/utils/prismaNaming.ts`), likely needs its own `sequelizeNaming.ts` since Sequelize's own convention/API differs from Prisma's
+- [ ] Reconcile Sequelize's **built-in** `timestamps`/`paranoid` (soft-delete) model options with this package's own `schema.timestamps`/`schema.softDelete` — likely disable Sequelize's built-ins (`timestamps: false, paranoid: false` expected on consumer-defined models) and manage `_created_at`/`_updated_at`/`_deleted_at` exactly like the other adapters do, to avoid two competing soft-delete/timestamp mechanisms
+- [ ] `tenant_id` composite-uniqueness — same fix class as Phase 16.2/16.5's SQL/Prisma `unique()` bug: Sequelize's `unique: true` column option is global by default too; needs a composite unique index (`sequelize.define(..., { indexes: [{ unique: true, fields: ['tenant_id', 'col'] }] })`) on the consumer's model definition, analogous to `@@unique([tenant_id, col])` — document this as a **consumer responsibility** (unlike Postgres/MySQL/Prisma, this package doesn't generate the Sequelize model definitions, so it can't emit the constraint itself; call this out clearly wherever Sequelize model-authoring is documented)
+- [ ] FK tenant-scoping: mirror `createPrismaFKResolver()`/`createSQLFKResolver()` — a `createSequelizeFKResolver()` resolving the referenced schema's actual actor via the shared schema registry, not the calling table's
+- [ ] Tests: reuse `tests/contract/runContractSuite.ts` — same suite, new `test/integration/sql/sequelize.contract.test.ts` arm (opt-in, real Postgres/MySQL via Sequelize)
+
+### 17.2 Drizzle ORM adapter (harder — architectural mismatch, needs a design pass first)
+
+> **Design note before starting**: Drizzle is schema-first with statically-typed TS table objects (`pgTable('products', {...})`) and no natural "look up a table by a runtime string name" API — `adapter.table('products')` is fundamentally dynamic, which is in tension with Drizzle's type-inference model. Two paths, pick one deliberately (mirrors the Phase 16.3-style ADR treatment):
+>   - (a) Generate Drizzle schema `.ts` files (a new `generateDrizzleSchema()` alongside `generateSQLTable()`/`generatePrismaModel()` in `migrate.ts`) that the consumer imports and passes in, giving up compile-time table-name safety at the `adapter.table(name)` boundary (same tradeoff `createPrismaAdapter`/Prisma's own dynamic model lookup already accepts)
+>   - (b) Accept a raw Drizzle `db` instance and drop to Drizzle's lower-level `sql` template-tag / raw-query API dynamically per table name, foregoing Drizzle's query builder/type-safety features almost entirely — at that point much of `src/adapter/sql/queryBuilder.ts`'s existing dialect abstraction could likely be reused instead of adding a Drizzle-specific one
+- [ ] Write the ADR (design note above, formalized) before writing adapter code — FAQ.md new entry once decided
+- [ ] `createDrizzleAdapter(...)` implementing `DatabaseAdapter`, shape depends on the ADR outcome
+- [ ] Tests: `tests/contract/runContractSuite.ts` arm once the adapter exists
 
 ---
 

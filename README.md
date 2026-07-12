@@ -207,6 +207,8 @@ In development, each actor type shares **one** sheet (`DEV_SELLER_SHEET_ID` for 
 
 > **Tip**: Add a "Dev vs Production" section to your own `README.md` noting which tests cover per-user-sheet scenarios.
 
+This same per-user isolation generalizes directly to the SQL adapters ([Migration Path](#-migration-path)): each non-admin table gets an injected `tenant_id` column, and `context.actorSheetId` — a real spreadsheet ID on Sheets — becomes the opaque `tenant_id` value on Postgres/MySQL/Prisma. Admin tables have no `tenant_id` column at all, matching Sheets' single global admin sheet. See [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy) for the full design rationale.
+
 ### Schema DSL
 
 Define tables using a fluent builder API:
@@ -736,21 +738,50 @@ Coming Soon!
 
 ## 🔄 Migration Path
 
-When you're ready for production:
+When you're ready for production, swapping `createSheetAdapter` for a real database is a **config/factory change, not a CRUD-call rewrite** — `SheetAdapter` and the SQL adapters below all implement the same `DatabaseAdapter`/`TableOperations` contract, so `adapter.withContext({...}).table('products').create({...})` reads identically either way. See [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy) for the tenancy design behind this.
 
-1. Every schema maps cleanly to SQL tables
-2. Replace `createSheetAdapter` with your DB adapter
-3. Update CRUD calls (minimal changes)
-4. No logic trapped in Sheets
+```typescript
+import { createDatabaseAdapter } from 'longcelot-sheet-db';
+
+// Picks the engine from $DB_DRIVER ('sheets' | 'postgres' | 'mysql'), or pass driver explicitly.
+// A dev's .env points at sheets; CI/production's env points at postgres/mysql — zero code branching.
+const adapter = createDatabaseAdapter();
+adapter.registerSchemas(schemas);
+```
+
+```typescript
+// Or construct a specific engine directly:
+import { createSheetAdapter, createPostgresAdapter, createMySQLAdapter, createPrismaAdapter } from 'longcelot-sheet-db';
+
+const dev = createSheetAdapter({ adminSheetId, credentials, tokens });
+const prod = createPostgresAdapter({ connectionString: process.env.DATABASE_URL });
+const prodMysql = createMySQLAdapter({ connectionString: process.env.DATABASE_URL });
+
+// Prisma: pass an already-`prisma generate`'d client — this package never runs Prisma codegen
+// itself (see FAQ.md §13). Run `lsdb migrate --prisma` + `prisma generate` first.
+import { PrismaClient } from '@prisma/client';
+const prodPrisma = createPrismaAdapter({ client: new PrismaClient() });
+```
+
+Install only the driver you target — `pg`/`mysql2` are optional peer dependencies, lazily required only inside `createPostgresAdapter()`/`createMySQLAdapter()`, so `npm install longcelot-sheet-db` alone never pulls either in:
+
+```bash
+npm install longcelot-sheet-db
+npm install pg        # only if targeting Postgres
+npm install mysql2    # only if targeting MySQL
+npm install prisma @prisma/client   # only if targeting Prisma
+```
 
 ### Which migrate command do I need?
 
 | Goal | Command |
 |------|---------|
 | Copy table structure only (schema / DDL) | `lsdb migrate --prisma` or `--sql` |
+| Apply that DDL to a live Postgres/MySQL database | `lsdb migrate --sql --apply --connection-string $DATABASE_URL` |
 | Copy structure + admin sheet row data | `lsdb migrate-data` |
 | Copy structure + all user-sheet row data | `lsdb migrate-data --all-users` |
-| Preview export plan without writing files | add `--dry-run` to either command |
+| Run the data cutover now, no generated script | `lsdb migrate-data --run --connection-string $DATABASE_URL --driver postgres` |
+| Preview any of the above without writing/executing | add `--dry-run` |
 
 ### Schema export (structure only)
 
@@ -760,12 +791,22 @@ npx lsdb migrate --prisma --output ./prisma
 
 # Export to SQL DDL (CREATE TABLE statements)
 npx lsdb migrate --sql --output ./migrations
+
+# Export AND apply directly to a live database — idempotent, safe to rerun
+npx lsdb migrate --sql --apply --connection-string postgres://user:pass@host/db
+npx lsdb migrate --sql --apply --driver mysql --connection-string $DATABASE_URL
+
+# Prisma: shells out to `prisma migrate deploy` (needs an existing migrations/ folder —
+# run `prisma migrate dev` once locally first)
+npx lsdb migrate --prisma --apply
 ```
+
+`--driver` is inferred from the connection string's scheme (`postgres://`/`postgresql://` → postgres, `mysql://` → mysql) when omitted. `--dry-run` prints the statements that would run without executing them.
 
 ### Data export (row data → production DB)
 
 ```bash
-# Admin sheet only
+# Generate a migrate-data.js script (admin sheet only)
 npx lsdb migrate-data
 
 # Admin sheet + all registered user sheets
@@ -773,19 +814,50 @@ npx lsdb migrate-data --all-users
 
 # Preview without writing
 npx lsdb migrate-data --all-users --dry-run
+
+# Run the cutover now, in-process — no generated script, no insertRow() stub to fill in
+npx lsdb migrate-data --run --all-users --connection-string $DATABASE_URL --driver postgres
 ```
 
-`migrate-data` generates a `migrate-data.js` script. Replace the `insertRow()` stub with your real DB client (Prisma, Sequelize, etc.) and run it once.
-
-```typescript
-// Development (Sheets)
-const adapter = createSheetAdapter({ ... });
-
-// Production (Prisma, Sequelize, etc.)
-const adapter = createSQLAdapter({ ... });
-```
+Without `--run`, `migrate-data` generates a `migrate-data.js` script — replace the `insertRow()` stub with your real DB client and run it once. With `--run`, the cutover happens immediately against `createPostgresAdapter`/`createMySQLAdapter` (not Prisma — see [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy) for why), upserting every row by `_id` so reruns are safe by default — no separate `--upsert` flag needed. `--token-file` works the same as it does for `sync --token-file`, for CI/CD.
 
 > **Note**: `lsdb export` and `lsdb export-data` are deprecated — use `lsdb migrate` and `lsdb migrate-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes, so the schema/DDL export command is now the one named `migrate`; the row-data export command is `migrate-data`.
+
+### Reference CI/CD pipeline
+
+`--apply`/`--run` are built to be invoked unattended from a deploy pipeline — same secrets convention as `sync --token-file` (`$DATABASE_URL` / a secret manager entry for the connection string, a stored tokens file for the Sheets read side), idempotent by default, `--dry-run` on both for a gated diff-review step. A typical GitHub Actions job:
+
+```yaml
+# In GitHub Actions:
+jobs:
+  deploy:
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile && pnpm build
+
+      # Schema: apply to staging, smoke test, then production only on a version tag —
+      # mirrors this package's own `publish` job's `if: startsWith(github.ref, 'refs/tags/v')` gate.
+      - run: npx lsdb migrate --sql --apply --connection-string ${{ secrets.STAGING_DATABASE_URL }}
+      - run: <your smoke test against staging>
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: npx lsdb migrate --sql --apply --connection-string ${{ secrets.PRODUCTION_DATABASE_URL }}
+
+      # Data cutover — run once (or repeatedly during a dual-write transition window, see below),
+      # not on every deploy.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          npx lsdb migrate-data --run --all-users \
+            --connection-string ${{ secrets.PRODUCTION_DATABASE_URL }} \
+            --driver postgres \
+            --token-file token.json
+```
+
+**When does "ship to production" actually happen?** Two options:
+
+- **Dual-write-then-flip (recommended default)** — both stores stay populated during a transition window: keep writing to Sheets as usual, rerun `migrate-data --run` periodically to keep the SQL side current (safe — always idempotent), then flip `DB_DRIVER=postgres` (via `createDatabaseAdapter()`) at deploy time once you're confident. Rollback is just flipping the env var back, since Sheets was never stopped.
+- **One-shot cutover** — run `migrate-data --run` once, flip the driver, and stop writing to Sheets entirely. Simpler, but harder to roll back from: the SQL adapters never auto-create/alter schema at runtime (§16.2), so there's no automatic "flip back and resync" path once Sheets stops being the source of truth.
+
+See [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy) for the full tenancy/cutover design rationale.
 
 ## 🗑️ Dropping & Renaming Schema Elements
 

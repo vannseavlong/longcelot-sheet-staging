@@ -30,6 +30,8 @@ npx lsdb seed       # Seed test data
 npx lsdb doctor     # Health check
 npx lsdb status     # Show registered tables
 npx lsdb erdiagram  # Generate Mermaid ER diagram (ER-DIAGRAM.md)
+npx lsdb migrate --sql --apply --connection-string $DATABASE_URL   # apply DDL to a live Postgres/MySQL DB
+npx lsdb migrate-data --run --connection-string $DATABASE_URL --driver postgres  # run the data cutover now
 ```
 
 ## Architecture
@@ -37,6 +39,10 @@ npx lsdb erdiagram  # Generate Mermaid ER diagram (ER-DIAGRAM.md)
 ```
 src/
 ├── adapter/      # SheetAdapter, CRUD operations, Google Sheets client
+│   ├── types.ts        # DatabaseAdapter / TableOperations / StorageClient contract (Phase 16.1)
+│   ├── accessControl.ts  # Shared cross-actor permission matrix + tenant-key resolution (Phase 16.3)
+│   ├── createDatabaseAdapter.ts  # Single env-driven factory across all engines (Phase 16.2/16.7)
+│   └── sql/           # Postgres / MySQL / Prisma adapters (Phase 16.2)
 ├── auth/         # OAuth manager, password hashing (bcrypt)
 ├── cli/          # CLI commands (init, generate, sync, validate, etc.)
 ├── errors/       # Custom errors: ValidationError, PermissionError, SchemaError
@@ -44,10 +50,14 @@ src/
 └── utils/        # Environment validation, logging
 ```
 
+**Every storage engine implements the same `DatabaseAdapter`/`TableOperations` contract** (`src/adapter/types.ts`) — `SheetAdapter`, and the Postgres/MySQL/Prisma adapters under `src/adapter/sql/`, so application CRUD code (`adapter.withContext({...}).table(name).create({...})`) is identical regardless of engine. `src/adapter/accessControl.ts` holds the cross-actor permission matrix and tenant-key resolution shared by every adapter (`SheetAdapter` delegates to it rather than reimplementing it) — a non-Sheets engine has no physical per-user sheet, so it uses an injected `tenant_id` column instead, with `context.actorSheetId`/`targetSheetId` reused as the opaque tenant value; see FAQ.md #13 for the full tenancy ADR and the real cross-engine bugs (DATETIME vs TIMESTAMP, MySQL's lack of `CREATE INDEX IF NOT EXISTS`, Prisma's leading-underscore field-name restriction, etc.) found by testing against real Postgres/MySQL/Prisma rather than only asserting on generated DDL strings. `createDatabaseAdapter({ driver })` (or `$DB_DRIVER`) picks the engine from one config value; `pg`/`mysql2` are optional peerDependencies, lazily required only inside `createPostgresAdapter()`/`createMySQLAdapter()` so importing this package never pulls either in for Sheets-only consumers.
+
 **`SheetClient.getAllRows()` has a built-in read cache** (in-memory, 2s TTL by default, enabled by default) — every `findMany()`/`findOne()`/`count()`/`update()`/`delete()` call routes through it, and every write method (`appendRow`, `appendRows`, `updateRow`, `deleteRow`, `writeHeader`) invalidates the relevant tab's entry. This exists to stay under Google's per-user Sheets API read quota; see FAQ.md #11 for the incident and `SheetReadCacheConfig` in API.md for tuning. When touching `getAllRows()`, `getDataRows()` (in `crud.ts`), or any of the write methods in `sheetClient.ts`, keep the invalidate-on-write pairing intact — a read path added without going through `getAllRows()`, or a write added without calling `invalidateCache()`, will silently reintroduce stale-read or cache-never-clears bugs.
 
 **Main exports** (`src/index.ts`):
 - `createSheetAdapter` - Create database adapter instance
+- `createPostgresAdapter`, `createMySQLAdapter`, `createPrismaAdapter` - SQL-backed `DatabaseAdapter` implementations (Phase 16.2)
+- `createDatabaseAdapter` - Single factory picking the engine via config or `$DB_DRIVER`
 - `defineTable` - Define table schemas
 - `createOAuthManager` - Google OAuth handling
 - `hashPassword`, `comparePassword`, `validatePasswordStrength` - Password utilities

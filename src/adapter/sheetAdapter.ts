@@ -1,5 +1,7 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
+import type { DatabaseAdapter } from './types';
+import { hasPermission as accessControlHasPermission, resolveNonAdminTenantKey } from './accessControl';
 import {
   TableSchema,
   UserContext,
@@ -72,7 +74,7 @@ export interface SheetAdapterConfig {
   cache?: SheetReadCacheConfig;
 }
 
-export class SheetAdapter {
+export class SheetAdapter implements DatabaseAdapter {
   private client: SheetClient;
   private credentials: { clientId: string; clientSecret: string; redirectUri: string };
   private adminSheetId: string;
@@ -513,66 +515,11 @@ export class SheetAdapter {
     if (schema.actor === 'admin') {
       return this.adminSheetId;
     }
-
-    const isCrossActor = this.context?.targetActor && this.context.targetActor !== this.context?.role;
-
-    if (isCrossActor && schema.actor === this.context?.targetActor) {
-      if (!this.context?.targetSheetId) {
-        throw new PermissionError(
-          `targetSheetId required for cross-actor access to '${schema.actor}' tables`,
-          this.context?.role
-        );
-      }
-      return this.context.targetSheetId;
-    }
-
-    if (this.context?.actorSheetId) {
-      return this.context.actorSheetId;
-    }
-
-    throw new PermissionError('Actor sheet ID not provided in context', this.context?.role);
+    return resolveNonAdminTenantKey(schema, this.context);
   }
 
   private hasPermission(schema: TableSchema): boolean {
-    if (!this.context) return false;
-
-    if (this.context.role === 'admin') return true;
-
-    // Same actor accessing their own tables
-    if (schema.actor === this.context.role && !this.context.targetActor) return true;
-
-    // Admin tables: non-admin cannot access unless it's the users table on create
-    if (schema.actor === 'admin') return false;
-
-    // Cross-actor: check permission matrix
-    const targetActor = this.context.targetActor;
-    if (!targetActor || targetActor === this.context.role) return schema.actor === this.context.role;
-
-    if (schema.actor !== targetActor) return false;
-
-    const perm = this.permissions?.[this.context.role];
-    if (!perm) {
-      throw new PermissionError(
-        `'${this.context.role}' has no cross-actor permissions configured`,
-        this.context.role
-      );
-    }
-
-    if (!perm.canAccess.includes(targetActor)) {
-      throw new PermissionError(
-        `'${this.context.role}' cannot access '${targetActor}' sheets`,
-        this.context.role
-      );
-    }
-
-    if (perm.tables && !perm.tables.includes(schema.name)) {
-      throw new PermissionError(
-        `Table '${schema.name}' is not allowed for '${this.context.role}' → '${targetActor}' access`,
-        this.context.role
-      );
-    }
-
-    return true;
+    return accessControlHasPermission(schema, this.context, this.permissions);
   }
 
   private async sheetExists(schema: TableSchema): Promise<boolean> {

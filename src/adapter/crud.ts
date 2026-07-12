@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
-import { SheetClient, VALIDATION_CHECK_INTERVAL } from './sheetClient';
+import { VALIDATION_CHECK_INTERVAL } from './sheetClient';
+import type { StorageClient, TableOperations } from './types';
 import {
   TableSchema,
   ColumnDefinition,
@@ -14,9 +15,9 @@ import {
 import { ValidationError } from '../errors/ValidationError';
 import { buildValidationRules } from '../utils/validationRules';
 
-export class CRUDOperations {
+export class CRUDOperations implements TableOperations {
   constructor(
-    private client: SheetClient,
+    private client: StorageClient,
     private spreadsheetId: string,
     private schema: TableSchema,
     private fkResolver?: FKResolver,
@@ -280,7 +281,7 @@ export class CRUDOperations {
     if (rowNumber % VALIDATION_CHECK_INTERVAL !== 0) return;
     const rules = buildValidationRules(headers, this.schema.columns, this.defaultBooleanFormat);
     if (rules.length === 0) return;
-    await this.client.extendValidation(this.spreadsheetId, this.schema.name, rules, rowNumber - 1);
+    await this.client.extendValidation?.(this.spreadsheetId, this.schema.name, rules, rowNumber - 1);
   }
 
   private async getHeaders(): Promise<string[]> {
