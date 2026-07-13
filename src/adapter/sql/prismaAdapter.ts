@@ -302,7 +302,10 @@ class PrismaTableOperations implements TableOperations {
   }
 
   async upsert(options: UpsertOptions): Promise<Record<string, unknown>> {
-    const existing = await this.findOne({ where: options.where });
+    // includeDeleted: see the matching fix in SQLTableOperations.upsert() (FAQ.md §13) — without
+    // this, an already-soft-deleted target row is invisible to this existence check, so upsert()
+    // wrongly takes the create() branch against a row that's still physically there.
+    const existing = await this.findOne({ where: options.where, includeDeleted: true });
     if (existing) {
       // See the matching fix in SQLTableOperations.upsert() (FAQ.md §13): a caller upserting from
       // a full row snapshot has no intention of rewriting readonly/system columns on an

@@ -187,6 +187,32 @@ export function runContractSuite(label: string, factory: ContractSuiteFactory): 
       expect(refetched?._created_at).toBe(created._created_at);
     });
 
+    it('upsert() against an already soft-deleted row updates it instead of throwing a duplicate-key error — incident: F2 migrate-data cutover', async () => {
+      // migrate-data re-reads a soft-deleted row (via includeDeleted: true, itself a fix for a
+      // separate incident) and upserts it every rerun, same as any other row. upsert()'s own
+      // existence check (findOne()) didn't pass includeDeleted, so it couldn't see an
+      // already-soft-deleted target row, concluded the row didn't exist yet, and took the
+      // create() branch — which then failed with a native unique-constraint violation, since the
+      // row was very much still there, just hidden by the default soft-delete filter.
+      const id = factory.uniqueId();
+      const ctx = sellerContext(factory.createAdapter(), id);
+
+      const created = await ctx.table('products').create({ sku: `SD-${id}`, price: 1 });
+      await ctx.table('products').delete({ where: { _id: created._id as string } });
+
+      await expect(
+        ctx.table('products').upsert({ where: { _id: created._id as string }, data: { ...created, price: 2 } })
+      ).resolves.not.toThrow();
+
+      const stillDeleted = await ctx.table('products').findOne({
+        where: { _id: created._id as string },
+        includeDeleted: true,
+      });
+      expect(stillDeleted?._id).toBe(created._id);
+      expect(stillDeleted?.price).toBe(2);
+      expect(stillDeleted?._deleted_at).toBeTruthy();
+    });
+
     it('unique() throws ValidationError on a duplicate value within the same tenant', async () => {
       const id = factory.uniqueId();
       const ctx = sellerContext(factory.createAdapter(), id);

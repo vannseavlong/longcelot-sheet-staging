@@ -18,6 +18,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.39] — 2026-07-14
+
+### Fixed
+
+- **`upsert()` threw a native unique-constraint violation when re-run against a row that had already been migrated as soft-deleted.** All three adapters' `upsert()` checked for an existing row via `findOne({ where: options.where })` with no `includeDeleted` option — since `findOne()` excludes soft-deleted rows by default, an already-soft-deleted target row was invisible to this check, so `upsert()` wrongly concluded the row didn't exist yet and called `create()`, which failed on the database's own primary-key constraint (the row was very much still there). Found immediately after the [0.1.38] `includeDeleted` fix, same F2 cutover: once soft-deleted rows started actually reaching the target database, a rerun against one of them broke `migrate-data`'s core "safe to rerun" idempotency guarantee. Fixed by passing `includeDeleted: true` to `upsert()`'s own existence check in all three adapters — `update()` itself needed no change, since none of the three ever filtered its own row-matching query by soft-delete status in the first place.
+
+See FAQ.md §13 for the full incident write-up (F2 Render Postgres data cutover).
+
+---
+
 ## [0.1.38] — 2026-07-14
 
 ### Fixed

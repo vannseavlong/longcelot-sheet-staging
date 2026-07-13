@@ -149,7 +149,10 @@ export class CRUDOperations implements TableOperations {
 
   async upsert(options: UpsertOptions): Promise<Record<string, unknown>> {
     if (this.preFlight) await this.preFlight;
-    const existing = await this.findOne({ where: options.where });
+    // includeDeleted: see the matching fix in SQLTableOperations.upsert() (FAQ.md §13) — without
+    // this, an already-soft-deleted target row is invisible to this existence check, so upsert()
+    // wrongly takes the create() branch against a row that's still physically there.
+    const existing = await this.findOne({ where: options.where, includeDeleted: true });
     if (existing) {
       // A caller upserting from a full row snapshot (e.g. a sync/import tool re-writing a row it
       // read verbatim, `_id`/`_created_at` included) has no intention of actually rewriting

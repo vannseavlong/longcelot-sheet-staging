@@ -174,7 +174,14 @@ export class SQLTableOperations implements TableOperations {
   }
 
   async upsert(options: UpsertOptions): Promise<Record<string, unknown>> {
-    const existing = await this.findOne({ where: options.where });
+    // includeDeleted: without this, an already-soft-deleted target row is invisible to this
+    // existence check (findOne()'s own default), so upsert() wrongly concludes the row doesn't
+    // exist yet and calls create() — which then fails with a native unique-constraint violation,
+    // since the row is very much still there, just hidden by the soft-delete filter. Found via a
+    // real migrate-data rerun against a row already migrated as soft-deleted in an earlier attempt
+    // (see FAQ.md §13) — breaks the "safe to rerun" idempotency guarantee for any soft-deleted row
+    // without this.
+    const existing = await this.findOne({ where: options.where, includeDeleted: true });
     if (existing) {
       // A caller upserting from a full row snapshot (e.g. lsdb migrate-data's Sheets → SQL
       // cutover, which upserts the exact row it read from Sheets, `_id`/`_created_at` included)
