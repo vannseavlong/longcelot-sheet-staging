@@ -18,6 +18,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.33] — 2026-07-13
+
+### Fixed
+
+- **`createPostgresAdapter()` and `lsdb migrate --sql --apply` had no SSL support, so both fail against any managed Postgres provider that requires it (Render, Heroku, Supabase, etc.).** A plain `new Pool({ connectionString })` doesn't surface a clear TLS error against these — the server just drops the connection mid-handshake, which `pg`/`pg-pool` report as the generic `Connection terminated unexpectedly`, making the real cause easy to misdiagnose as a network/credentials problem. Found via a real Render Postgres cutover: `lsdb migrate --sql --apply` failed exactly this way a few seconds into applying DDL. Fixed with a new `resolvePostgresSSL()` helper (`src/adapter/sql/resolvePostgresSSL.ts`), shared by both call sites — it enables `ssl: { rejectUnauthorized: false }` automatically for any non-localhost connection string, and leaves localhost/loopback connections (local dev, docker-compose test databases) untouched. `PostgresAdapterConfig` gained an optional `ssl` field to override the automatic detection when needed. See FAQ.md §13 for the full incident write-up.
+
+---
+
 ## [0.1.32] — 2026-07-12
 
 ### Added

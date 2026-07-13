@@ -3,12 +3,18 @@ import { SQLConnection, SQLQueryResult } from './connection';
 import { PostgresDialect } from './dialect';
 import { SQLAdapterBase } from './sqlAdapterBase';
 import { lazyRequireDriver } from './lazyRequireDriver';
+import { resolvePostgresSSL } from './resolvePostgresSSL';
 
 export interface PostgresAdapterConfig {
   /** e.g. postgres://user:pass@host:5432/db. Ignored if `pool` is provided. Falls back to $DATABASE_URL. */
   connectionString?: string;
   /** Pass a pre-built pg.Pool instead of letting this adapter construct one. */
   pool?: unknown;
+  /**
+   * Overrides the automatic SSL detection (on for any non-localhost connectionString, off for
+   * localhost/127.0.0.1) — see resolvePostgresSSL(). Ignored if `pool` is provided.
+   */
+  ssl?: boolean | { rejectUnauthorized: boolean };
   /** Column injected into every non-admin table to scope rows to a tenant. Default: 'tenant_id'. */
   tenantColumn?: string;
   permissions?: Record<string, ActorPermission>;
@@ -38,12 +44,14 @@ export function createPostgresAdapter(config: PostgresAdapterConfig): SQLAdapter
   if (config.pool) {
     pool = config.pool as PgPoolLike;
   } else {
-    const pgModule = lazyRequireDriver<{ Pool: new (opts: { connectionString?: string }) => PgPoolLike }>(
-      'pg',
-      'pg',
-      'createPostgresAdapter()'
-    );
-    pool = new pgModule.Pool({ connectionString: config.connectionString ?? process.env.DATABASE_URL });
+    const pgModule = lazyRequireDriver<{
+      Pool: new (opts: {
+        connectionString?: string;
+        ssl?: boolean | { rejectUnauthorized: boolean };
+      }) => PgPoolLike;
+    }>('pg', 'pg', 'createPostgresAdapter()');
+    const connectionString = config.connectionString ?? process.env.DATABASE_URL;
+    pool = new pgModule.Pool({ connectionString, ssl: resolvePostgresSSL(connectionString, config.ssl) });
   }
 
   return new SQLAdapterBase(new PgConnection(pool), PostgresDialect, {

@@ -7,6 +7,7 @@ import { resolveActorName } from '../../utils/actorConfig';
 import { resolveConfigPath } from '../../utils/cliFiles';
 import { toPrismaFieldName } from '../../utils/prismaNaming';
 import { lazyRequireDriver } from '../../adapter/sql/lazyRequireDriver';
+import { resolvePostgresSSL } from '../../adapter/sql/resolvePostgresSSL';
 
 interface MigrateOptions {
   prisma?: boolean;
@@ -341,9 +342,15 @@ interface ApplyConnection {
 async function connectForApply(driver: 'postgres' | 'mysql', connectionString: string): Promise<ApplyConnection> {
   if (driver === 'postgres') {
     const pgModule = lazyRequireDriver<{
-      Pool: new (opts: { connectionString: string }) => { query: (t: string) => Promise<unknown>; end: () => Promise<void> };
+      Pool: new (opts: {
+        connectionString: string;
+        ssl?: boolean | { rejectUnauthorized: boolean };
+      }) => { query: (t: string) => Promise<unknown>; end: () => Promise<void> };
     }>('pg', 'pg', 'migrate --apply');
-    const pool = new pgModule.Pool({ connectionString });
+    // Render/Heroku/Supabase-style managed Postgres requires SSL on external connections —
+    // see resolvePostgresSSL() for why a plain Pool({ connectionString }) fails here with a
+    // generic "Connection terminated unexpectedly" instead of a clear TLS error.
+    const pool = new pgModule.Pool({ connectionString, ssl: resolvePostgresSSL(connectionString) });
     return { query: (text) => pool.query(text), end: () => pool.end() };
   }
 
