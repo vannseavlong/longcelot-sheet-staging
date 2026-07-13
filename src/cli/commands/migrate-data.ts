@@ -7,7 +7,7 @@ import { resolveConfigPath, TOKENS_FILENAME } from '../../utils/cliFiles';
 import { loadCLIConfig, buildAdminAdapter } from '../lib/adminAdapter';
 import { createPostgresAdapter } from '../../adapter/sql/postgresAdapter';
 import { createMySQLAdapter } from '../../adapter/sql/mysqlAdapter';
-import { inferDriverFromConnectionString } from './migrate';
+import { inferDriverFromConnectionString, sortSchemasByDependency } from './migrate';
 
 interface MigrateDataOptions {
   output?: string;
@@ -305,7 +305,12 @@ export async function migrateDataCommand(options: MigrateDataOptions) {
 
     require('dotenv').config();
     const config = loadCLIConfig();
-    let schemas = loadSchemas(config);
+    // Row inserts hit real FOREIGN KEY constraints, same as migrate --sql --apply's inline FKs
+    // (see sortSchemasByDependency()'s doc comment / FAQ.md §13) — this command has its own
+    // loadSchemas() (duplicated from migrate.ts, not shared) that never got the same fix, so a
+    // referencing table's rows could be upserted before the table it references had any rows at
+    // all, failing with a genuine FK violation instead of a DDL-time ordering error.
+    let schemas = sortSchemasByDependency(loadSchemas(config));
     if (options.table) {
       schemas = schemas.filter((s) => s.name === options.table);
       if (schemas.length === 0) {
@@ -333,7 +338,9 @@ export async function migrateDataCommand(options: MigrateDataOptions) {
     process.exit(1);
   }
 
-  let schemas = loadSchemas(config);
+  // Same ordering fix as the --run path above — keeps the generated stub script's table order
+  // dependency-safe too, in case whoever fills in insertRow() runs it top-to-bottom.
+  let schemas = sortSchemasByDependency(loadSchemas(config));
 
   if (options.table) {
     schemas = schemas.filter((s) => s.name === options.table);

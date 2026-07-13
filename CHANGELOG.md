@@ -18,6 +18,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.36] — 2026-07-13
+
+### Fixed
+
+- **`create()`/`createMany()`/`update()` built their column list straight from the caller's data object, with no schema awareness — a stray key that isn't a declared column reached the database as a literal column reference and failed.** Found via the real F2 data cutover: `lsdb migrate-data --run` upserts the exact row it reads back from Sheets, and a real Sheet tab had a leftover/legacy column (`task_information`) that predates the current `categories.ts` schema — Postgres correctly rejected it with `column "task_information" of relation "categories" does not exist` (the Prisma adapter would hit the equivalent "Unknown argument" instead). `SQLTableOperations.serializeRow()` and the new `PrismaTableOperations.filterKnownColumns()` now drop any key that isn't a real entry in `schema.columns` before it reaches `buildInsert()`/`buildUpdate()`/the Prisma delegate — every column a table actually has, including the system ones (`_id`/`_created_at`/`_updated_at`/`_deleted_at`), is a real `schema.columns` entry, so this only ever drops keys that were never part of the schema. `SheetAdapter`'s `CRUDOperations` was already unaffected — it writes by iterating known `headers`, not the payload's own keys.
+
+See FAQ.md §13 for the full incident write-up (F2 Render Postgres data cutover).
+
+---
+
 ## [0.1.35] — 2026-07-13
 
 ### Fixed
