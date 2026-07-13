@@ -18,6 +18,26 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.38] — 2026-07-14
+
+### Fixed
+
+- **`lsdb migrate-data` silently excluded soft-deleted rows from the cutover, breaking foreign-key integrity on the target database whenever another row still referenced one.** Every read in `migrate-data.ts` (both the live `--run` path and the generated stub-script path) used plain `findMany({})`, which — per the package's documented soft-delete behavior — excludes rows with `_deleted_at` set by default. Found via the real F2 data cutover: an `orders` row's `assigned_cleaner_id` pointed at a `cleaners` row that genuinely exists but was soft-deleted (a real historical fact — an order really was handled by that cleaner before they were removed from the roster), so the cleaner never got migrated even though the order referencing it did, failing with a real FK violation on the target database. Fixed by reading every table (and the `users` lookup for `--all-users`) with `findMany({ includeDeleted: true })` instead — this only changes what gets migrated, not what the application sees afterward, since the target database's own `findMany()` still filters `_deleted_at` by default post-cutover.
+
+See FAQ.md §13 for the full incident write-up (F2 Render Postgres data cutover), including the separate, non-package dangling-reference issue (a `category_products` row pointing at a category that never existed at all, not even soft-deleted) found and cleaned up alongside this fix.
+
+---
+
+## [0.1.37] — 2026-07-13
+
+### Fixed
+
+- **`lsdb migrate-data --run` could upsert a table's rows before the table it references via `ref()` had any rows at all, failing with a real foreign-key violation.** `migrate-data.ts` has its own `loadSchemas()` — duplicated from `migrate.ts`'s, not shared — which never received the `sortSchemasByDependency()` fix from the [0.1.34] FK-ordering incident. Found via the real F2 data cutover: `category_addon_items.ts` (`ref('category_addons._id')`) sorts alphabetically before `category_addons.ts`, so its rows were upserted first, against an empty `category_addons` table — `FK violation: Key (addon_id)=(...) is not present in table "category_addons"`. Fixed by wiring the existing `sortSchemasByDependency()` into both of `migrate-data.ts`'s call sites (the live `--run` path and the stub-script-generation path), same topological sort already used and tested for `migrate --sql --apply`.
+
+See FAQ.md §13 for the full incident write-up (F2 Render Postgres data cutover).
+
+---
+
 ## [0.1.36] — 2026-07-13
 
 ### Fixed

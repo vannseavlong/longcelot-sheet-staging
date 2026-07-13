@@ -137,7 +137,7 @@ export function generateMigrateDataScript(schemas: TableSchema[], allUsers = fal
       lines.push(`  // ─── ${schema.name} ───`);
       lines.push(`  console.log('\\nExporting table: ${schema.name}...');`);
       lines.push(`  try {`);
-      lines.push(`    const rows = await adminCtx.table('${schema.name}').findMany({});`);
+      lines.push(`    const rows = await adminCtx.table('${schema.name}').findMany({ includeDeleted: true });`);
       lines.push(`    console.log(\`  Found \${rows.length} row(s)\`);`);
       lines.push(`    for (const row of rows) { await insertRow('${schema.name}', row); }`);
       lines.push(`    console.log(\`  ✓ ${schema.name}: \${rows.length} rows exported\`);`);
@@ -156,7 +156,7 @@ export function generateMigrateDataScript(schemas: TableSchema[], allUsers = fal
     lines.push("  console.log('\\nFetching registered users for per-user export...');");
     lines.push('  try {');
     lines.push("    const adminCtxForUsers = adapter.withContext({ userId: 'migrate-cli', actor: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID });");
-    lines.push("    const users = await adminCtxForUsers.table('users').findMany({});");
+    lines.push("    const users = await adminCtxForUsers.table('users').findMany({ includeDeleted: true });");
     lines.push('    console.log(`  Found ${users.length} user(s)\\n`);');
     lines.push('');
     lines.push('    for (const user of users) {');
@@ -170,7 +170,7 @@ export function generateMigrateDataScript(schemas: TableSchema[], allUsers = fal
     lines.push('      for (const tableName of roleTables) {');
     lines.push('        console.log(`  Exporting ${tableName}...`);');
     lines.push('        try {');
-    lines.push('          const rows = await userCtx.table(tableName).findMany({});');
+    lines.push('          const rows = await userCtx.table(tableName).findMany({ includeDeleted: true });');
     lines.push('          console.log(`    Found ${rows.length} row(s)`);');
     lines.push('          for (const row of rows) { await insertRow(tableName, row, user.user_id); }');
     lines.push('          console.log(`    ✓ ${tableName}: ${rows.length} rows exported`);');
@@ -248,7 +248,13 @@ async function runMigrateData(schemas: TableSchema[], connectionString: string, 
   console.log(chalk.blue.bold(`\n📦 ${options.dryRun ? '[DRY RUN] ' : ''}Running data cutover to ${driver}...\n`));
 
   for (const schema of adminSchemas) {
-    const rows = await adminCtx.table(schema.name).findMany({});
+    // includeDeleted: a soft-deleted row is still a real historical fact other rows can
+    // legitimately reference by FK (e.g. an order assigned to a since-removed cleaner) — silently
+    // excluding it here (findMany()'s default) would migrate the referencing row but not the row
+    // it points at, failing with a real FK violation on the target database. The target's own
+    // findMany() still filters _deleted_at by default afterward, so this only affects what gets
+    // migrated, not what the application sees post-cutover (see FAQ.md §13).
+    const rows = await adminCtx.table(schema.name).findMany({ includeDeleted: true });
     console.log(chalk.cyan(`${schema.name}: ${rows.length} row(s)`));
     if (!options.dryRun) {
       const targetCtx = targetAdapter.withContext({ userId: 'migrate-data-cli', actor: 'admin' });
@@ -265,7 +271,9 @@ async function runMigrateData(schemas: TableSchema[], connectionString: string, 
       (roleSchemasMap[s.actor] ??= []).push(s);
     }
 
-    const users = await adminCtx.table('users').findMany({});
+    // See the matching comment above — a soft-deleted (deactivated) user's historical data
+    // shouldn't vanish from the cutover just because their account was later deactivated.
+    const users = await adminCtx.table('users').findMany({ includeDeleted: true });
     console.log(chalk.cyan(`\nFound ${users.length} user(s) for per-user cutover`));
 
     for (const user of users) {
@@ -279,7 +287,7 @@ async function runMigrateData(schemas: TableSchema[], connectionString: string, 
       const sourceUserCtx = sourceAdapter.withContext({ userId: user.user_id as string, actor: role, actorSheetId });
 
       for (const schema of roleSchemas) {
-        const rows = await sourceUserCtx.table(schema.name).findMany({});
+        const rows = await sourceUserCtx.table(schema.name).findMany({ includeDeleted: true });
         console.log(`  ${role}:${user.user_id} → ${schema.name}: ${rows.length} row(s)`);
         if (!options.dryRun) {
           // Tenant key for the SQL target reuses actorSheetId as an opaque tenant value — the

@@ -62,7 +62,7 @@ describe('generateMigrateDataScript()', () => {
 
   it('generates a findMany call for each schema', () => {
     const script = generateMigrateDataScript([usersSchema, bookingsSchema]);
-    expect(script).toContain("adminCtx.table('users').findMany({})");
+    expect(script).toContain("adminCtx.table('users').findMany({ includeDeleted: true })");
   });
 
   it('generates an insertRow call inside the loop for each admin schema', () => {
@@ -123,7 +123,7 @@ describe('generateMigrateDataScript() with allUsers=true', () => {
 
   it('includes per-user loop that reads from admin users table', () => {
     const script = generateMigrateDataScript([usersSchema, bookingsSchema], true);
-    expect(script).toContain("table('users').findMany({})");
+    expect(script).toContain("table('users').findMany({ includeDeleted: true })");
     expect(script).toContain('for (const user of users)');
   });
 
