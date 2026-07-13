@@ -277,6 +277,43 @@ export function generateSQLTable(schema: TableSchema, options: DDLOptions = {}):
   return lines.join('\n');
 }
 
+/**
+ * Foreign keys are emitted inline inside CREATE TABLE (see generateSQLTable() above), so the
+ * referenced table must already exist — physically, for `--apply`, or earlier in the file, for a
+ * manually `psql -f`'d schema.sql — before the table that references it. loadSchemas() has no
+ * ordering guarantee of its own (it's just fs.readdirSync() per actor directory), so a schema
+ * whose ref() target happens to sort after it alphabetically broke both `--apply` (live "relation
+ * ... does not exist") and a hand-applied schema.sql the same way. Fixed by topologically sorting
+ * on col.ref edges before either output is generated. A true circular FK (A references B
+ * references A) can't be resolved by reordering alone — one side would need its constraint
+ * deferred to a post-creation ALTER TABLE instead, not handled by this first pass; such schemas
+ * are left in their original relative order once every acyclic dependency is satisfied.
+ */
+export function sortSchemasByDependency(schemas: TableSchema[]): TableSchema[] {
+  const byName = new Map(schemas.map((schema) => [schema.name, schema]));
+  const sorted: TableSchema[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  function visit(schema: TableSchema): void {
+    if (visited.has(schema.name) || visiting.has(schema.name)) return;
+    visiting.add(schema.name);
+    for (const col of Object.values(schema.columns)) {
+      if (!col.ref) continue;
+      const [refTable] = col.ref.split('.');
+      if (refTable === schema.name) continue; // self-reference — no ordering constraint needed
+      const refSchema = byName.get(refTable);
+      if (refSchema) visit(refSchema);
+    }
+    visiting.delete(schema.name);
+    visited.add(schema.name);
+    sorted.push(schema);
+  }
+
+  for (const schema of schemas) visit(schema);
+  return sorted;
+}
+
 function loadSchemas(config: { actors: Array<{ name?: string; role?: string } | string> }): TableSchema[] {
   const schemas: TableSchema[] = [];
   const schemasDir = path.join(process.cwd(), 'schemas');
@@ -450,7 +487,7 @@ export async function migrateCommand(options: MigrateOptions) {
     process.exit(1);
   }
 
-  const schemas = loadSchemas(config);
+  const schemas = sortSchemasByDependency(loadSchemas(config));
 
   if (schemas.length === 0) {
     console.log(chalk.yellow('⚠️  No schemas found'));

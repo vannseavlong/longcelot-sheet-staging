@@ -1,4 +1,4 @@
-import { generatePrismaModel, generateSQLTable } from '../../src/cli/commands/migrate';
+import { generatePrismaModel, generateSQLTable, sortSchemasByDependency } from '../../src/cli/commands/migrate';
 import { defineTable } from '../../src/schema/defineTable';
 import { string, number, boolean, json } from '../../src/schema/columnBuilder';
 
@@ -115,6 +115,54 @@ describe('generateSQLTable() — Phase 16.5 fidelity', () => {
     // safe unconditionally. Found via real-MySQL integration testing (Phase 16.2) — see FAQ.md #13.
     const output = generateSQLTable(jsonDefaultSchema);
     expect(output).toContain("DEFAULT ('[]')");
+  });
+});
+
+describe('sortSchemasByDependency() — FK-ordered CREATE TABLE (incident: F2 Render cutover)', () => {
+  // Real bug: category_addon_items.ts ref()s category_addons, but sorts alphabetically before it
+  // (fs.readdirSync order), so `--apply`'s inline FK CREATE TABLE failed with a live
+  // "relation category_addons does not exist" against a real Postgres instance.
+  const categoryAddons = defineTable({
+    name: 'category_addons',
+    actor: 'admin',
+    columns: { addon_id: string().primary() },
+  });
+
+  const categoryAddonItems = defineTable({
+    name: 'category_addon_items',
+    actor: 'admin',
+    columns: {
+      item_id: string().primary(),
+      addon_id: string().required().ref('category_addons.addon_id'),
+    },
+  });
+
+  it('reorders a referencing table to after the table its ref() points at, regardless of input order', () => {
+    const sorted = sortSchemasByDependency([categoryAddonItems, categoryAddons]);
+    expect(sorted.map((s) => s.name)).toEqual(['category_addons', 'category_addon_items']);
+  });
+
+  it('leaves already-correctly-ordered schemas untouched', () => {
+    const sorted = sortSchemasByDependency([categoryAddons, categoryAddonItems]);
+    expect(sorted.map((s) => s.name)).toEqual(['category_addons', 'category_addon_items']);
+  });
+
+  it('leaves unrelated schemas (no ref() between them) in their original relative order', () => {
+    const sorted = sortSchemasByDependency([indexedSchema, adminSchema, jsonDefaultSchema]);
+    expect(sorted.map((s) => s.name)).toEqual(['products', 'settings', 'carts']);
+  });
+
+  it('does not loop forever on a self-referencing ref() (e.g. a parent_id pointing at its own table)', () => {
+    const selfRef = defineTable({
+      name: 'categories',
+      actor: 'admin',
+      columns: {
+        category_id: string().primary(),
+        parent_id: string().ref('categories.category_id'),
+      },
+    });
+    const sorted = sortSchemasByDependency([selfRef]);
+    expect(sorted.map((s) => s.name)).toEqual(['categories']);
   });
 });
 
