@@ -326,6 +326,15 @@ export class SQLTableOperations implements TableOperations {
   private serializeRow(data: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
+      // buildInsert()/buildUpdate() build their column list straight from this row's keys, with
+      // no schema awareness of their own — a stray key that isn't a declared column (e.g. a
+      // legacy/leftover Sheets column migrate-data read verbatim off a real spreadsheet row)
+      // would otherwise reach the database as a literal column reference and fail with a native
+      // "column ... does not exist" (found via a real F2 cutover run — see FAQ.md §13). Every
+      // column this table actually has, including the system ones, is a real entry in
+      // this.schema.columns (defineTable() injects _id/_created_at/_updated_at/_deleted_at into
+      // it directly), so this only ever drops keys that were never part of the schema.
+      if (!(key in this.schema.columns)) continue;
       result[key] = this.serializeValue(value, this.schema.columns[key]);
     }
     return result;

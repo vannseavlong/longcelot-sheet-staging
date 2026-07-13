@@ -131,6 +131,27 @@ export function runContractSuite(label: string, factory: ContractSuiteFactory): 
       expect(count).toBe(2);
     });
 
+    it('create() silently drops a stray key that is not a declared column, instead of erroring — incident: F2 migrate-data cutover', async () => {
+      // migrate-data upserts the exact row it reads back from Sheets — and a real Sheet tab can
+      // carry a leftover/legacy column that predates the current schema (found live: a
+      // `categories` row with a stray column not in categories.ts at all). The SQL/Prisma
+      // adapters used to build the column list straight from the payload's own keys with no
+      // schema awareness, so a stray key reached the database as a literal column reference and
+      // failed with a native "column ... does not exist" (or Prisma's "Unknown argument").
+      const id = factory.uniqueId();
+      const ctx = sellerContext(factory.createAdapter(), id);
+
+      const created = await ctx.table('products').create({
+        sku: `STRAY-${id}`,
+        price: 1,
+        this_column_does_not_exist_anywhere: 'leftover sheet data',
+      } as Record<string, unknown>);
+
+      expect(created.price).toBe(1);
+      const found = await ctx.table('products').findOne({ where: { sku: `STRAY-${id}` } });
+      expect(found?.price).toBe(1);
+    });
+
     it('upsert() creates when no row matches, then updates on the next call', async () => {
       const id = factory.uniqueId();
       const ctx = sellerContext(factory.createAdapter(), id);

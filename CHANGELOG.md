@@ -18,6 +18,17 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.35] — 2026-07-13
+
+### Fixed
+
+- **`upsert()` on an already-existing row threw `Column ... is readonly` when the payload included readonly system columns (`_id`, `_created_at`, `_updated_at`).** All three adapters (`SheetAdapter`'s `CRUDOperations`, `SQLTableOperations`, `PrismaTableOperations`) forwarded `upsert()`'s full data payload straight to `update()` on the existing-row branch — correct for a normal API caller, but `lsdb migrate-data --run` legitimately upserts the exact row it read back from Sheets (readonly fields included), so any idempotent rerun against already-migrated data crashed instead of just refreshing the non-readonly fields. Fixed by stripping readonly columns from the payload before calling `update()` in all three adapters' `upsert()` — an upsert into an existing row was never going to rewrite `_created_at` anyway, so this only changes behavior for exactly the case that used to throw.
+- **`create()` unconditionally stamped `_created_at`/`_updated_at` to `now()` in all three adapters, discarding any caller-supplied value.** Found while fixing the bug above: `lsdb migrate-data` passes each row's real original Sheets timestamps on first creation, but every migrated row silently got "time of the migration run" instead of its true history. Fixed: `create()`/`createMany()` now only default to `now()` when the field is `undefined`/`null`, preserving a caller-supplied timestamp when present. Normal application `create()` calls are unaffected, since they never supply these fields themselves.
+
+See FAQ.md §13 for the full incident write-up (F2 Render Postgres data cutover).
+
+---
+
 ## [0.1.34] — 2026-07-13
 
 ### Fixed

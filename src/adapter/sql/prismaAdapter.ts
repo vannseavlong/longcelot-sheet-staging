@@ -122,6 +122,25 @@ class PrismaTableOperations implements TableOperations {
     return getModelDelegate(this.client, this.schema);
   }
 
+  /**
+   * Drops any key that isn't a declared column on this schema before it reaches
+   * toFieldKeys()/the Prisma delegate — a stray key (e.g. a legacy/leftover Sheets column
+   * migrate-data read verbatim off a real spreadsheet row) would otherwise hit Prisma's
+   * "Unknown argument" error, the Prisma-side equivalent of the raw SQL adapters' native "column
+   * ... does not exist" (found via a real F2 cutover run — see FAQ.md §13, and the matching fix
+   * in SQLTableOperations.serializeRow()). Every column this table actually has, including the
+   * system ones, is a real entry in this.schema.columns. Only ever applied to a data payload
+   * (create/createMany/update), never to a where clause — the tenant/soft-delete keys buildWhere()
+   * adds aren't schema columns and must pass through untouched there.
+   */
+  private filterKnownColumns(data: Record<string, unknown>): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key in this.schema.columns) result[key] = value;
+    }
+    return result;
+  }
+
   /** Raw column names (e.g. `_id`) -> Prisma Client field names (e.g. `id`) — see toPrismaFieldName(). */
   private toFieldKeys(obj: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
@@ -173,7 +192,7 @@ class PrismaTableOperations implements TableOperations {
     if (this.tenantValue !== undefined) row[this.tenantColumn] = this.tenantValue;
 
     try {
-      await this.delegate.create({ data: this.toFieldKeys(row) });
+      await this.delegate.create({ data: this.toFieldKeys(this.filterKnownColumns(row)) });
     } catch (err) {
       throw translatePrismaError(err) ?? err;
     }
@@ -223,7 +242,7 @@ class PrismaTableOperations implements TableOperations {
     // already computed app-side above (matches CRUDOperations/SQLTableOperations), so `results`
     // is returned directly rather than relying on Prisma to echo them back.
     try {
-      await this.delegate.createMany({ data: rows.map((row) => this.toFieldKeys(row)) });
+      await this.delegate.createMany({ data: rows.map((row) => this.toFieldKeys(this.filterKnownColumns(row))) });
     } catch (err) {
       throw translatePrismaError(err) ?? err;
     }
@@ -275,7 +294,7 @@ class PrismaTableOperations implements TableOperations {
     }
 
     try {
-      const result = await this.delegate.updateMany({ where, data: this.toFieldKeys(validated) });
+      const result = await this.delegate.updateMany({ where, data: this.toFieldKeys(this.filterKnownColumns(validated)) });
       return result.count;
     } catch (err) {
       throw translatePrismaError(err) ?? err;
