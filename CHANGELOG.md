@@ -18,6 +18,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.34] — 2026-07-13
+
+### Fixed
+
+- **`lsdb migrate --sql` (and `--apply`) could emit tables in an order that breaks their own inline `FOREIGN KEY` constraints.** `loadSchemas()` reads schema files via unsorted `fs.readdirSync()`, with no regard for `ref()` dependencies between tables, and `generateSQLTable()` emits foreign keys inline inside `CREATE TABLE` rather than as a deferred `ALTER TABLE`. Found via a real Render Postgres cutover: a schema file that `ref()`s another table happened to sort alphabetically *before* the table it references (`category_addon_items.ts` before `category_addons.ts`), so `--apply` failed live with `relation "category_addons" does not exist`, and a hand-applied `schema.sql` would hit the identical error. Fixed with `sortSchemasByDependency()` — a topological sort over every schema's `ref()` edges, run once right after `loadSchemas()` so both the `schema.sql` file output and the live `--apply` path get a dependency-safe table order. Self-referencing columns (e.g. a `parent_id` pointing at the same table) are handled without special-casing. A true circular FK between two tables (A references B, B references A) can't be resolved by reordering alone — that would need one side's constraint deferred to a post-creation `ALTER TABLE`, not implemented in this pass since no such cycle exists in practice yet. See FAQ.md §13 for the full incident write-up.
+
+---
+
 ## [0.1.33] — 2026-07-13
 
 ### Fixed
