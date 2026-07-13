@@ -161,8 +161,12 @@ class PrismaTableOperations implements TableOperations {
 
     if (this.schema.timestamps) {
       const now = new Date().toISOString();
-      validated._created_at = now;
-      validated._updated_at = now;
+      // Preserve a caller-supplied timestamp when present (e.g. lsdb migrate-data upserting the
+      // exact _created_at/_updated_at it read from the Sheets source, to keep migrated rows'
+      // original history intact) — only default to "now" for the normal create() path, which
+      // never supplies these itself.
+      if (validated._created_at === undefined || validated._created_at === null) validated._created_at = now;
+      if (validated._updated_at === undefined || validated._updated_at === null) validated._updated_at = now;
     }
 
     const row = { ...validated };
@@ -204,8 +208,9 @@ class PrismaTableOperations implements TableOperations {
 
       if (this.schema.timestamps) {
         const now = new Date().toISOString();
-        validated._created_at = now;
-        validated._updated_at = now;
+        // See create()'s matching comment — preserve a caller-supplied timestamp when present.
+        if (validated._created_at === undefined || validated._created_at === null) validated._created_at = now;
+        if (validated._updated_at === undefined || validated._updated_at === null) validated._updated_at = now;
       }
 
       results.push(validated);
@@ -280,8 +285,16 @@ class PrismaTableOperations implements TableOperations {
   async upsert(options: UpsertOptions): Promise<Record<string, unknown>> {
     const existing = await this.findOne({ where: options.where });
     if (existing) {
-      await this.update({ where: options.where, data: options.data, skipFKValidation: options.skipFKValidation });
-      return { ...existing, ...options.data };
+      // See the matching fix in SQLTableOperations.upsert() (FAQ.md §13): a caller upserting from
+      // a full row snapshot has no intention of rewriting readonly/system columns on an
+      // already-existing row, so strip them before calling update() rather than relaxing its
+      // readonly check.
+      const updateData = { ...options.data };
+      for (const columnName of Object.keys(this.schema.columns)) {
+        if (this.schema.columns[columnName].readonly) delete updateData[columnName];
+      }
+      await this.update({ where: options.where, data: updateData, skipFKValidation: options.skipFKValidation });
+      return { ...existing, ...updateData };
     }
     return await this.create({ ...options.where, ...options.data }, { skipFKValidation: options.skipFKValidation });
   }

@@ -45,6 +45,26 @@ export function runContractSuite(label: string, factory: ContractSuiteFactory): 
       expect(created._updated_at).toBeTruthy();
     });
 
+    it('create() preserves a caller-supplied _created_at/_updated_at instead of always stamping "now" — incident: F2 migrate-data cutover', async () => {
+      // lsdb migrate-data creates each row with the exact _created_at/_updated_at it read from
+      // the Sheets source, to keep migrated data's original history intact. create() previously
+      // stamped both to `now()` unconditionally, silently discarding the real creation date of
+      // every freshly-migrated row.
+      const id = factory.uniqueId();
+      const ctx = sellerContext(factory.createAdapter(), id);
+      const originalCreatedAt = '2020-01-01T00:00:00.000Z';
+
+      const created = await ctx.table('products').create({
+        sku: `TS-${id}`,
+        price: 10,
+        _created_at: originalCreatedAt,
+        _updated_at: originalCreatedAt,
+      });
+
+      expect(created._created_at).toBe(originalCreatedAt);
+      expect(created._updated_at).toBe(originalCreatedAt);
+    });
+
     it('findOne()/findMany() read back created rows, scoped to the creating tenant', async () => {
       const adapter = factory.createAdapter();
       const idA = factory.uniqueId();
@@ -123,6 +143,27 @@ export function runContractSuite(label: string, factory: ContractSuiteFactory): 
 
       const count = await ctx.table('products').count({ where: { sku: `UPS-${id}` } });
       expect(count).toBe(1);
+    });
+
+    it('upsert() on an existing row tolerates a full row payload (readonly _id/_created_at/_updated_at included) instead of throwing — incident: F2 migrate-data cutover', async () => {
+      // lsdb migrate-data upserts the exact row it read back from Sheets — `_id`/`_created_at`/
+      // `_updated_at` included — so a rerun against an already-migrated row hit upsert()'s
+      // existing-row branch, which forwarded the full payload straight to update(). update()
+      // correctly rejects readonly columns in its payload, so this threw `Column _created_at is
+      // readonly` on every idempotent rerun instead of just refreshing the non-readonly fields.
+      const id = factory.uniqueId();
+      const ctx = sellerContext(factory.createAdapter(), id);
+
+      const created = await ctx.table('products').upsert({ where: { sku: `RO-${id}` }, data: { price: 1 } });
+
+      await expect(
+        ctx.table('products').upsert({ where: { sku: `RO-${id}` }, data: { ...created, price: 2 } })
+      ).resolves.not.toThrow();
+
+      const refetched = await ctx.table('products').findOne({ where: { sku: `RO-${id}` } });
+      expect(refetched?.price).toBe(2);
+      expect(refetched?._id).toBe(created._id);
+      expect(refetched?._created_at).toBe(created._created_at);
     });
 
     it('unique() throws ValidationError on a duplicate value within the same tenant', async () => {

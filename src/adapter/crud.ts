@@ -49,8 +49,12 @@ export class CRUDOperations implements TableOperations {
 
     if (this.schema.timestamps) {
       const now = new Date().toISOString();
-      validated._created_at = now;
-      validated._updated_at = now;
+      // Preserve a caller-supplied timestamp when present (e.g. lsdb migrate-data upserting the
+      // exact _created_at/_updated_at it read from the Sheets source, to keep migrated rows'
+      // original history intact) — only default to "now" for the normal create() path, which
+      // never supplies these itself.
+      if (validated._created_at === undefined || validated._created_at === null) validated._created_at = now;
+      if (validated._updated_at === undefined || validated._updated_at === null) validated._updated_at = now;
     }
 
     const headers = await this.getHeaders();
@@ -147,12 +151,22 @@ export class CRUDOperations implements TableOperations {
     if (this.preFlight) await this.preFlight;
     const existing = await this.findOne({ where: options.where });
     if (existing) {
+      // A caller upserting from a full row snapshot (e.g. a sync/import tool re-writing a row it
+      // read verbatim, `_id`/`_created_at` included) has no intention of actually rewriting
+      // readonly/system columns on an already-existing row — they should just keep their current
+      // values. update() correctly rejects readonly columns in its payload (a normal API consumer
+      // should never be able to rewrite `_created_at`), so strip them here rather than relaxing
+      // that check — see the matching fix in SQLTableOperations.upsert() (FAQ.md §13).
+      const updateData = { ...options.data };
+      for (const columnName of Object.keys(this.schema.columns)) {
+        if (this.schema.columns[columnName].readonly) delete updateData[columnName];
+      }
       await this.update({
         where: options.where,
-        data: options.data,
+        data: updateData,
         skipFKValidation: options.skipFKValidation,
       });
-      return { ...existing, ...options.data };
+      return { ...existing, ...updateData };
     }
     return await this.create({ ...options.where, ...options.data }, { skipFKValidation: options.skipFKValidation });
   }
@@ -185,8 +199,9 @@ export class CRUDOperations implements TableOperations {
 
       if (this.schema.timestamps) {
         const now = new Date().toISOString();
-        validated._created_at = now;
-        validated._updated_at = now;
+        // See create()'s matching comment — preserve a caller-supplied timestamp when present.
+        if (validated._created_at === undefined || validated._created_at === null) validated._created_at = now;
+        if (validated._updated_at === undefined || validated._updated_at === null) validated._updated_at = now;
       }
 
       results.push(validated);
