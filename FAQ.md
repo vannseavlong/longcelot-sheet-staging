@@ -19,6 +19,7 @@ Answers to architectural, design, and integration questions collected during dev
 11. [Google Sheets API Rate Limits & Read Caching](#11-google-sheets-api-rate-limits--read-caching)
 12. [Dropping & Renaming Schema Elements](#12-dropping--renaming-schema-elements)
 13. [SQL Backend Portability & Tenancy](#13-sql-backend-portability--tenancy)
+14. [File Upload — Rendering Drive Links](#14-file-upload--rendering-drive-links)
 
 ---
 
@@ -767,3 +768,33 @@ Two models, and it's worth picking deliberately rather than defaulting into one:
 - **One-shot cutover**: run `migrate-data --run` once, flip the driver, stop writing to Sheets. Simpler operationally, but harder to roll back from — because SQL adapters deliberately never auto-create/alter schema at runtime (§16.2's decision), there's no automatic "flip back and resync" path once Sheets stops being the source of truth; rolling back means manually reconciling whatever changed on the SQL side back onto Sheets.
 
 Neither is "more correct" — dual-write costs a bit of ongoing `migrate-data --run` bookkeeping during the transition window in exchange for a cheap rollback; one-shot is simpler but commits harder. See the [reference CI/CD pipeline](./README.md#reference-cicd-pipeline) in README.md for what the dual-write model looks like in practice.
+
+---
+
+## 14. File Upload — Rendering Drive Links
+
+### `adapter.upload()` saves a URL to the sheet, but it doesn't render as an image/video in our app. Why not?
+
+This was reported after several downstream projects independently wrote their own conversion helper (e.g. `toEmbeddableImageUrl()` in the bEasy admin-portal and mini-app — duplicated in both) to work around it. `DriveStorageAdapter.upload()` used to always return `https://drive.google.com/uc?id=…` — Drive's **download** endpoint. It's built for triggering a file download, not for embedding: browsers don't reliably load it inside an `<img>`, `<video>`, or `<iframe>` tag, so every project that wanted an inline image/video preview ended up building the exact same URL-rewriting helper by hand, against a link the package itself produced.
+
+Fixed at the source: `adapter.upload()`/`DriveStorageAdapter.upload()` now returns a renderable URL by default, chosen from the `mimeType` you pass in — a thumbnail link for images, an embeddable preview link for videos, a viewer link for anything else (invoices, documents, etc.). See [`DriveStorageAdapter`](./API.md#drivestorageadapter) in API.md for the exact format per kind. If you specifically need the raw downloadable bytes (e.g. a server-side job re-fetching the file), pass `linkFormat: 'download'` to get the old `uc?id=` behavior back.
+
+### We already have rows with the old `uc?id=` links saved from before this shipped. Do we need to re-upload every file?
+
+No — normalise on read instead, with the `toDriveEmbedUrl()` helper exported for exactly this:
+
+```typescript
+import { toDriveEmbedUrl } from 'longcelot-sheet-db';
+
+const embeddable = toDriveEmbedUrl(row.avatar_url, 'image'); // or 'video' / 'file'
+```
+
+It extracts the file ID from whatever Drive URL format is already there (including the new formats — it's idempotent) and rebuilds it as the renderable form for the `kind` you pass. You tell it the kind because the package has no way to know it from the stored URL alone (a bare `uc?id=…` link carries no MIME-type information) — but your application already knows it, the same way the bEasy admin-portal's `toEmbeddableImageUrl()` always assumed "image" because it was only ever called on avatar/photo fields.
+
+### Does `adapter.deleteFile()` still work for files uploaded before this change, or for both new and old link formats?
+
+Yes to both. `DriveStorageAdapter.delete()` extracts the file ID with the same shared parser (`extractDriveFileId()`) that recognizes `uc?id=`, `thumbnail?id=`, and `/file/d/{id}/...` — whatever format `upload()` returned it in, `deleteFile(url)` finds the underlying file and deletes it via the Drive API. This existed before this change (Phase 8.3) — it wasn't missing, it just needed to keep working once `upload()` started returning different URL shapes by default.
+
+### Why doesn't `upload()` return an object with the file ID, MIME type, etc. instead of just a URL string?
+
+Kept as a plain `string` deliberately, for backward compatibility — every existing caller does `const url = await adapter.upload(...)` and stores that string directly in a sheet cell; changing the return type would break every one of them at the type level, not just the runtime behavior. If you need the kind classification for your own rendering logic (choosing `<img>` vs `<iframe>` client-side), `classifyDriveMediaKind(mimeType)` is exported standalone — call it with the same `mimeType` you passed into `upload()`, at the point you already have it.

@@ -1,6 +1,12 @@
 import { StorageAdapter, UploadOptions } from '../schema/types';
 import { SheetClient } from './sheetClient';
 import { SchemaError } from '../errors/SchemaError';
+import {
+  buildDriveDownloadUrl,
+  buildDriveViewUrl,
+  classifyDriveMediaKind,
+  extractDriveFileId,
+} from '../utils/driveMedia';
 
 export interface DriveStorageAdapterOptions {
   /** Default upload folder path (relative to driveFolder.root, or Drive root if unconfigured). */
@@ -41,13 +47,17 @@ export class DriveStorageAdapter implements StorageAdapter {
       folderId,
       options.public
     );
-    return `https://drive.google.com/uc?id=${fileId}`;
+
+    if (options.linkFormat === 'download') {
+      return buildDriveDownloadUrl(fileId);
+    }
+    return buildDriveViewUrl(fileId, classifyDriveMediaKind(options.mimeType));
   }
 
   async delete(url: string): Promise<void> {
-    const match = url.match(/[?&]id=([^&]+)/);
-    if (!match) return;
-    await this.client.deleteFile(match[1]);
+    const fileId = extractDriveFileId(url);
+    if (!fileId) return;
+    await this.client.deleteFile(fileId);
   }
 
   private async resolveFolder(folderPath: string): Promise<string> {

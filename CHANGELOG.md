@@ -18,6 +18,22 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.40] — 2026-07-26
+
+### Added
+
+- **`toDriveEmbedUrl(url, kind?)`, `classifyDriveMediaKind(mimeType)`, `buildDriveViewUrl(fileId, kind)`, `buildDriveDownloadUrl(fileId)`, `extractDriveFileId(url)`** — exported from `src/utils/driveMedia.ts`. `toDriveEmbedUrl()` normalises a Drive link (old `uc?id=` download links included) into the renderable form for a given media kind, for rows saved before this release.
+- **`UploadOptions.linkFormat?: 'auto' | 'download'`** — `'auto'` (default) returns a renderable URL; `'download'` opts back into the raw `uc?id=` download-endpoint URL for callers that need the actual file bytes (e.g. server-side re-fetching) rather than a rendered preview.
+
+### Changed
+
+- **`DriveStorageAdapter.upload()` now returns a URL that renders directly, chosen from `mimeType`, instead of the `uc?id=` download-endpoint link.** Every downstream project needed the link to load inline in `<img>`/`<video>`/`<iframe>`, and `uc?id=` doesn't reliably do that — more than one project ended up writing its own conversion helper against the URL this package produced. Images now get `drive.google.com/thumbnail?id=…&sz=w1000` (`<img src>`), videos get `drive.google.com/file/d/…/preview` (`<iframe src>`), everything else gets `drive.google.com/file/d/…/view` (a clickable open/preview link). See FAQ.md §14. **Behaviour change**: code that parsed or stored the old `uc?id=` shape should either drop that handling (the link already renders) or pass `linkFormat: 'download'` to keep the previous URL format.
+- **`DriveStorageAdapter.delete()` / `adapter.deleteFile()`** now extract the file ID from any URL format `upload()` can produce (`uc?id=`, `thumbnail?id=`, `/file/d/{id}/...`), not just the old `uc?id=` shape.
+
+See FAQ.md §14 for the full rationale and migration notes.
+
+---
+
 ## [0.1.39] — 2026-07-14
 
 ### Fixed

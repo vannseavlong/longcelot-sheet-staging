@@ -675,6 +675,42 @@ const isValid = await comparePassword('SecurePass123!', hash);
 const { valid, errors } = validatePasswordStrength('password');
 ```
 
+## 📁 File Upload & Drive Storage
+
+```typescript
+import { createSheetAdapter, DriveStorageAdapter } from 'longcelot-sheet-db';
+
+const adapter = createSheetAdapter({
+  ...,
+  storage: new DriveStorageAdapter({ folder: 'uploads' }),
+});
+
+// Returns a URL that renders directly — no per-project conversion helper needed.
+const avatarUrl = await adapter.upload(imageBuffer, { filename: 'avatar.jpg', mimeType: 'image/jpeg', public: true });
+// 'https://drive.google.com/thumbnail?id=FILE_ID&sz=w1000'  → drop straight into <img src>
+
+const videoUrl = await adapter.upload(videoBuffer, { filename: 'demo.mp4', mimeType: 'video/mp4', public: true });
+// 'https://drive.google.com/file/d/FILE_ID/preview'          → drop straight into <iframe src>
+
+const pdfUrl = await adapter.upload(pdfBuffer, { filename: 'invoice.pdf', mimeType: 'application/pdf', public: true });
+// 'https://drive.google.com/file/d/FILE_ID/view'              → clickable open/preview link
+
+// Deleting a file works with any URL adapter.upload() ever returned for it:
+await adapter.deleteFile(avatarUrl);
+```
+
+The link format is chosen automatically from `mimeType` (image → thumbnail, video → embeddable preview, everything else → viewer link). If you need the raw downloadable file instead of a rendered preview (e.g. re-fetching bytes server-side), pass `linkFormat: 'download'`.
+
+Already have links saved in the old `uc?id=` download format from before this behaviour shipped? Normalise them on read instead of writing your own conversion helper:
+
+```typescript
+import { toDriveEmbedUrl } from 'longcelot-sheet-db';
+
+const embeddable = toDriveEmbedUrl(row.avatar_url, 'image');
+```
+
+See [`UploadOptions`](./API.md#uploadoptions) and [`adapter.upload()`](./API.md#adapteruploadfile-options) in API.md for the full option/return reference, and FAQ.md §14 for why the raw `uc?id=` link never rendered reliably.
+
 ## 📋 Sheet Structure
 
 ### Central Admin Sheet

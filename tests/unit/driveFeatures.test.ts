@@ -5,6 +5,13 @@ import { defineTable } from '../../src/schema/defineTable';
 import { string } from '../../src/schema/columnBuilder';
 import { SchemaError } from '../../src/errors/SchemaError';
 import type { TokenStore, OAuthTokens, StorageAdapter, UploadOptions } from '../../src/schema/types';
+import {
+  classifyDriveMediaKind,
+  buildDriveViewUrl,
+  buildDriveDownloadUrl,
+  extractDriveFileId,
+  toDriveEmbedUrl,
+} from '../../src/utils/driveMedia';
 
 const ADMIN_ID = 'admin-sheet-id';
 const FAKE_CREDENTIALS = { clientId: 'id', clientSecret: 'secret', redirectUri: 'http://localhost' };
@@ -314,7 +321,7 @@ describe('Feature 8.3 — StorageAdapter and adapter.upload()', () => {
     void mock; // referenced to suppress unused warning
   });
 
-  test('DriveStorageAdapter.upload calls client.uploadFile and returns Drive URL', async () => {
+  test('DriveStorageAdapter.upload calls client.uploadFile and returns a renderable thumbnail URL for images', async () => {
     const { mock } = makeAdapter();
     const driveAdapter = new DriveStorageAdapter({ folder: 'uploads' });
     driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
@@ -328,10 +335,50 @@ describe('Feature 8.3 — StorageAdapter and adapter.upload()', () => {
     expect(mock.uploadFileCalls.length).toBe(1);
     expect(mock.uploadFileCalls[0].filename).toBe('photo.png');
     expect(mock.uploadFileCalls[0].makePublic).toBe(true);
+    expect(url).toMatch(/^https:\/\/drive\.google\.com\/thumbnail\?id=.+&sz=w1000$/);
+  });
+
+  test('DriveStorageAdapter.upload returns an embeddable preview URL for videos', async () => {
+    const { mock } = makeAdapter();
+    const driveAdapter = new DriveStorageAdapter();
+    driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
+
+    const url = await driveAdapter.upload(Buffer.from('data'), {
+      filename: 'clip.mp4',
+      mimeType: 'video/mp4',
+    });
+
+    expect(url).toMatch(/^https:\/\/drive\.google\.com\/file\/d\/.+\/preview$/);
+  });
+
+  test('DriveStorageAdapter.upload returns a viewer URL for non-image/video files', async () => {
+    const { mock } = makeAdapter();
+    const driveAdapter = new DriveStorageAdapter();
+    driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
+
+    const url = await driveAdapter.upload(Buffer.from('data'), {
+      filename: 'invoice.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    expect(url).toMatch(/^https:\/\/drive\.google\.com\/file\/d\/.+\/view$/);
+  });
+
+  test('DriveStorageAdapter.upload returns the raw download URL when linkFormat is "download"', async () => {
+    const { mock } = makeAdapter();
+    const driveAdapter = new DriveStorageAdapter();
+    driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
+
+    const url = await driveAdapter.upload(Buffer.from('data'), {
+      filename: 'photo.png',
+      mimeType: 'image/png',
+      linkFormat: 'download',
+    });
+
     expect(url).toMatch(/^https:\/\/drive\.google\.com\/uc\?id=/);
   });
 
-  test('DriveStorageAdapter.delete extracts fileId from URL and calls client.deleteFile', async () => {
+  test('DriveStorageAdapter.delete extracts fileId from a legacy uc?id= URL and calls client.deleteFile', async () => {
     const { mock } = makeAdapter();
     const driveAdapter = new DriveStorageAdapter();
     driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
@@ -339,6 +386,28 @@ describe('Feature 8.3 — StorageAdapter and adapter.upload()', () => {
     await driveAdapter.delete('https://drive.google.com/uc?id=FILE_ID_123');
 
     expect(mock.deleteFileCalls).toContain('FILE_ID_123');
+  });
+
+  test('DriveStorageAdapter.delete extracts fileId from a thumbnail URL and calls client.deleteFile', async () => {
+    const { mock } = makeAdapter();
+    const driveAdapter = new DriveStorageAdapter();
+    driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
+
+    await driveAdapter.delete('https://drive.google.com/thumbnail?id=FILE_ID_456&sz=w1000');
+
+    expect(mock.deleteFileCalls).toContain('FILE_ID_456');
+  });
+
+  test('DriveStorageAdapter.delete extracts fileId from a /file/d/{id}/preview or /view URL and calls client.deleteFile', async () => {
+    const { mock } = makeAdapter();
+    const driveAdapter = new DriveStorageAdapter();
+    driveAdapter._setClient(mock as unknown as import('../../src/adapter/sheetClient').SheetClient);
+
+    await driveAdapter.delete('https://drive.google.com/file/d/FILE_ID_789/preview');
+    await driveAdapter.delete('https://drive.google.com/file/d/FILE_ID_999/view');
+
+    expect(mock.deleteFileCalls).toContain('FILE_ID_789');
+    expect(mock.deleteFileCalls).toContain('FILE_ID_999');
   });
 
   test('DriveStorageAdapter.delete is a no-op for unrecognised URLs', async () => {
@@ -349,6 +418,46 @@ describe('Feature 8.3 — StorageAdapter and adapter.upload()', () => {
     await driveAdapter.delete('https://example.com/no-id-here');
 
     expect(mock.deleteFileCalls.length).toBe(0);
+  });
+});
+
+// ── Phase 18 — Drive link rendering utilities ────────────────────────────────
+
+describe('Phase 18 — driveMedia utilities', () => {
+  test('classifyDriveMediaKind classifies by MIME type prefix, defaulting to "file"', () => {
+    expect(classifyDriveMediaKind('image/png')).toBe('image');
+    expect(classifyDriveMediaKind('video/mp4')).toBe('video');
+    expect(classifyDriveMediaKind('application/pdf')).toBe('file');
+    expect(classifyDriveMediaKind('text/plain')).toBe('file');
+  });
+
+  test('buildDriveViewUrl builds the correct renderable URL per kind', () => {
+    expect(buildDriveViewUrl('ID1', 'image')).toBe('https://drive.google.com/thumbnail?id=ID1&sz=w1000');
+    expect(buildDriveViewUrl('ID1', 'video')).toBe('https://drive.google.com/file/d/ID1/preview');
+    expect(buildDriveViewUrl('ID1', 'file')).toBe('https://drive.google.com/file/d/ID1/view');
+  });
+
+  test('buildDriveDownloadUrl builds the raw uc?id= URL', () => {
+    expect(buildDriveDownloadUrl('ID1')).toBe('https://drive.google.com/uc?id=ID1');
+  });
+
+  test('extractDriveFileId parses every URL format this package produces', () => {
+    expect(extractDriveFileId('https://drive.google.com/uc?id=ID1')).toBe('ID1');
+    expect(extractDriveFileId('https://drive.google.com/thumbnail?id=ID2&sz=w1000')).toBe('ID2');
+    expect(extractDriveFileId('https://drive.google.com/file/d/ID3/preview')).toBe('ID3');
+    expect(extractDriveFileId('https://drive.google.com/file/d/ID4/view')).toBe('ID4');
+    expect(extractDriveFileId('https://example.com/no-id-here')).toBeNull();
+  });
+
+  test('toDriveEmbedUrl normalises a legacy download URL into the renderable form for the given kind', () => {
+    const legacy = 'https://drive.google.com/uc?id=ID5';
+    expect(toDriveEmbedUrl(legacy, 'image')).toBe('https://drive.google.com/thumbnail?id=ID5&sz=w1000');
+    expect(toDriveEmbedUrl(legacy, 'video')).toBe('https://drive.google.com/file/d/ID5/preview');
+    expect(toDriveEmbedUrl(legacy)).toBe('https://drive.google.com/thumbnail?id=ID5&sz=w1000'); // defaults to 'image'
+  });
+
+  test('toDriveEmbedUrl returns unrecognised URLs unchanged', () => {
+    expect(toDriveEmbedUrl('https://example.com/no-id-here')).toBe('https://example.com/no-id-here');
   });
 });
 

@@ -343,8 +343,9 @@ Uploads a file using the configured `StorageAdapter`. Throws `SchemaError` if no
   - `mimeType: string`
   - `folder?: string` — subfolder path; created if missing (e.g. `'uploads/products'`)
   - `public?: boolean` — make the file publicly readable (Drive: sets `anyone / reader` permission)
+  - `linkFormat?: 'auto' | 'download'` — `'auto'` (default) returns a renderable URL chosen from `mimeType`; `'download'` returns the raw download-endpoint URL
 
-**Returns:** `Promise<string>` - Public URL
+**Returns:** `Promise<string>` - A URL that renders directly (see [`DriveStorageAdapter`](#drivestorageadapter) for the per-`mimeType` format table)
 
 **Example:**
 
@@ -361,7 +362,7 @@ const url = await adapter.upload(imageBuffer, {
   mimeType: 'image/jpeg',
   public: true,
 });
-// 'https://drive.google.com/uc?id=FILE_ID'
+// 'https://drive.google.com/thumbnail?id=FILE_ID&sz=w1000' — drop straight into <img src>
 ```
 
 ### `adapter.deleteFile(url)`
@@ -370,7 +371,7 @@ Deletes a file via the configured `StorageAdapter`. Throws `SchemaError` if no s
 
 **Parameters:**
 
-- `url: string` - URL previously returned by `adapter.upload()`
+- `url: string` - URL previously returned by `adapter.upload()`, in any `linkFormat`
 
 **Returns:** `Promise<void>`
 
@@ -1217,8 +1218,9 @@ interface DriveFolderConfig {
 interface UploadOptions {
   filename: string;
   mimeType: string;
-  folder?: string;   // subfolder path relative to driveFolder.root; created if missing
-  public?: boolean;  // when true, sets Drive permission: anyone / reader
+  folder?: string;                    // subfolder path relative to driveFolder.root; created if missing
+  public?: boolean;                   // when true, sets Drive permission: anyone / reader
+  linkFormat?: 'auto' | 'download';   // 'auto' (default): renderable URL chosen from mimeType; 'download': raw uc?id= link
 }
 ```
 
@@ -1250,7 +1252,17 @@ class DriveStorageAdapter implements StorageAdapter {
 }
 ```
 
-Built-in `StorageAdapter` implementation that uploads to Google Drive and returns a `https://drive.google.com/uc?id=…` URL. The adapter's `SheetClient` is injected automatically at `createSheetAdapter()` time — no credential repetition needed.
+Built-in `StorageAdapter` implementation that uploads to Google Drive. The adapter's `SheetClient` is injected automatically at `createSheetAdapter()` time — no credential repetition needed.
+
+By default (`linkFormat: 'auto'`, or omitted) the returned URL renders directly, chosen from `mimeType`:
+
+| `mimeType` prefix | Returned URL format | Use it in |
+|---|---|---|
+| `image/*` | `https://drive.google.com/thumbnail?id=…&sz=w1000` | `<img src>` |
+| `video/*` | `https://drive.google.com/file/d/…/preview` | `<iframe src>` |
+| anything else | `https://drive.google.com/file/d/…/view` | a clickable open/preview link |
+
+Pass `linkFormat: 'download'` to get the raw `https://drive.google.com/uc?id=…` download-endpoint URL instead — this was the previous default, still available for callers that need the actual file bytes (e.g. re-fetching server-side) rather than a rendered preview. `adapter.deleteFile()` accepts a URL in any of these formats. See [Drive link rendering utilities](#drive-link-rendering-utilities) below and FAQ.md §14 for the rationale.
 
 **Example:**
 
@@ -1266,4 +1278,25 @@ const adapter = createSheetAdapter({
   tokenStore: myTokenStore,                     // optional
   storage: new DriveStorageAdapter({ folder: 'uploads' }),
 });
+```
+
+### Drive link rendering utilities
+
+Exported standalone — `DriveStorageAdapter.upload()` uses these internally; import them directly if you need to normalise a link saved before this package returned renderable URLs, or you're building a custom `StorageAdapter` and want the same link-format logic.
+
+```typescript
+type DriveMediaKind = 'image' | 'video' | 'file';
+
+function classifyDriveMediaKind(mimeType: string): DriveMediaKind;
+function buildDriveViewUrl(fileId: string, kind: DriveMediaKind): string;
+function buildDriveDownloadUrl(fileId: string): string;
+function extractDriveFileId(url: string): string | null;
+function toDriveEmbedUrl(url: string, kind?: DriveMediaKind): string; // kind defaults to 'image'
+```
+
+```typescript
+import { toDriveEmbedUrl } from 'longcelot-sheet-db';
+
+// Normalise a legacy `uc?id=` link (or one saved with linkFormat: 'download') on read:
+const embeddable = toDriveEmbedUrl(row.avatar_url, 'image');
 ```

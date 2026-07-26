@@ -37,6 +37,18 @@ export type {
 
 export { computeSchemaHash } from './utils/schemaHash';
 
+// Phase 18: Drive link rendering — `DriveStorageAdapter.upload()` uses these internally to return
+// a URL that renders directly (thumbnail/preview/viewer) instead of a raw download link; exported
+// so consumers can normalise pre-existing download-format links on read via `toDriveEmbedUrl()`.
+export {
+  classifyDriveMediaKind,
+  buildDriveViewUrl,
+  buildDriveDownloadUrl,
+  extractDriveFileId,
+  toDriveEmbedUrl,
+} from './utils/driveMedia';
+export type { DriveMediaKind } from './utils/driveMedia';
+
 export type { SheetAdapterConfig } from './adapter/sheetAdapter';
 export type { OAuthConfig } from './auth/oauth';
 export type {

@@ -540,6 +540,22 @@
 
 ---
 
+## Phase 18: Drive Link Rendering & Cleanup (2026-07-26)
+
+> Goal: `adapter.upload()` saved a link to the sheet that didn't reliably render in `<img>`/`<video>`/`<iframe>` — every downstream project (e.g. bEasy's admin-portal and mini-app, independently) ended up writing its own `uc?id=` → embeddable-URL conversion helper. Fix it in the package instead of leaving it as per-project glue code, and confirm the file-delete mechanism (already shipped in Phase 8.3) still works across every link format `upload()` can now produce.
+
+### 18.1 Renderable Drive links by default
+
+- [x] `src/utils/driveMedia.ts` — `classifyDriveMediaKind(mimeType)`, `buildDriveViewUrl(fileId, kind)`, `buildDriveDownloadUrl(fileId)`, `extractDriveFileId(url)`, `toDriveEmbedUrl(url, kind?)`
+- [x] `DriveStorageAdapter.upload()` returns a renderable URL by default — thumbnail link for `image/*`, embeddable preview link for `video/*`, viewer link for everything else — chosen from `UploadOptions.mimeType`
+- [x] `UploadOptions.linkFormat?: 'auto' | 'download'` — `'download'` opts back into the raw `uc?id=` download-endpoint URL (the previous default) for callers that need the actual bytes rather than a rendered preview
+- [x] `DriveStorageAdapter.delete()` (and therefore `adapter.deleteFile()`) extracts the file ID via the same shared `extractDriveFileId()`, so it still works for `uc?id=`, `thumbnail?id=`, and `/file/d/{id}/...` URLs alike
+- [x] `classifyDriveMediaKind`, `buildDriveViewUrl`, `buildDriveDownloadUrl`, `extractDriveFileId`, `toDriveEmbedUrl`, `DriveMediaKind` exported from `src/index.ts` — `toDriveEmbedUrl()` lets a consumer normalise pre-existing `uc?id=` links on read without a re-upload
+- [x] Tests: `tests/unit/driveFeatures.test.ts` — image/video/file link format per `mimeType`, `linkFormat: 'download'` opt-out, `delete()` against every link format, unit coverage for each `driveMedia.ts` export
+- [x] Docs: README.md new "File Upload & Drive Storage" section, API.md (`UploadOptions`, `adapter.upload()`/`adapter.deleteFile()`, `DriveStorageAdapter`, new "Drive link rendering utilities" reference), FAQ.md new §14, CHANGELOG.md `[Unreleased]`
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables

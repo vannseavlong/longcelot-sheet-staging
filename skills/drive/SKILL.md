@@ -214,14 +214,14 @@ const adapter = createSheetAdapter({
   // driveFolder optional — DriveStorageAdapter uses its own folder path
 });
 
-// Upload a file
+// Upload a file — the returned URL renders directly, format chosen from mimeType
 const url = await adapter.upload(imageBuffer, {
   filename: 'product.jpg',
   mimeType: 'image/jpeg',
   folder: 'uploads/products',  // nested path; each segment created if missing
   public: true,                 // sets Drive permission: anyone / reader
 });
-// → 'https://drive.google.com/uc?id=FILE_ID'
+// → 'https://drive.google.com/thumbnail?id=FILE_ID&sz=w1000' — drop straight into <img src>
 
 // Store url in a string() column — it's just a URL, provider-agnostic
 await ctx.table('products').update({
@@ -229,11 +229,31 @@ await ctx.table('products').update({
   data: { image_url: url },
 });
 
-// Delete a file
+// Delete a file — works for any URL format upload() has ever returned
 await adapter.deleteFile(url); // extracts FILE_ID from the URL automatically
 ```
 
 `DriveStorageAdapter` is injected with the adapter's own `SheetClient` automatically — no credential repetition.
+
+### Link format by `mimeType`
+
+`linkFormat: 'auto'` (the default) picks the renderable format from `mimeType`:
+
+| `mimeType` prefix | Returned URL | Use it in |
+|---|---|---|
+| `image/*` | `https://drive.google.com/thumbnail?id=…&sz=w1000` | `<img src>` |
+| `video/*` | `https://drive.google.com/file/d/…/preview` | `<iframe src>` |
+| anything else | `https://drive.google.com/file/d/…/view` | a clickable open/preview link |
+
+Pass `linkFormat: 'download'` to get the raw `https://drive.google.com/uc?id=…` download-endpoint URL instead — needed when a caller wants the actual file bytes (e.g. a server-side job re-fetching the file), not a rendered preview.
+
+Already have rows saved with the old `uc?id=` links, or ones saved with `linkFormat: 'download'`? Normalise on read instead of re-uploading:
+
+```typescript
+import { toDriveEmbedUrl } from 'longcelot-sheet-db';
+
+const embeddable = toDriveEmbedUrl(row.image_url, 'image'); // 'video' / 'file' also supported
+```
 
 ### `UploadOptions` type
 
@@ -241,8 +261,9 @@ await adapter.deleteFile(url); // extracts FILE_ID from the URL automatically
 interface UploadOptions {
   filename: string;
   mimeType: string;
-  folder?: string;   // subfolder path; each segment created if missing
-  public?: boolean;  // set Drive permission: anyone / reader
+  folder?: string;                   // subfolder path; each segment created if missing
+  public?: boolean;                  // set Drive permission: anyone / reader
+  linkFormat?: 'auto' | 'download';  // 'auto' (default): renderable URL by mimeType; 'download': raw uc?id= link
 }
 ```
 
@@ -298,3 +319,5 @@ interface StorageAdapter {
 - **Expecting `DriveStorageAdapter` to use `driveFolder.root`** — `DriveStorageAdapter` manages its own folder path (the `folder` option in `UploadOptions`). It does not inherit the `driveFolder` root. Uploaded files land where you tell the `folder` option, independent of where sheets are placed.
 - **Using `sharedDriveId` without `supportsAllDrives` on existing Drive calls** — The adapter handles this automatically; the caveat is that the OAuth user must have access to the Shared Drive. Check Google Workspace admin permissions if file creation fails with a 404.
 - **`tokenStore.get` returning stale / expired tokens** — The adapter does not auto-refresh tokens retrieved from `tokenStore`. Call `oauth.refreshTokens(storedRefreshToken)` before storing, or refresh in your `tokenStore.get` implementation.
+- **Assuming `adapter.upload()` still returns `uc?id=`** — It now returns a renderable URL by default (thumbnail/preview/viewer, chosen from `mimeType`). Code that parses the URL expecting the old download-link shape (or a custom `toEmbeddableImageUrl()`-style helper written against it) should either be deleted (the link already renders) or updated — `linkFormat: 'download'` opts back into the old shape if you specifically need it.
+- **Writing your own `uc?id=` → embeddable-URL conversion helper** — Don't; it's built in. Use `toDriveEmbedUrl(url, kind)` to normalise a pre-existing download-format link instead of reimplementing the regex/rewrite yourself.

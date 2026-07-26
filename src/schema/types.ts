@@ -167,6 +167,13 @@ export interface UploadOptions {
   folder?: string;
   /** When true, sets a Drive permission of type 'anyone', role 'reader'. */
   public?: boolean;
+  /**
+   * `'auto'` (default) returns a URL that renders directly — a thumbnail link for images, an
+   * embeddable preview link for videos, a viewer link for everything else — chosen from `mimeType`.
+   * `'download'` returns the raw `drive.google.com/uc?id=...` download-endpoint URL instead, for
+   * callers that need the actual bytes (e.g. re-fetching server-side) rather than a rendered preview.
+   */
+  linkFormat?: 'auto' | 'download';
 }
 
 export interface StorageAdapter {
