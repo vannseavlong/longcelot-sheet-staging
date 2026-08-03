@@ -18,6 +18,24 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.41] — 2026-08-03
+
+### Security
+
+- **`createAuthRouter`'s issued JWT now expires** — a new `exp` claim (`AuthRouterOptions.jwtExpiresInSeconds`, default 1 day) is set on every token; previously tokens were valid forever with no way to invalidate one short of rotating `jwtSecret` for every user at once.
+- **New exported `verifyJwt(token, secret)`** (`longcelot-sheet-db`) — validates the HS256 signature (constant-time comparison) and expiry of a token issued by `createAuthRouter`. Until this release there was no package-supported way to verify the JWT `lsdb` hands you.
+- **OAuth login flow is now CSRF-protected** — `/auth/google` generates a signed, single-use-window `state` parameter; `/auth/callback` rejects the request with `401` if `state` is missing, expired (>10 min), or doesn't match. Closes a login-CSRF gap where an attacker could craft their own callback URL and trick a victim into completing it.
+- **New `AuthRouterOptions.tokenDelivery?: 'query' | 'fragment'`** (default: `'query'`, unchanged) — set `'fragment'` to deliver the JWT as `#token=...` instead of `?token=...`, so it never reaches server access logs or `Referer` headers.
+- **`hashPassword()`/`validatePasswordStrength()` reject passwords over bcrypt's 72-byte input limit** instead of silently truncating them — previously two different passwords sharing the same first 72 bytes hashed identically.
+- **`.lsdb-tokens.json` and `.env` are now written with `0o600` permissions** (owner read/write only) instead of default OS permissions.
+- **`lsdb init` now scaffolds/updates the consumer project's `.gitignore`** to cover `.env` and `.lsdb-tokens.json`, so a routine `git add .` on a fresh project no longer risks committing OAuth secrets.
+- **`createAuthRouter`'s callback no longer echoes caught exceptions into the HTTP response.** A failed token-verification or `onUser` error is now logged server-side (`console.error`) and returns a fixed, generic error message to the client instead of interpolating the raw error — previously an error thrown by `onUser` (or token verification) could leak internal detail (a DB error, an unexpected object's `toString()`) straight into the JSON response sent to the end user's browser.
+
+See [OWASP-TOP-10.md](./OWASP-TOP-10.md) for the full review these fixes came out of — audited
+against **OWASP Top 10:2025**.
+
+---
+
 ## [0.1.40] — 2026-07-26
 
 ### Added

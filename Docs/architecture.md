@@ -217,6 +217,11 @@ Before persistence:
 * permission validation per request
 * optional credential hashing
 
+See [OWASP-TOP-10.md](../OWASP-TOP-10.md) for the full OWASP Top 10:2025 review — a
+category-by-category breakdown of what's enforced by the package versus what the integrating
+developer or end user is responsible for, including the shared-responsibility model for scenarios
+like a compromised end-user Google account or direct manual edits to the underlying Sheet.
+
 ---
 
 ## 10. Design Constraints

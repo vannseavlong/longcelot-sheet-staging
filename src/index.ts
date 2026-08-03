@@ -8,7 +8,7 @@ export { string, number, boolean, date, json, ColumnBuilder } from './schema/col
 export { createSheetAdapter, SheetAdapter } from './adapter/sheetAdapter';
 export { DriveStorageAdapter } from './adapter/driveStorageAdapter';
 export { createOAuthManager, createLoginOAuthManager, OAuthManager } from './auth/oauth';
-export { createAuthRouter } from './auth/router';
+export { createAuthRouter, verifyJwt } from './auth/router';
 export { hashPassword, comparePassword, validatePasswordStrength } from './auth/password';
 
 export type {

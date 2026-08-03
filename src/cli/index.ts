@@ -35,7 +35,7 @@ const program = new Command();
 program
   .name('lsdb')
   .description('Google Sheets-backed staging database CLI')
-  .version('0.1.0');
+  .version('0.1.0'); // seem wrong and hard coded
 
 program
   .command('init')

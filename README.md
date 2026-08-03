@@ -663,6 +663,33 @@ const tokens = await oauth.getTokens(code);
 const payload = await oauth.verifyToken(idToken);
 ```
 
+### Sign-In Router (`createAuthRouter`)
+
+```typescript
+import { createAuthRouter, verifyJwt } from 'longcelot-sheet-db';
+
+const auth = createAuthRouter({
+  adapter,
+  jwtSecret: process.env.JWT_SECRET!,
+  frontendUrl: process.env.FRONTEND_URL!,
+  registrationPolicy: 'login-only',
+  jwtExpiresInSeconds: 60 * 60 * 24, // default: 1 day
+  tokenDelivery: 'fragment', // '#token=...' — never hits server access logs/Referer; default is 'query' for backward compatibility
+  async onUser(profile, adapter) {
+    const ctx = adapter.withContext({ userId: 'auth', actor: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! });
+    return await ctx.table('users').findOne({ where: { email: profile.email } });
+  },
+});
+
+app.use(auth.handler); // GET {basePath}/auth/google, GET {basePath}/auth/callback
+
+// In your own auth middleware, verify the JWT this router issues:
+const payload = verifyJwt(token, process.env.JWT_SECRET!); // null if invalid, expired, or tampered
+```
+
+The login flow is CSRF-protected with a signed `state` parameter and the issued JWT carries an `exp`
+claim — see [OWASP-TOP-10.md → A01/A02/A07](./OWASP-TOP-10.md) for the reasoning.
+
 ### Password Hashing
 
 ```typescript
@@ -934,11 +961,20 @@ All three:
 
 ## 🔒 Security
 
-- bcrypt password hashing (10 rounds)
-- OAuth tokens never stored in plain text
-- Sheets private by default
-- Role validation on every request
-- No SQL injection risk
+- bcrypt password hashing (10 rounds), with a guard against silent truncation past bcrypt's 72-byte input limit
+- Auth JWTs are short-lived (`exp` claim, 1 day by default) and verifiable via the exported `verifyJwt()` — see [Authentication](#-authentication)
+- OAuth login flow is CSRF-protected via a signed `state` parameter
+- `.lsdb-tokens.json` (OAuth refresh token) is written with `0o600` permissions — **note: this is plaintext on disk, restricted by file permissions, not encrypted at rest**; treat it as a credential
+- `lsdb init` scaffolds `.gitignore` entries for `.env`/`.lsdb-tokens.json` so secrets aren't committed by default
+- Sheets private by default — access control depends on who the underlying spreadsheet is shared with, see [OWASP-TOP-10.md → A01](./OWASP-TOP-10.md)
+- Role/permission validation on every cross-actor request (`accessControl.ts`)
+- SQL adapters use parameterized queries exclusively — no SQL injection risk via the CRUD API
+
+**For the full picture — what's fixed, what's a documented limitation, and what's on you to handle
+as the integrating developer or your end users — see [OWASP-TOP-10.md](./OWASP-TOP-10.md), a
+category-by-category OWASP Top 10 review of this package including concrete answers to "an end
+user's Google account gets compromised" and "someone edits the Sheet directly instead of through the
+API."
 
 ## 📦 Architecture
 

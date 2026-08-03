@@ -27,11 +27,19 @@ export class OAuthManager {
     this.defaultScopes = defaultScopes;
   }
 
-  getAuthUrl(scopes: string[] = this.defaultScopes): string {
+  /**
+   * @param state Opaque value round-tripped through Google and returned on the callback.
+   *   Pass a per-login, unpredictable value (e.g. `signState()` in router.ts) and verify it
+   *   on callback — without this, the OAuth flow has no CSRF protection: an attacker can start
+   *   their own OAuth transaction, capture the callback, and trick a victim's browser into
+   *   completing it (login CSRF / session fixation).
+   */
+  getAuthUrl(scopes: string[] = this.defaultScopes, state?: string): string {
     return this.client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
       prompt: 'consent',
+      ...(state ? { state } : {}),
     });
   }
 

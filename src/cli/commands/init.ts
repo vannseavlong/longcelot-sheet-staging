@@ -22,6 +22,28 @@ function printBanner(): void {
   console.log();
 }
 
+/**
+ * Adds any of `entries` missing from the project's `.gitignore` (creating the file if absent).
+ * `lsdb init` writes `.env` (OAuth client secret) and, after the first `lsdb sync`,
+ * `.lsdb-tokens.json` (a Google refresh_token) into the project root — with no `.gitignore`
+ * covering them, a routine `git add .` commits both secrets straight into history. Additive and
+ * idempotent: existing `.gitignore` content, ordering, and comments are left untouched, and
+ * entries already present (exact line match) are skipped rather than duplicated.
+ */
+export function ensureGitignoreEntries(entries: string[]): void {
+  const gitignorePath = '.gitignore';
+  const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf-8') : '';
+  const existingLines = new Set(existing.split('\n').map((line) => line.trim()));
+
+  const missing = entries.filter((entry) => !existingLines.has(entry));
+  if (missing.length === 0) return;
+
+  const separator = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  const block = `${separator}${existing.length > 0 ? '\n' : ''}# Added by lsdb init — never commit OAuth credentials or tokens\n${missing.join('\n')}\n`;
+  fs.writeFileSync(gitignorePath, existing + block, 'utf-8');
+  console.log(chalk.green(`✅ Added ${missing.join(', ')} to .gitignore`));
+}
+
 export async function initCommand(options: { integrate?: boolean }) {
   printBanner();
 
@@ -97,7 +119,9 @@ SUPER_ADMIN_EMAIL=${answers.superAdminEmail}
   }
 
   if (!fs.existsSync('.env') || !options.integrate) {
-    fs.writeFileSync('.env', envContent);
+    // mode: 0o600 — this file holds the Google OAuth client secret; default permissions would
+    // leave it group/world-readable on a shared machine or CI runner.
+    fs.writeFileSync('.env', envContent, { encoding: 'utf-8', mode: 0o600 });
   } else {
     console.log(chalk.yellow('ℹ .env already exists, please merge Google OAuth vars manually.'));
     // Optionally append to .env
@@ -107,6 +131,8 @@ SUPER_ADMIN_EMAIL=${answers.superAdminEmail}
       console.log(chalk.green('✅ Appended Google Sheet DB variables to .env'));
     }
   }
+
+  ensureGitignoreEntries(['.env', '.lsdb-tokens.json', 'node_modules']);
 
   if (!fs.existsSync('schemas')) {
     fs.mkdirSync('schemas');

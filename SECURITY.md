@@ -42,3 +42,11 @@ This package uses Google OAuth2 tokens and interacts with Google Sheets. Please 
 - Vulnerabilities in Google's own APIs
 - Issues in your own application code that uses this package
 - Social engineering attacks
+
+## OWASP Top 10 Review
+
+See [OWASP-TOP-10.md](./OWASP-TOP-10.md) for a category-by-category review of this package against
+OWASP Top 10:2025 — what's handled by the package, what's a documented architectural
+limitation, and what's the integrating developer's or end user's responsibility. Includes concrete
+answers to "an end user's Google account gets compromised" and "someone edits the Sheet directly
+instead of through the API."

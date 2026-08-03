@@ -16,11 +16,18 @@ export function readTokens(): unknown | null {
 }
 
 export function saveTokens(tokens: unknown): void {
-  fs.writeFileSync(
-    path.join(process.cwd(), TOKENS_FILENAME),
-    JSON.stringify(tokens, null, 2),
-    'utf-8'
-  );
+  const tokenPath = path.join(process.cwd(), TOKENS_FILENAME);
+  // mode: 0o600 — owner read/write only. This file holds a Google OAuth refresh_token, which is a
+  // long-lived bearer credential for the admin's Sheets/Drive access; default file permissions
+  // (typically 0o644, world/group-readable) would leave it exposed to any other local user or
+  // process on a shared machine or CI runner.
+  fs.writeFileSync(tokenPath, JSON.stringify(tokens, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  try {
+    fs.chmodSync(tokenPath, 0o600);
+  } catch {
+    // Best-effort — e.g. unsupported on some Windows filesystems. writeFileSync's own `mode`
+    // above already covers the common case (file didn't previously exist with looser permissions).
+  }
 }
 
 /**
