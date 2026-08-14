@@ -816,7 +816,7 @@ npx lsdb migrate --sql --apply --driver mysql --dry-run
 npx lsdb migrate --prisma --apply
 ```
 
-### `lsdb migrate-data [--table <name>] [--all-users] [--output <dir>] [--dry-run] [--run] [--connection-string <url>] [--driver <driver>] [--token-file <path>]`
+### `lsdb migrate-data [--table <names>] [--all-users] [--output <dir>] [--dry-run] [--run] [--connection-string <url>] [--driver <driver>] [--token-file <path>]`
 
 Without `--run`: generates a `migrate-data.js` script that reads row data from Google Sheets and calls a stub `insertRow()` function. Replace the stub with your real DB client (Prisma, Sequelize, etc.) to move data.
 
@@ -825,7 +825,7 @@ With `--run`: skips the generated script and executes the same admin-then-per-us
 > **Actors vs RBAC roles** — see [Actors vs Application Roles](#actors-vs-application-roles) below.
 
 **Flags:**
-- `--table <name>` — migrate a single table only
+- `--table <names>` — restrict the migration to specific tables; a single name or a comma-separated list (e.g. `--table users,credentials,setup`). Applies to both the script-generation path and `--run`. An unknown name exits with an error listing every requested name that wasn't found.
 - `--all-users` — also reads every registered user's `actor_sheet_id` from the admin `users` table and migrates their actor sheets. Without `--run`, the generated script includes a per-user loop with `userId` passed to `insertRow`; with `--run`, each user's rows are upserted under their own tenant-scoped context.
 - `--output <dir>` — output directory for the generated script (default: current directory; ignored with `--run`)
 - `--dry-run` — without `--run`, preview the export plan without writing a file; with `--run`, print row counts without writing anything
@@ -839,8 +839,10 @@ npx lsdb migrate-data
 npx lsdb migrate-data --all-users
 npx lsdb migrate-data --all-users --dry-run
 npx lsdb migrate-data --table bookings
+npx lsdb migrate-data --table users,credentials,setup
 
 npx lsdb migrate-data --run --connection-string $DATABASE_URL --driver postgres
+npx lsdb migrate-data --run --table users,credentials,setup --connection-string $DATABASE_URL --driver postgres
 npx lsdb migrate-data --run --all-users --driver mysql --token-file token.json
 ```
 
@@ -854,6 +856,7 @@ npx lsdb migrate-data --run --all-users --driver mysql --token-file token.json
 | Apply that DDL to a live Postgres/MySQL database | `lsdb migrate --sql --apply --connection-string $DATABASE_URL` |
 | Copy structure + admin sheet row data | `lsdb migrate-data` |
 | Copy structure + all user-sheet row data | `lsdb migrate-data --all-users` |
+| Copy row data for only specific tables | `lsdb migrate-data --table users,credentials,setup` |
 | Run the data cutover now, no generated script | `lsdb migrate-data --run --connection-string $DATABASE_URL --driver postgres` |
 | Preview any of the above without writing/executing | add `--dry-run` |
 

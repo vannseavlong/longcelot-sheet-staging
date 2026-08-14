@@ -878,11 +878,19 @@ npx lsdb migrate-data --all-users
 # Preview without writing
 npx lsdb migrate-data --all-users --dry-run
 
+# Only migrate specific tables (comma-separated) instead of everything
+npx lsdb migrate-data --table users,credentials,setup
+
 # Run the cutover now, in-process — no generated script, no insertRow() stub to fill in
 npx lsdb migrate-data --run --all-users --connection-string $DATABASE_URL --driver postgres
+
+# Partial cutover: run now, but only for a specific set of tables
+npx lsdb migrate-data --run --table users,credentials,setup --connection-string $DATABASE_URL --driver postgres
 ```
 
 Without `--run`, `migrate-data` generates a `migrate-data.js` script — replace the `insertRow()` stub with your real DB client and run it once. With `--run`, the cutover happens immediately against `createPostgresAdapter`/`createMySQLAdapter` (not Prisma — see [FAQ.md §13](./FAQ.md#13-sql-backend-portability--tenancy) for why), upserting every row by `_id` so reruns are safe by default — no separate `--upsert` flag needed. `--token-file` works the same as it does for `sync --token-file`, for CI/CD.
+
+`--table <names>` restricts the migration to specific tables instead of everything — pass a single name or a comma-separated list (e.g. `--table users,credentials,setup`) when a use case only needs a subset of the data moved. Works with both the script-generation path and `--run`; an unknown table name fails fast and lists exactly which name(s) weren't found instead of silently skipping them.
 
 > **Note**: `lsdb export` and `lsdb export-data` are deprecated — use `lsdb migrate` and `lsdb migrate-data` instead. In standard tooling (Prisma Migrate, Rails, Flyway), "migrate" means schema-only DDL changes, so the schema/DDL export command is now the one named `migrate`; the row-data export command is `migrate-data`.
 

@@ -103,7 +103,7 @@ program
 program
   .command('migrate-data')
   .description('Generate a data export script to move row data from Google Sheets to a production DB')
-  .option('--table <name>', 'Export a single table only')
+  .option('--table <names>', 'Restrict to one or more tables (comma-separated, e.g. "users,credentials,setup")')
   .option('--all-users', 'Include all registered user sheets in addition to the admin sheet')
   .option('--output <dir>', 'Output directory for migrate-data.js (default: current directory)')
   .option('--dry-run', 'Preview export plan (or, with --run, row counts) without writing/migrating anything')
@@ -124,7 +124,7 @@ program
 program
   .command('export-data')
   .description('[deprecated] Use migrate-data instead. Generates a data export script.')
-  .option('--table <name>', 'Export a single table only')
+  .option('--table <names>', 'Restrict to one or more tables (comma-separated)')
   .option('--all-users', 'Include all registered user sheets in addition to the admin sheet')
   .option('--output <dir>', 'Output directory (default: current directory)')
   .option('--dry-run', 'Preview export plan without writing any files')

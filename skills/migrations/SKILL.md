@@ -128,9 +128,10 @@ CREATE TABLE bookings (
 ## 4. lsdb migrate-data (Data Migration Script Generator)
 
 ```bash
-npx lsdb migrate-data                        # generate for all tables
-npx lsdb migrate-data --table bookings       # single table only
-npx lsdb migrate-data --all-users            # also include every registered user sheet
+npx lsdb migrate-data                                     # generate for all tables
+npx lsdb migrate-data --table bookings                    # single table only
+npx lsdb migrate-data --table users,credentials,setup     # only these tables (comma-separated)
+npx lsdb migrate-data --all-users                         # also include every registered user sheet
 npx lsdb migrate-data --output ./scripts     # custom output directory
 npx lsdb migrate-data --dry-run              # preview plan without writing
 ```

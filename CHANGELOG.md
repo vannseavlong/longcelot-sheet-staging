@@ -18,6 +18,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.41] — 2026-08-14
+
+### Added
+
+- **`lsdb migrate-data --table` now accepts a comma-separated list of table names** (e.g. `--table users,credentials,setup`), not just a single name — for use cases that only need a subset of tables migrated to production rather than the full dataset. Works with both the script-generation path and `--run`. A single name still works unchanged (backward compatible). An unknown table name exits with an error listing every requested name that wasn't found, instead of only the first miss.
+
+---
+
 ## [0.1.41] — 2026-08-03
 
 ### Security

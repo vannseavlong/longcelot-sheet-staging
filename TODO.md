@@ -286,6 +286,7 @@
 - `createUserSheet` with `extraFields`, actor-owned sheet, `TokenStore`, `DriveFolderConfig`, `sharedDriveId`
 - `DriveStorageAdapter` + `StorageAdapter` interface + `adapter.upload()` / `adapter.deleteFile()`
 - `migrate-data` (renamed from `export-data`, itself renamed from `migrate`, Phase 13) with `--all-users` and `--dry-run`
+- `migrate-data --table` accepts a comma-separated list of table names (partial migration, e.g. `--table users,credentials,setup`), shared by both the script-generation path and `--run` via `filterSchemasByTable()`
 - `withContext({ actor })` rename with `role` deprecation alias
 - `ActorConfig.role` → `name`, `UserContext.targetRole` → `targetActor` (both with deprecation aliases)
 - Automatic sheet formatting: auto-fit columns, header fill/freeze, boolean/enum data validation dropdowns, `sheetStyle` config

@@ -1,4 +1,4 @@
-import { generateMigrateDataScript } from '../../src/cli/commands/migrate-data';
+import { generateMigrateDataScript, filterSchemasByTable } from '../../src/cli/commands/migrate-data';
 import { generateExportDataScript } from '../../src/cli/commands/export-data';
 import { defineTable } from '../../src/schema/defineTable';
 import { string, number, boolean } from '../../src/schema/columnBuilder';
@@ -163,5 +163,56 @@ describe('generateExportDataScript() — deprecated alias', () => {
     expect(generateExportDataScript([usersSchema, bookingsSchema], true)).toBe(
       generateMigrateDataScript([usersSchema, bookingsSchema], true)
     );
+  });
+});
+
+// ── filterSchemasByTable() — Partial migration via --table ───────────────────
+
+describe('filterSchemasByTable()', () => {
+  const allSchemas = [usersSchema, bookingsSchema, productsSchema];
+
+  let exitSpy: jest.SpyInstance;
+  let errorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called');
+    });
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('returns all schemas unchanged when --table is omitted', () => {
+    expect(filterSchemasByTable(allSchemas, undefined)).toEqual(allSchemas);
+  });
+
+  it('restricts to a single table by name', () => {
+    const result = filterSchemasByTable(allSchemas, 'users');
+    expect(result).toEqual([usersSchema]);
+  });
+
+  it('restricts to multiple tables via a comma-separated list', () => {
+    const result = filterSchemasByTable(allSchemas, 'users,products');
+    expect(result.map((s) => s.name)).toEqual(['users', 'products']);
+  });
+
+  it('trims whitespace around comma-separated names', () => {
+    const result = filterSchemasByTable(allSchemas, ' users , products ');
+    expect(result.map((s) => s.name)).toEqual(['users', 'products']);
+  });
+
+  it('exits with an error listing every unmatched table name', () => {
+    expect(() => filterSchemasByTable(allSchemas, 'users,nope,alsonope')).toThrow('process.exit called');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('nope, alsonope'));
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('users'));
+  });
+
+  it('exits with an error when the single requested table is not found', () => {
+    expect(() => filterSchemasByTable(allSchemas, 'ghost')).toThrow('process.exit called');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ghost'));
   });
 });

@@ -11,6 +11,7 @@ import { inferDriverFromConnectionString, sortSchemasByDependency } from './migr
 
 interface MigrateDataOptions {
   output?: string;
+  /** Comma-separated table names to restrict the migration to, e.g. `'users,credentials,setup'`. A single name also works. */
   table?: string;
   allUsers?: boolean;
   dryRun?: boolean;
@@ -199,6 +200,32 @@ export function generateMigrateDataScript(schemas: TableSchema[], allUsers = fal
 }
 
 /**
+ * Restricts `schemas` to the tables named in `--table`. Accepts a comma-separated list
+ * (`--table users,credentials,setup`) as well as a single name, so a caller who only needs a
+ * handful of tables — e.g. user/credential/setup data for a partial cutover — isn't forced to
+ * migrate every table just to reach the ones they want. Shared by both the script-generation path
+ * and `--run`, which previously duplicated single-name-only filtering logic independently.
+ * Exits with an actionable error listing exactly which requested names weren't found, rather than
+ * silently dropping them or reporting only the first miss.
+ */
+export function filterSchemasByTable(schemas: TableSchema[], table: string | undefined): TableSchema[] {
+  if (!table) return schemas;
+
+  const requested = table.split(',').map((t) => t.trim()).filter(Boolean);
+  const requestedSet = new Set(requested);
+  const filtered = schemas.filter((s) => requestedSet.has(s.name));
+
+  const found = new Set(filtered.map((s) => s.name));
+  const missing = requested.filter((t) => !found.has(t));
+  if (missing.length > 0) {
+    console.error(chalk.red(`❌ No schema found for table(s): ${missing.join(', ')}`));
+    process.exit(1);
+  }
+
+  return filtered;
+}
+
+/**
  * Validates --run's own required flags before touching the filesystem for lsdb.config.ts, so a
  * misconfigured --run fails fast with the relevant error instead of an unrelated config error.
  */
@@ -318,14 +345,7 @@ export async function migrateDataCommand(options: MigrateDataOptions) {
     // loadSchemas() (duplicated from migrate.ts, not shared) that never got the same fix, so a
     // referencing table's rows could be upserted before the table it references had any rows at
     // all, failing with a genuine FK violation instead of a DDL-time ordering error.
-    let schemas = sortSchemasByDependency(loadSchemas(config));
-    if (options.table) {
-      schemas = schemas.filter((s) => s.name === options.table);
-      if (schemas.length === 0) {
-        console.error(chalk.red(`❌ No schema found for table: ${options.table}`));
-        process.exit(1);
-      }
-    }
+    const schemas = filterSchemasByTable(sortSchemasByDependency(loadSchemas(config)), options.table);
     if (schemas.length === 0) {
       console.log(chalk.yellow('⚠️  No schemas found. Nothing to migrate.'));
       return;
@@ -348,15 +368,7 @@ export async function migrateDataCommand(options: MigrateDataOptions) {
 
   // Same ordering fix as the --run path above — keeps the generated stub script's table order
   // dependency-safe too, in case whoever fills in insertRow() runs it top-to-bottom.
-  let schemas = sortSchemasByDependency(loadSchemas(config));
-
-  if (options.table) {
-    schemas = schemas.filter((s) => s.name === options.table);
-    if (schemas.length === 0) {
-      console.error(chalk.red(`❌ No schema found for table: ${options.table}`));
-      process.exit(1);
-    }
-  }
+  const schemas = filterSchemasByTable(sortSchemasByDependency(loadSchemas(config)), options.table);
 
   if (schemas.length === 0) {
     console.log(chalk.yellow('⚠️  No schemas found. Nothing to export.'));

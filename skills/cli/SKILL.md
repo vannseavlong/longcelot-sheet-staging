@@ -202,6 +202,7 @@ Exports all table schemas to a target format. Use as a starting point when migra
 ```bash
 npx lsdb migrate-data
 npx lsdb migrate-data --table users --output ./scripts
+npx lsdb migrate-data --table users,credentials,setup   # only these tables (comma-separated)
 npx lsdb migrate-data --all-users              # also export every registered user sheet
 npx lsdb migrate-data --dry-run                # preview plan without writing files
 ```
