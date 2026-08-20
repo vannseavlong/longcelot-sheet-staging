@@ -71,9 +71,10 @@ skill_tree:
     covers:
       - createOAuthManager vs createLoginOAuthManager
       - OAuthConfig
-      - getAuthUrl / getTokens / refreshTokens / verifyToken
+      - getAuthUrl / getTokens / refreshTokens / verifyToken / getRedirectUri
       - When verifyToken() works (requires openid scope)
       - hashPassword / comparePassword / validatePasswordStrength
+      - Pointer to `lsdb auth` (cli skill) for the CLI-driven version of this flow
     depends_on:
       - core
 
@@ -139,11 +140,12 @@ skill_tree:
   - name: cli
     path: skills/cli/SKILL.md
     description: >
-      The lsdb CLI: init, generate, sync (with --all-users, --dry-run,
+      The lsdb CLI: init, auth, generate, sync (with --all-users, --dry-run,
       --token-file), validate, seed (with --skip-existing, --upsert, dynamic
       format), mock-users, doctor, status, export, migrate.
     covers:
       - lsdb init / --integrate
+      - lsdb auth / --force (alias lsdb login)
       - lsdb generate
       - lsdb sync / --all-users / --dry-run / --token-file
       - lsdb validate

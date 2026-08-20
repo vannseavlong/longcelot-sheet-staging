@@ -90,7 +90,7 @@ domains:
       - createOAuthManager / createLoginOAuthManager
       - OAuthManager / OAuthConfig
       - getAuthUrl (accepts optional scopes[])
-      - getTokens / refreshTokens / verifyToken
+      - getTokens / refreshTokens / verifyToken / getRedirectUri
       - verifyToken requires openid scope (use createLoginOAuthManager)
       - hashPassword / comparePassword / validatePasswordStrength
 
@@ -157,12 +157,14 @@ domains:
   - name: cli
     description: >
       The lsdb CLI binary. Covers all commands: init (--integrate),
-      generate, sync (--all-users, --dry-run, --token-file for CI),
-      validate, seed (--skip-existing, --upsert, --all-actors, dynamic function
-      export), mock-users, doctor, status, export, migrate.
+      auth (--force, alias login), generate, sync (--all-users, --dry-run,
+      --token-file for CI), validate, seed (--skip-existing, --upsert,
+      --all-actors, dynamic function export), mock-users, doctor, status,
+      export, migrate.
     sources:
       - src/cli/index.ts
       - src/cli/commands/init.ts
+      - src/cli/commands/auth.ts
       - src/cli/commands/generate.ts
       - src/cli/commands/sync.ts
       - src/cli/commands/validate.ts
@@ -172,8 +174,13 @@ domains:
       - src/cli/commands/status.ts
       - src/cli/commands/export.ts
       - src/cli/commands/migrate.ts
+      - src/cli/lib/oauthFlow.ts
+      - src/cli/lib/oauthCallbackServer.ts
+      - src/cli/lib/browser.ts
     key_concepts:
       - lsdb init / --integrate
+      - lsdb auth / --force (alias lsdb login)
+      - Automatic OAuth redirect capture via local loopback server, falling back to manual code paste
       - lsdb generate
       - lsdb sync / --all-users / --dry-run / --token-file
       - lsdb validate

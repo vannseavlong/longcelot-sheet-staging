@@ -132,12 +132,12 @@ Each skill must be independently useful. An agent reading only one skill must be
 **Goal**: Agent can run any `lsdb` CLI command correctly, understand what each command does, use new flags (`--token-file`, `--skip-existing`, `--upsert`, `--all-users`, `--yes`), and troubleshoot common CLI failures.
 
 **Must cover:**
-- All 14 commands: init (--integrate), generate, sync, validate, seed, mock-users, doctor, status, migrate, migrate-data, drop-table, drop-column, rename-column (plus deprecated aliases export, export-data)
+- All 15 commands: init (--integrate), auth (--force, alias login), generate, sync, validate, seed, mock-users, doctor, status, migrate, migrate-data, drop-table, drop-column, rename-column (plus deprecated aliases export, export-data)
 - `sync --all-users`, `--dry-run`, `--token-file` (CI usage)
 - `seed --skip-existing`, `--upsert`, `--all-actors`
 - Static vs dynamic seed file format
 - `lsdb.config.ts` full structure with `ActorConfig` (name + sheetIdEnv; `role` is a deprecated alias for `name`)
-- `.lsdb-tokens.json` lifecycle
+- `.lsdb-tokens.json` lifecycle, `lsdb auth`'s automatic loopback capture of the OAuth redirect vs. its manual-paste fallback
 - `drop-table`/`drop-column`/`rename-column`: interactive selection UX, `--all-users`/`--yes`/`--dry-run`, reserved-column/primary-key guards, ref() warnings
 - Common mistakes: missing env vars, committing token file, not syncing after schema change, re-seeding without --skip-existing, CI hangs without --token-file, expecting drop commands to be additive-safe like sync
 

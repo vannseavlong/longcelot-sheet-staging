@@ -24,10 +24,18 @@ export const LOGIN_SCOPES = [
 export class OAuthManager {
   private client: OAuth2Client;
   private defaultScopes: string[];
+  private redirectUri: string;
 
   constructor(config: OAuthConfig, defaultScopes: string[] = SHEETS_SCOPES) {
     this.client = new OAuth2Client(config.clientId, config.clientSecret, config.redirectUri);
     this.defaultScopes = defaultScopes;
+    this.redirectUri = config.redirectUri;
+  }
+
+  /** The configured redirect URI. Lets a caller (e.g. the CLI's loopback OAuth capture) inspect
+   *  where Google will send the browser back to without needing to keep its own copy of `config`. */
+  getRedirectUri(): string {
+    return this.redirectUri;
   }
 
   /**

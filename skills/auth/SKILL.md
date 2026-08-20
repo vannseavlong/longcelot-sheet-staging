@@ -4,7 +4,7 @@ description: Handle authentication with longcelot-sheet-db. Use when implementin
 license: MIT
 metadata:
   package: longcelot-sheet-db
-  version: "0.1.15"
+  version: "0.1.44"
 ---
 
 # longcelot-sheet-db — Authentication
@@ -91,6 +91,8 @@ app.get('/auth/callback', async (req, res) => {
 const refreshed = await oauth.refreshTokens(storedRefreshToken);
 // Use refreshed.access_token for the next request
 ```
+
+> **The CLI does not require you to wire steps 1–2 yourself.** `lsdb auth` (see `skills/cli/SKILL.md`) drives this same exchange for the admin Sheets token: it opens the consent URL for you and, when `redirectUri` is `localhost`/`127.0.0.1` and that port is free, catches the `?code=` redirect with a short-lived local HTTP server instead of asking you to copy it out of the browser's address bar. That's CLI-only tooling (`src/cli/lib/oauthCallbackServer.ts`) — it doesn't change what `getAuthUrl()`/`getTokens()` do when you call `OAuthManager` directly in your own server code.
 
 ---
 

@@ -208,6 +208,7 @@ export default defineTable({
   console.log('     ' + chalk.gray('GOOGLE_CLIENT_SECRET=<your-client-secret>'));
   console.log('     ' + chalk.gray('ADMIN_SHEET_ID=<your-sheet-id>'));
   console.log('     ' + chalk.dim('→ https://console.cloud.google.com/apis/credentials'));
-  console.log('  2. ' + chalk.white('Generate tables:  lsdb generate <table-name>'));
-  console.log('  3. ' + chalk.white('Sync to sheets:   lsdb sync\n'));
+  console.log('  2. ' + chalk.white('Authorize:        lsdb auth'));
+  console.log('  3. ' + chalk.white('Generate tables:  lsdb generate <table-name>'));
+  console.log('  4. ' + chalk.white('Sync to sheets:   lsdb sync\n'));
 }

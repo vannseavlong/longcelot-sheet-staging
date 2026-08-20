@@ -50,6 +50,14 @@ GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
 ADMIN_SHEET_ID=your_admin_sheet_id
 ```
 
+### 3.3 Authorize lsdb with Google
+
+```bash
+pnpm lsdb auth
+```
+
+Walks you through the consent screen and saves `.lsdb-tokens.json` to the project root. Opens your browser automatically; if `GOOGLE_REDIRECT_URI` is `localhost`/`127.0.0.1` and that port is free, a short-lived local server catches the redirect for you — no copying an authorization code out of the address bar. Optional: `lsdb sync` runs this same flow itself the first time it needs a token if you skip this step.
+
 ---
 
 ## 4. Define Schemas
@@ -200,9 +208,12 @@ npx lsdb init
 
 # 3. Configure .env with OAuth credentials
 
-# 4. Define schemas
+# 4. Authorize with Google
+npx lsdb auth
 
-# 5. Sync
+# 5. Define schemas
+
+# 6. Sync
 npx lsdb sync
 ```
 

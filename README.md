@@ -24,7 +24,7 @@ Instead of running MySQL, PostgreSQL, or MongoDB for staging:
 - 🔄 **Auto CRUD**: `create`, `createMany`, `findMany`, `findOne`, `count`, `update`, `upsert`, `delete`
 - 🎭 **Role-Based Permissions**: Built-in security boundaries + cross-actor access matrix
 - 🔑 **Authentication**: `createAuthRouter` wires Google Sign-In + JWT in one call; role-based registration policy
-- 🛠️ **CLI Tools**: Initialize, generate, sync, validate, seed, migrate, drop/rename schema elements, mock-users
+- 🛠️ **CLI Tools**: Initialize, authorize, generate, sync, validate, seed, migrate, drop/rename schema elements, mock-users
 - 📊 **Type-Safe**: Full TypeScript support
 - 💰 **Cost-Free**: No infrastructure costs for staging
 - 🔒 **Schema Integrity**: Hash-based version tracking detects stale user sheets at runtime
@@ -91,6 +91,14 @@ ADMIN_SHEET_ID=your_admin_sheet_id
 - OAuth is strictly for **backend-to-Google-Sheets** communication
 - Your app's existing authentication (JWT, sessions, etc.) remains untouched
 - You map your user identity to lsdb context (see "Integrating into an Existing Project" below)
+
+### Authorize lsdb with Google
+
+```bash
+npx lsdb auth
+```
+
+Walks you through the consent screen and saves `.lsdb-tokens.json` to the project root. If `GOOGLE_REDIRECT_URI` points at `localhost`/`127.0.0.1` and that port is free, `lsdb auth` opens your browser and catches Google's redirect automatically — no copying an authorization code out of the address bar. This step is optional (`lsdb sync` will run the same flow itself the first time it needs a token), but running it up front means auth happens once, on its own, instead of surprising you mid-`sync`.
 
 ### Define a Schema
 
@@ -354,12 +362,15 @@ npx lsdb init
 
 # 3. Update your .env with Google OAuth credentials
 
-# 4. Define your schemas in schemas/ directory
+# 4. Authorize lsdb with Google (saves .lsdb-tokens.json)
+npx lsdb auth
 
-# 5. Sync schemas to Google Sheets
+# 5. Define your schemas in schemas/ directory
+
+# 6. Sync schemas to Google Sheets
 npx lsdb sync
 
-# 6. Use in your backend code
+# 7. Use in your backend code
 ```
 
 **How it works with your existing auth**:
@@ -501,6 +512,22 @@ npx lsdb init
 ```
 
 Creates project structure and configuration files.
+
+### Authorize with Google
+
+```bash
+npx lsdb auth
+# pnpm dlx lsdb auth
+# yarn dlx lsdb auth
+# bunx lsdb auth
+
+npx lsdb auth --force   # re-authorize even if a valid token is already stored
+npx lsdb login          # alias for auth
+```
+
+Runs the Google OAuth consent flow and saves `.lsdb-tokens.json` to the project root. Opens your browser automatically; when `GOOGLE_REDIRECT_URI` is `localhost`/`127.0.0.1` and that port is free, a short-lived local server catches the redirect for you instead of asking you to paste the authorization code by hand. Falls back to the manual paste prompt whenever automatic capture isn't possible (non-local redirect URI, port already in use, timeout, or denied consent).
+
+Run this once after `init`, before your first `sync` — though it's entirely optional: `sync` (and `drop-table`/`drop-column`/`rename-column`) trigger the same flow themselves the first time they need a token.
 
 ### Generate Schema
 

@@ -1,10 +1,10 @@
 ---
 name: cli
-description: Use the longcelot-sheet-db CLI (lsdb). Use when running lsdb init, generate, sync, validate, seed, mock-users, doctor, status, migrate, migrate-data, drop-table, drop-column, or rename-column commands — or when scaffolding a new project, generating schema files, syncing schemas to Google Sheets (including CI-friendly --token-file), seeding with --skip-existing or --upsert, diagnosing configuration issues, exporting schemas to Prisma/SQL, pushing schema changes to all user sheets, or removing/renaming a table or column safely (schema file + live sheet together).
+description: Use the longcelot-sheet-db CLI (lsdb). Use when running lsdb init, auth, generate, sync, validate, seed, mock-users, doctor, status, migrate, migrate-data, drop-table, drop-column, or rename-column commands — or when scaffolding a new project, authorizing Google OAuth up front, generating schema files, syncing schemas to Google Sheets (including CI-friendly --token-file), seeding with --skip-existing or --upsert, diagnosing configuration issues, exporting schemas to Prisma/SQL, pushing schema changes to all user sheets, or removing/renaming a table or column safely (schema file + live sheet together).
 license: MIT
 metadata:
   package: longcelot-sheet-db
-  version: "0.1.29"
+  version: "0.1.44"
 ---
 
 # longcelot-sheet-db — CLI Reference (`lsdb`)
@@ -36,6 +36,22 @@ Run `init` **once** when first adding the package. Use `--integrate` to add it t
 
 ---
 
+## auth — Authorize with Google
+
+```bash
+npx lsdb auth            # walk through Google OAuth, save .lsdb-tokens.json
+npx lsdb auth --force     # re-authorize from scratch even if a valid token is already stored
+npx lsdb login            # alias for auth
+```
+
+Run this **once**, right after `init` (and before the first `sync`) — it's the recommended way to get `.lsdb-tokens.json` on disk up front, as its own explicit step, instead of the OAuth prompt appearing as a surprise partway through your first `sync`. It's purely additive: `sync` (and `drop-table`/`drop-column`/`rename-column`) still trigger the same OAuth flow themselves on first run if `auth` was skipped, exactly as before.
+
+**How it captures the code:** `lsdb auth` opens your default browser to the Google consent screen automatically. If `GOOGLE_REDIRECT_URI` points at `localhost`/`127.0.0.1` (the default from `init`) and that port is free, a temporary local server catches Google's redirect for you — no copying a `code` out of the address bar. If that's not possible (a non-local redirect URI, or the port is already taken by your own app's dev server), it falls back to the original prompt: paste the authorization code from the redirect URL manually.
+
+Stores/refreshes the same `.lsdb-tokens.json` every other command reads — see `--token-file` under `sync` for the CI equivalent.
+
+---
+
 ## generate — Interactive schema generator
 
 ```bash
@@ -58,7 +74,7 @@ npx lsdb sync --token-file /tmp/t.json # CI/CD: load tokens from file, skip OAut
 **What it does:**
 1. Loads all schemas from `schemas/`
 2. Validates environment variables
-3. **Auth**: reads `.lsdb-tokens.json`, refreshes if stale, prompts for browser auth if absent
+3. **Auth**: reads `.lsdb-tokens.json`, refreshes if stale, runs the same browser auth flow as `lsdb auth` if absent (run `lsdb auth` beforehand to do this as its own step instead)
 4. Calls `syncSchema()` for every schema — creates missing tabs and adds missing headers
 5. Prints a per-actor status table:
 
@@ -276,6 +292,7 @@ The `sheetIdEnv` field tells each CLI command which env var holds the sheet ID f
 
 - **Running `sync` without `.env` configured** — `sync` fails at OAuth if env vars are missing. Run `doctor` first.
 - **Committing `.lsdb-tokens.json`** — Contains OAuth refresh tokens. Verify it is in `.gitignore` before any push.
+- **Expecting `lsdb auth`'s automatic capture to always work** — it only intercepts the redirect when `GOOGLE_REDIRECT_URI` is `localhost`/`127.0.0.1` *and* that port/path is free. If your own app's dev server is already bound to it (a common overlap, since `init`'s default `.env` reuses the same `http://localhost:3000/auth/callback` your `createAuthRouter` callback would use), it silently falls back to the manual paste prompt — that's expected, not a bug.
 - **Not running `sync` after schema changes** — Schema files are the source of truth. New columns don't appear in Sheets until `sync` runs.
 - **Re-seeding without `--skip-existing`** — Running `seed` twice throws `ValidationError: Unique constraint violation` for any unique column. Use `--skip-existing` for idempotent seeds or `--upsert` to update.
 - **Forgetting `--token-file` in CI** — Without it, `sync` blocks waiting for interactive input and the CI job hangs.

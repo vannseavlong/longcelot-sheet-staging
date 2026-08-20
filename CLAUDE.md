@@ -23,6 +23,7 @@ pnpm dev        # Watch mode for development
 
 # CLI commands (via npx or pnpm dlx)
 npx lsdb init       # Initialize project structure
+npx lsdb auth       # Authorize with Google, save .lsdb-tokens.json (run once, before sync)
 npx lsdb generate   # Interactive schema generator
 npx lsdb sync       # Sync schemas to Google Sheets
 npx lsdb validate   # Validate schema definitions

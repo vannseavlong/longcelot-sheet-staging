@@ -18,6 +18,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.44] — 2026-08-21
+
+### Added
+
+- **`lsdb auth` CLI command** (alias `lsdb login`) — runs the Google OAuth handshake and saves `.lsdb-tokens.json` as its own explicit step, instead of it only ever happening implicitly on the first `sync`/`drop-table`/`drop-column`/`rename-column`. `--force` re-authorizes from scratch even if a valid token is already stored. Purely additive: those commands still trigger the same flow themselves on first run if `auth` is skipped, unchanged.
+- **Automatic OAuth redirect capture** — `lsdb auth`/`sync` now open the browser automatically and, when `GOOGLE_REDIRECT_URI` is `localhost`/`127.0.0.1` and that port is free, catch Google's `?code=` redirect with a short-lived local server instead of requiring the authorization code to be copied out of the browser's address bar and pasted into the terminal by hand. Falls back to the original manual-paste prompt whenever automatic capture isn't possible (non-local redirect URI, port already in use — e.g. the app's own dev server owns it — 3-minute timeout, or denied consent).
+- `OAuthManager.getRedirectUri()` — returns the manager's configured redirect URI; used internally by the CLI's loopback capture, exported as part of the public `OAuthManager` API.
+
+### Fixed
+
+- **`lsdb --version` reported a hardcoded `0.1.0`** regardless of the installed package version, since the CLI's `.version()` call was a literal string never wired to `package.json`. It now reads the version from `package.json` at runtime.
+
+---
+
 ## [0.1.43] — 2026-08-20
 
 ### Added

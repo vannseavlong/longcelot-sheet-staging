@@ -166,6 +166,7 @@ The CLI only ever touches schema files and sheet/DB *structure* — never runtim
 flowchart LR
     subgraph SETUP["setup"]
         INIT["lsdb init"]
+        AUTH["lsdb auth"]
         GEN["lsdb generate"]
     end
 
@@ -196,10 +197,12 @@ flowchart LR
     end
 
     Files[("schema/*.ts<br/>defineTable()")]
+    Tokens[(".lsdb-tokens.json")]
     Admin[("Admin Sheet + actor sheets")]
     SQLDB[("Postgres / MySQL")]
 
     INIT --> Files
+    AUTH --> Tokens --> Admin
     GEN --> Files
     Files --> SYNC --> Admin
     Files --> VAL
@@ -218,6 +221,8 @@ flowchart LR
 ```
 
 `migrate --sql` generates DDL from the same `TableSchema` definitions the Sheets engine validates against; `migrate-data --run` is the actual cutover, reading current sheet rows and writing them into the target Postgres/MySQL connection.
+
+`lsdb auth` is optional, not a hard prerequisite the diagram implies by position — every other command that touches `Admin` (`sync`, `drop-table`, `drop-column`, `rename-column`) runs the identical OAuth handshake itself on first use if `.lsdb-tokens.json` isn't already there. Running `auth` explicitly just does that handshake as its own step, up front.
 
 ---
 

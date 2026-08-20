@@ -54,6 +54,12 @@ app.get('/courses', async (req, res) => {
 
 The user login token is discarded after identity is confirmed. Your app issues its own JWT (via NextAuth or similar). The admin Sheets token is what actually touches the data on every CRUD call.
 
+### How do I get that admin Sheets token the first time?
+
+Run `npx lsdb auth` once, after `init` and before your first `sync`. It walks you through Google's consent screen and writes `.lsdb-tokens.json` to the project root. If `GOOGLE_REDIRECT_URI` is `localhost`/`127.0.0.1` and that port is free, `lsdb auth` opens your browser and a short-lived local server catches the `?code=` redirect for you — you never have to copy it out of the address bar. When that's not possible (a non-local redirect URI, or the port already taken by your own app's dev server), it falls back to the original prompt: paste the authorization code from the redirect URL.
+
+This step is optional — `sync` (and `drop-table`/`drop-column`/`rename-column`) run the exact same flow themselves the first time they need a token if you skip `auth`. Running `auth` explicitly just means that handshake happens on its own, deliberately, instead of appearing mid-`sync`.
+
 ### Does the admin OAuth token expire? How is rotation handled?
 
 Yes — Google access tokens expire in **1 hour**. The `googleapis` library handles rotation automatically:
@@ -421,13 +427,16 @@ GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
 ADMIN_SHEET_ID=...
 
-# 3. Define your schemas in schemas/ directory, or use the interactive generator
+# 3. Authorize lsdb with Google (saves .lsdb-tokens.json)
+npx lsdb auth
+
+# 4. Define your schemas in schemas/ directory, or use the interactive generator
 npx lsdb generate enrollments
 
-# 4. Sync schemas to Google Sheets (creates tabs and headers)
+# 5. Sync schemas to Google Sheets (creates tabs and headers)
 npx lsdb sync
 
-# 5. Use the adapter in your backend code
+# 6. Use the adapter in your backend code
 ```
 
 ### How does `lsdb sync` work for multiple actors?
@@ -451,6 +460,8 @@ Actors whose `DEV_*_SHEET_ID` env var is not set are skipped with a warning (non
 |---|---|
 | `lsdb init` | Scaffold config, `.env`, schemas directory |
 | `lsdb init --integrate` | Merge into existing project without overwriting files |
+| `lsdb auth` (alias `login`) | Authorize with Google, save `.lsdb-tokens.json` — opens the browser and captures the redirect automatically where possible |
+| `lsdb auth --force` | Re-authorize from scratch even if a valid token is already stored |
 | `lsdb generate <name>` | Interactive schema generator |
 | `lsdb sync` | Sync all actor schemas to Google Sheets |
 | `lsdb sync --all-users` | Also push schema changes to every registered user sheet |

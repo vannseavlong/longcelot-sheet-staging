@@ -4,6 +4,8 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { createOAuthManager } from '../../auth/oauth';
 import { resolveTokensPath, TOKENS_FILENAME } from '../../utils/cliFiles';
+import { tryCaptureViaLoopback } from './oauthCallbackServer';
+import { openBrowser } from './browser';
 
 export function readTokens(): unknown | null {
   const tokenPath = resolveTokensPath();
@@ -31,16 +33,38 @@ export function saveTokens(tokens: unknown): void {
 }
 
 /**
+ * Prompts for the authorization code by hand — the original flow, kept as-is. Used whenever
+ * automatic capture (see `tryCaptureViaLoopback`) isn't possible or doesn't complete, so a
+ * non-loopback redirect URI, a busy port, a closed tab, or a timeout all degrade to this
+ * rather than failing outright.
+ */
+async function promptForCode(): Promise<string> {
+  const { code } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'code',
+      message: 'Paste the authorization code from the redirect URL:',
+      validate: (v) => (v.trim().length > 0 ? true : 'Code cannot be empty'),
+    },
+  ]);
+  return code.trim();
+}
+
+/**
  * Refreshes stored tokens if present, otherwise walks the user through the interactive
  * browser OAuth flow. Shared by every CLI command that needs to talk to the Sheets API
- * (sync, drop-table, drop-column, rename-column).
+ * (auth, sync, drop-table, drop-column, rename-column).
+ *
+ * @param options.force Skip the stored refresh token and force a fresh consent screen even if
+ *   a valid one is on disk — used by `lsdb auth --force`.
  */
 export async function resolveTokens(
-  oauth: ReturnType<typeof createOAuthManager>
+  oauth: ReturnType<typeof createOAuthManager>,
+  options: { force?: boolean } = {}
 ): Promise<unknown> {
   const stored = readTokens() as Record<string, unknown> | null;
 
-  if (stored?.refresh_token) {
+  if (!options.force && stored?.refresh_token) {
     try {
       console.log(chalk.cyan('🔄 Refreshing OAuth tokens...\n'));
       const refreshed = await oauth.refreshTokens(stored.refresh_token as string);
@@ -54,20 +78,19 @@ export async function resolveTokens(
 
   const authUrl = oauth.getAuthUrl();
   console.log(chalk.cyan('🔐 Authorization required.\n'));
-  console.log(chalk.white('Open the following URL in your browser:\n'));
+  console.log(chalk.white('Opening your browser to authorize lsdb with Google...'));
+  console.log(chalk.gray('If it does not open automatically, visit this URL:\n'));
   console.log(chalk.bold.underline(authUrl));
   console.log();
 
-  const { code } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'code',
-      message: 'Paste the authorization code from the redirect URL:',
-      validate: (v) => (v.trim().length > 0 ? true : 'Code cannot be empty'),
-    },
-  ]);
+  openBrowser(authUrl);
 
-  const tokens = await oauth.getTokens(code.trim());
+  // Try to catch Google's redirect ourselves first; fall back to the manual-paste prompt for
+  // anything automatic capture can't handle (non-loopback redirect URI, port in use, timeout...).
+  const captured = await tryCaptureViaLoopback(oauth.getRedirectUri());
+  const code = captured ?? (await promptForCode());
+
+  const tokens = await oauth.getTokens(code);
   saveTokens(tokens);
   console.log(chalk.green(`✅ Tokens saved to ${TOKENS_FILENAME}\n`));
   return tokens;

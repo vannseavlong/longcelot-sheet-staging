@@ -571,6 +571,29 @@
 
 ---
 
+## Phase 20: Bug Fix / Feature (developer-reported, 2026-08-21)
+
+### 20.1 `lsdb --version` hardcoded to `0.1.0`
+
+> Goal: `program.version('0.1.0')` in `src/cli/index.ts` was a literal string, never wired to `package.json` — every published version, including `0.1.39`, reported `0.1.0` back.
+
+- [x] Reads the version from `package.json` at runtime (`getPackageVersion()`, resolved relative to `__dirname` so it works from `dist/cli/index.js`), falls back to `'0.0.0'` if unreadable rather than throwing
+- [x] Verified against the built CLI: `node dist/cli/index.js --version` now prints the live `package.json` version
+
+### 20.2 `lsdb auth` command + automatic OAuth redirect capture
+
+> Goal: the OAuth handshake only ever ran implicitly, buried inside the first `sync` (or `drop-table`/`drop-column`/`rename-column`); and the only way to hand the CLI an authorization code was copying it out of the browser's address bar and pasting it into the terminal by hand.
+
+- [x] `lsdb auth` (alias `lsdb login`) — standalone command wrapping the existing `resolveTokens()` flow, meant to run once after `init`, before the first `sync`. `--force` bypasses a stored refresh token to force fresh consent. Purely additive: `sync`/`drop-table`/`drop-column`/`rename-column` still trigger the same flow themselves on first run, unchanged
+- [x] `src/cli/lib/oauthCallbackServer.ts` — `tryCaptureViaLoopback(redirectUri)`: binds a short-lived local HTTP server on the redirect URI when it's `localhost`/`127.0.0.1`, serves a styled success/error page, and resolves the `code` param directly from Google's browser redirect. Returns `null` (never throws) for a non-loopback host, a busy port, a denied-consent `?error=`, or a 3-minute timeout — every case degrades to the pre-existing manual-paste prompt rather than failing
+- [x] `src/cli/lib/browser.ts` — `openBrowser(url)`: best-effort `open`/`start`/`xdg-open` per platform, swallows all failures since the URL is already printed as a fallback
+- [x] `OAuthManager.getRedirectUri()` — new public getter so the CLI (and any other caller) can read back the configured redirect URI without keeping its own copy of `OAuthConfig`
+- [x] `resolveTokens(oauth, { force? })` — additive optional second parameter; existing call sites (`sync.ts`, `adminAdapter.ts`) unchanged
+- [x] Tests: `tests/unit/oauthCallbackServer.test.ts` — successful capture + success-page body, `?error=` resolves `null`, unrelated paths (e.g. `favicon.ico`) ignored without ending the wait, non-loopback hostname, `https:` redirect URI, malformed URI, and port-already-in-use all resolve `null` without throwing
+- [x] Docs: README.md (feature bullet, Quick Start `lsdb auth` step, "Authorize lsdb with Google" section, CLI Commands reference), API.md (`lsdb auth` CLI reference, `oauth.getRedirectUri()`), FAQ.md (`§1` new Q&A, CLI commands table, Quick Start snippet), CLAUDE.md (Common Commands), CHANGELOG.md `[Unreleased]`, `skills/cli/SKILL.md` (new `auth` section, Common Mistakes note), `skills/auth/SKILL.md` (pointer from the manual OAuth walkthrough to the CLI shortcut)
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables

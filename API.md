@@ -654,6 +654,14 @@ const authUrl = oauth.getAuthUrl();
 const identityOnlyUrl = oauth.getAuthUrl(['openid', 'email', 'profile']);
 ```
 
+### `oauth.getRedirectUri()`
+
+Returns the redirect URI this manager was configured with.
+
+**Returns:** `string`
+
+Mainly useful for tooling built on top of `OAuthManager` that needs to know where Google will redirect back to without holding its own copy of `OAuthConfig` — the `lsdb auth`/`sync` CLI flow uses this to decide whether it can capture the authorization code automatically via a local loopback server (see `oauth.getTokens(code)` below for the manual path).
+
 ### `oauth.getTokens(code)`
 
 Exchanges authorization code for tokens.
@@ -807,6 +815,19 @@ Initializes a new project. With `--integrate`, merges into an existing project w
 npx lsdb init
 npx lsdb init --integrate   # safe merge into existing project
 ```
+
+### `lsdb auth [--force]` (alias: `lsdb login`)
+
+Runs the Google OAuth consent flow and saves `.lsdb-tokens.json` to the project root. Opens the browser automatically; when `GOOGLE_REDIRECT_URI` is `localhost`/`127.0.0.1` and that port is free, a temporary local server captures the `?code=` redirect directly instead of prompting for a manual paste. Falls back to the manual-paste prompt whenever automatic capture isn't possible (non-local redirect URI, port in use, timeout, or denied consent).
+
+- `--force` — re-authorize from scratch even if a valid refresh token is already stored
+
+```bash
+npx lsdb auth
+npx lsdb auth --force
+```
+
+Optional: `sync` (and `drop-table`/`drop-column`/`rename-column`) run this same flow themselves the first time they need a token, so `auth` is a way to do it as its own explicit step rather than a requirement.
 
 ### `lsdb generate <table-name>`
 

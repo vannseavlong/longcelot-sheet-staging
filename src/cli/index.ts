@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { Command } from 'commander';
@@ -19,6 +20,17 @@ import { dropTableCommand } from './commands/drop-table';
 import { dropColumnCommand } from './commands/drop-column';
 import { renameColumnCommand } from './commands/rename-column';
 import { erdiagramCommand } from './commands/erdiagram';
+import { authCommand } from './commands/auth';
+
+function getPackageVersion(): string {
+  try {
+    const pkgPath = path.join(__dirname, '..', '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 const invokedAs = path.basename(process.argv[1] ?? '');
 if (invokedAs === 'sheet-db') {
@@ -35,7 +47,14 @@ const program = new Command();
 program
   .name('lsdb')
   .description('Google Sheets-backed staging database CLI')
-  .version('0.1.0'); // seem wrong and hard coded
+  .version(getPackageVersion());
+
+program
+  .command('auth')
+  .alias('login')
+  .description('Authorize lsdb with Google and save .lsdb-tokens.json (run once after `lsdb init`, before `lsdb sync`)')
+  .option('--force', 'Re-authorize from scratch even if a valid token is already stored')
+  .action(authCommand);
 
 program
   .command('init')
