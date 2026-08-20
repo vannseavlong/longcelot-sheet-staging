@@ -59,6 +59,7 @@ interface AuthRouterOptions {
   registrationPolicy?: RegistrationPolicy;  // 'open' (default) | 'login-only'
   oauthConfig?: OAuthConfig;               // omit to read from env vars
   basePath?: string;                       // prefix for routes, default ''
+  scopes?: string[];                       // default: LOGIN_SCOPES (openid, email, profile, Sheets/Drive). Must include 'openid'.
 }
 
 interface GoogleProfile {
@@ -247,6 +248,42 @@ function verifyJwt(token: string, secret: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(payload, 'base64url').toString());
 }
 ```
+
+---
+
+## Trimming OAuth Scopes (avoiding the "unverified app" screen)
+
+By default `createAuthRouter` requests `LOGIN_SCOPES` — `openid`, `email`, `profile`, plus the
+Sheets/Drive scopes (`spreadsheets`, `drive.file`). The Sheets/Drive pair are Google-classified
+*sensitive* scopes, so every login shows Google's "hasn't verified this app" interstitial, even
+when the router is only used for sign-in and all Sheets access actually happens server-side
+under a separate admin-owned token (e.g. from `lsdb sync` / `createOAuthManager`).
+
+If a given router never needs Sheets/Drive access on the *end user's own* OAuth grant, pass
+`scopes` to drop them:
+
+```typescript
+import { createAuthRouter, LOGIN_SCOPES } from 'longcelot-sheet-db';
+
+const auth = createAuthRouter({
+  adapter,
+  jwtSecret: process.env.JWT_SECRET!,
+  frontendUrl: process.env.FRONTEND_URL!,
+  scopes: ['openid', 'email', 'profile'],   // identity only — no Sheets/Drive interstitial
+  async onUser(profile, adapter) { /* ... */ },
+});
+
+// Need identity + one extra scope, but not Sheets/Drive? Extend LOGIN_SCOPES's identity part
+// instead of retyping it, or start from LOGIN_SCOPES and drop what you don't need:
+// scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly']
+```
+
+`scopes` **must include `'openid'`** — the callback exchanges the code for an `id_token` to
+build the `GoogleProfile` passed to `onUser`, and Google only issues one when `openid` was
+requested. Omitting it throws `ValidationError` immediately when `createAuthRouter()` is called,
+not later when a real user hits the callback.
+
+Omit `scopes` entirely to keep today's default (`LOGIN_SCOPES`) — this is purely additive/opt-in.
 
 ---
 

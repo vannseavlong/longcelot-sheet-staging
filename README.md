@@ -675,6 +675,7 @@ const auth = createAuthRouter({
   registrationPolicy: 'login-only',
   jwtExpiresInSeconds: 60 * 60 * 24, // default: 1 day
   tokenDelivery: 'fragment', // '#token=...' — never hits server access logs/Referer; default is 'query' for backward compatibility
+  scopes: ['openid', 'email', 'profile'], // default: LOGIN_SCOPES (adds Sheets/Drive) — trim to identity-only to skip Google's sensitive-scope verification screen
   async onUser(profile, adapter) {
     const ctx = adapter.withContext({ userId: 'auth', actor: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! });
     return await ctx.table('users').findOne({ where: { email: profile.email } });
@@ -689,6 +690,12 @@ const payload = verifyJwt(token, process.env.JWT_SECRET!); // null if invalid, e
 
 The login flow is CSRF-protected with a signed `state` parameter and the issued JWT carries an `exp`
 claim — see [OWASP-TOP-10.md → A01/A02/A07](./OWASP-TOP-10.md) for the reasoning.
+
+`scopes` must include `'openid'` — the callback needs an `id_token` to build the `GoogleProfile`
+passed to `onUser`; omitting it throws `ValidationError` when `createAuthRouter()` is called. See
+[`skills/auth-router/SKILL.md`](./skills/auth-router/SKILL.md#trimming-oauth-scopes-avoiding-the-unverified-app-screen)
+for when to trim scopes and what `spreadsheets`/`drive.file` being Google-classified *sensitive*
+scopes means for the consent screen.
 
 ### Password Hashing
 

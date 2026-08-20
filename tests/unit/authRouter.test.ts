@@ -65,6 +65,41 @@ describe('createAuthRouter — OAuth state CSRF protection', () => {
   });
 });
 
+describe('createAuthRouter — scopes option', () => {
+  const options = {
+    adapter: {} as SheetAdapter,
+    jwtSecret: 'test-secret',
+    frontendUrl: 'https://app.example.com',
+    onUser: async () => ({ email: 'a@b.com' }),
+  };
+
+  it('defaults to the full login scope set (identity + Sheets/Drive)', () => {
+    const router = createAuthRouter(options);
+    const res = makeRes();
+    router.handler({ path: '/auth/google', query: {} } as never, res as never, () => {});
+
+    const scope = new URL(res._state.redirected!).searchParams.get('scope');
+    expect(scope).toBe(
+      'openid email profile https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file'
+    );
+  });
+
+  it('threads a custom scopes list through to the auth redirect', () => {
+    const router = createAuthRouter({ ...options, scopes: ['openid', 'email', 'profile'] });
+    const res = makeRes();
+    router.handler({ path: '/auth/google', query: {} } as never, res as never, () => {});
+
+    const scope = new URL(res._state.redirected!).searchParams.get('scope');
+    expect(scope).toBe('openid email profile');
+  });
+
+  it('throws ValidationError at creation time when scopes omits openid', () => {
+    expect(() => createAuthRouter({ ...options, scopes: ['email', 'profile'] })).toThrow(
+      /must include 'openid'/
+    );
+  });
+});
+
 describe('verifyJwt', () => {
   const secret = 'test-secret';
 

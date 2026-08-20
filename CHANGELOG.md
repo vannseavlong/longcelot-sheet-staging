@@ -18,7 +18,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [0.1.41] — 2026-08-14
+## [0.1.43] — 2026-08-20
+
+### Added
+
+- **`AuthRouterOptions.scopes?: string[]`** — override the OAuth scopes `createAuthRouter` requests on the login redirect. Defaults to `LOGIN_SCOPES` (`['openid', 'email', 'profile', ...SHEETS_SCOPES]`, unchanged) for backward compatibility. Lets a login-only router drop the `spreadsheets`/`drive.file` scopes it never uses when Sheets/Drive access happens server-side under a separate admin-owned token — those two are Google-classified sensitive scopes, so requesting them unconditionally forced every login through Google's "hasn't verified this app" interstitial even for routers that never touch the user's own Sheets/Drive grant. Must include `'openid'` (the callback needs an `id_token` to build `GoogleProfile`); omitting it throws `ValidationError` at router-creation time instead of failing per-request in the callback.
+- **`LOGIN_SCOPES`** now exported from `longcelot-sheet-db` — lets a caller extend the default scope list (`[...LOGIN_SCOPES, 'extra.scope']`) instead of retyping it when overriding `AuthRouterOptions.scopes`.
+
+---
+
+## [0.1.42] — 2026-08-14
 
 ### Added
 

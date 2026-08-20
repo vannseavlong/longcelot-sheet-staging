@@ -59,7 +59,8 @@ src/
 - `createPostgresAdapter`, `createMySQLAdapter`, `createPrismaAdapter` - SQL-backed `DatabaseAdapter` implementations (Phase 16.2)
 - `createDatabaseAdapter` - Single factory picking the engine via config or `$DB_DRIVER`
 - `defineTable` - Define table schemas
-- `createOAuthManager` - Google OAuth handling
+- `createOAuthManager`, `createLoginOAuthManager` - Google OAuth handling
+- `createAuthRouter`, `verifyJwt` - Express sign-in routes + JWT verification
 - `hashPassword`, `comparePassword`, `validatePasswordStrength` - Password utilities
 
 ## Important Rules

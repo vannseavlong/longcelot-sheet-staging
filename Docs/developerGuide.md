@@ -449,6 +449,28 @@ app.use(createAuthRouter({ ..., registrationPolicy: 'login-only', basePath: '/ad
 app.use(createAuthRouter({ ..., registrationPolicy: 'open', basePath: '' }).handler);
 ```
 
+### 14.5 Trimming OAuth scopes
+
+By default `createAuthRouter` requests `LOGIN_SCOPES` — identity (`openid email profile`) plus
+the Sheets/Drive scopes. The Sheets/Drive pair are Google-classified *sensitive* scopes, so every
+login shows Google's "hasn't verified this app" interstitial, even for a router that only signs
+users in and never touches Sheets/Drive on the *user's own* OAuth grant (all Sheets access
+happening server-side under a separate admin-owned token instead).
+
+Pass `scopes` to trim the request down to identity only:
+
+```typescript
+const auth = createAuthRouter({
+  ...,
+  scopes: ['openid', 'email', 'profile'], // no Sheets/Drive interstitial
+});
+```
+
+`scopes` must include `'openid'` — the callback needs an `id_token` to build the `GoogleProfile`
+passed to `onUser`. Omitting it throws `ValidationError` immediately when `createAuthRouter()` is
+called. Omit `scopes` entirely to keep the current default — this is additive/opt-in, no existing
+behavior changes.
+
 ---
 
 ## 15. Bulk Operations & Aggregates

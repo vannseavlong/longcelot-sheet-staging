@@ -1,5 +1,6 @@
 import { SheetAdapter } from '../adapter/sheetAdapter';
 import { OAuthManager, createLoginOAuthManager, OAuthConfig } from './oauth';
+import { ValidationError } from '../errors';
 
 export type RegistrationPolicy = 'open' | 'login-only';
 
@@ -40,6 +41,22 @@ export interface AuthRouterOptions {
    *   `location.hash` instead of a query param.
    */
   tokenDelivery?: 'query' | 'fragment';
+  /**
+   * OAuth scopes requested on the login redirect. Defaults to `LOGIN_SCOPES`
+   * (`['openid', 'email', 'profile', ...SHEETS_SCOPES]`) for backward compatibility.
+   *
+   * Override this to drop scopes your app doesn't need on the *end user's own grant* — e.g.
+   * `['openid', 'email', 'profile']` for a router used purely for sign-in, with Sheets/Drive
+   * access happening server-side under a separate admin-owned token. `spreadsheets` and
+   * `drive.file` are Google-classified sensitive scopes; requesting them unnecessarily triggers
+   * Google's "hasn't verified this app" interstitial on every login.
+   *
+   * Must include `'openid'` — the callback exchanges the code for an `id_token` (via
+   * `oauth.verifyToken()`) to build the `GoogleProfile` passed to `onUser`, and Google only
+   * issues an `id_token` when `openid` was requested. Omitting it throws `ValidationError`
+   * at router-creation time rather than failing per-request during the OAuth callback.
+   */
+  scopes?: string[];
 }
 
 export interface GoogleProfile {
@@ -189,7 +206,18 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
     basePath = '',
     jwtExpiresInSeconds = DEFAULT_JWT_EXPIRES_IN_SECONDS,
     tokenDelivery = 'query',
+    scopes,
   } = options;
+
+  if (scopes && !scopes.includes('openid')) {
+    throw new ValidationError(
+      "AuthRouterOptions.scopes must include 'openid' — the callback exchanges the OAuth code " +
+      "for an id_token to build the GoogleProfile passed to onUser, and Google only issues an " +
+      "id_token when 'openid' was requested. Add 'openid' to the list, or omit `scopes` to use " +
+      'the default LOGIN_SCOPES.',
+      'scopes'
+    );
+  }
 
   const oauthCfg: OAuthConfig = options.oauthConfig ?? {
     clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -211,7 +239,7 @@ export function createAuthRouter(options: AuthRouterOptions): AuthRouter {
 
     if (pathname === loginPath) {
       const state = signState(jwtSecret);
-      const authUrl = oauth.getAuthUrl(undefined, state);
+      const authUrl = oauth.getAuthUrl(scopes, state);
       res.redirect(authUrl);
       return;
     }

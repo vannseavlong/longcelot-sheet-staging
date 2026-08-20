@@ -557,6 +557,20 @@
 
 ---
 
+## Phase 19: Bug Fix / Feature (developer-reported, 2026-08-20)
+
+### 19.1 `createAuthRouter` — configurable OAuth scopes, dropping the forced Sheets/Drive sensitive-scope request
+
+> Goal: `createAuthRouter` always requested `LOGIN_SCOPES` (identity + `spreadsheets` + `drive.file`) with no override, forcing every login through Google's "hasn't verified this app" interstitial even for routers used purely for sign-in with no intent to touch Sheets/Drive on the *end user's own* OAuth grant.
+
+- [x] `AuthRouterOptions.scopes?: string[]` — threaded into `oauth.getAuthUrl(scopes, state)` (was `oauth.getAuthUrl(undefined, state)`, always falling through to the hardcoded default); omitting it preserves today's behavior exactly (non-breaking)
+- [x] Validated eagerly at `createAuthRouter()` call time: `scopes` must include `'openid'` (the callback needs an `id_token` to build `GoogleProfile` for `onUser`) — throws `ValidationError` immediately instead of failing later inside the OAuth callback for a real user
+- [x] `LOGIN_SCOPES` exported from `src/auth/oauth.ts` and `src/index.ts` so a caller can extend it (`[...LOGIN_SCOPES, 'extra.scope']`) instead of retyping the default
+- [x] Tests: default scope set unchanged, custom `scopes` threaded through to the redirect URL, `ValidationError` thrown when `openid` is omitted
+- [x] Docs: `skills/auth-router/SKILL.md` (`AuthRouterOptions` type + new "Trimming OAuth Scopes" section), `CHANGELOG.md` `[Unreleased]`
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables

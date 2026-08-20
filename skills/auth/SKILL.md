@@ -24,6 +24,11 @@ The package provides two layers of authentication:
 
 **Critical**: `verifyToken()` requires an `id_token`. It only works when `openid` scope was requested. Always use `createLoginOAuthManager` when you need to identify the user.
 
+`LOGIN_SCOPES` (the array `createLoginOAuthManager` defaults to) is exported too — useful for
+extending rather than retyping it: `[...LOGIN_SCOPES, 'https://www.googleapis.com/auth/calendar.readonly']`.
+If you're using `createAuthRouter` (see `skills/auth-router/SKILL.md`) rather than wiring routes
+manually, it has its own `scopes` option that does the same override at the router level.
+
 ```typescript
 import { createOAuthManager, createLoginOAuthManager } from 'longcelot-sheet-db';
 

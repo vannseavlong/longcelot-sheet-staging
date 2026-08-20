@@ -621,11 +621,26 @@ Creates an OAuth manager.
 }
 ```
 
+**Returns:** `OAuthManager` — pre-configured with `SHEETS_SCOPES` (`spreadsheets`, `drive.file`) as its default scopes. Does **not** request `openid`, so `verifyToken()` throws on tokens obtained through it. Use `createLoginOAuthManager` for user-facing sign-in.
+
+### `createLoginOAuthManager(config)`
+
+Creates an OAuth manager pre-configured for user-facing Google Sign-In — its default scopes are `LOGIN_SCOPES` (`openid`, `email`, `profile`, plus `SHEETS_SCOPES`). Tokens obtained through it include an `id_token`, so `verifyToken()` works. `createAuthRouter` builds its `OAuthManager` this way internally.
+
+**Parameters:**
+
+Same `OAuthConfig` shape as `createOAuthManager`.
+
 **Returns:** `OAuthManager`
 
-### `oauth.getAuthUrl()`
+### `oauth.getAuthUrl(scopes?, state?)`
 
 Gets the OAuth authorization URL.
+
+**Parameters:**
+
+- `scopes?: string[]` - Overrides the manager's default scopes (`SHEETS_SCOPES` or `LOGIN_SCOPES`) for this URL only. Omit to use the default.
+- `state?: string` - Opaque value round-tripped through Google and returned on the callback; verify it on your callback for CSRF protection (`createAuthRouter` does this automatically).
 
 **Returns:** `string`
 
@@ -634,6 +649,9 @@ Gets the OAuth authorization URL.
 ```typescript
 const authUrl = oauth.getAuthUrl();
 // Redirect user to authUrl
+
+// Or override scopes for this URL only:
+const identityOnlyUrl = oauth.getAuthUrl(['openid', 'email', 'profile']);
 ```
 
 ### `oauth.getTokens(code)`
@@ -665,6 +683,54 @@ Verifies an ID token.
 - `idToken: string`
 
 **Returns:** `Promise<unknown>` - Token payload
+
+### `createAuthRouter(options)`
+
+Creates an Express-compatible auth router that wires up two routes: `GET {basePath}/auth/google` (redirects to the Google consent screen) and `GET {basePath}/auth/callback` (exchanges the code, verifies identity via `onUser`, issues a JWT). Builds its `OAuthManager` via `createLoginOAuthManager`. The OAuth login flow is CSRF-protected with a signed `state` parameter.
+
+**Parameters:** [`AuthRouterOptions`](#authrouteroptions)
+
+**Returns:** [`AuthRouter`](#authrouter) — `{ handler, loginPath, callbackPath }`. Mount with `app.use(auth.handler)`.
+
+**Example:**
+
+```typescript
+import { createAuthRouter, verifyJwt } from 'longcelot-sheet-db';
+
+const auth = createAuthRouter({
+  adapter,
+  jwtSecret: process.env.JWT_SECRET!,
+  frontendUrl: process.env.FRONTEND_URL!,
+  registrationPolicy: 'login-only',
+  scopes: ['openid', 'email', 'profile'], // default: LOGIN_SCOPES (adds Sheets/Drive) — see AuthRouterOptions.scopes
+  async onUser(profile, adapter) {
+    const ctx = adapter.withContext({ userId: 'auth', actor: 'admin', actorSheetId: process.env.ADMIN_SHEET_ID! });
+    return await ctx.table('users').findOne({ where: { email: profile.email } });
+  },
+});
+
+app.use(auth.handler);
+```
+
+### `verifyJwt(token, secret)`
+
+Verifies a token issued by `createAuthRouter`'s callback — checks the HS256 signature (constant-time comparison) and rejects an expired or malformed token.
+
+**Parameters:**
+
+- `token: string`
+- `secret: string` - Same value as `AuthRouterOptions.jwtSecret`
+
+**Returns:** `Record<string, unknown> | null` - The decoded payload (including `iat`/`exp`) on success, `null` if invalid/expired/malformed.
+
+**Example:**
+
+```typescript
+const payload = verifyJwt(token, process.env.JWT_SECRET!);
+if (!payload) {
+  // reject the request
+}
+```
 
 ### `hashPassword(password)`
 
@@ -1181,6 +1247,65 @@ Configured via `onSchemaMismatch` in `createSheetAdapter()`:
 - `'warn'` — logs to stderr, continues (default)
 - `'error'` — throws `SchemaMismatchError`
 - `'auto-sync'` — syncs the actor sheet before proceeding
+
+### `AuthRouterOptions`
+
+```typescript
+interface AuthRouterOptions {
+  adapter: SheetAdapter;          // must have `users` schema registered
+  jwtSecret: string;               // secret used to sign issued JWTs
+  frontendUrl: string;             // redirect target after successful auth
+  onUser: (profile: GoogleProfile, adapter: SheetAdapter) => Promise<Record<string, unknown> | null>;
+  registrationPolicy?: RegistrationPolicy; // default: 'open'
+  oauthConfig?: OAuthConfig;       // omit to read GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI from env
+  basePath?: string;               // prefix for both routes, default ''
+  jwtExpiresInSeconds?: number;    // default: 86400 (1 day)
+  tokenDelivery?: 'query' | 'fragment'; // default: 'query'
+  scopes?: string[];               // default: LOGIN_SCOPES — see below
+}
+```
+
+`scopes` overrides the OAuth scopes requested on the login redirect. Defaults to `LOGIN_SCOPES`
+(`['openid', 'email', 'profile', ...SHEETS_SCOPES]`) for backward compatibility. Override it to
+drop scopes a given router doesn't need on the *end user's own grant* — e.g. `['openid', 'email',
+'profile']` for a router used purely for sign-in, with Sheets/Drive access happening server-side
+under a separate admin-owned token. `spreadsheets`/`drive.file` are Google-classified sensitive
+scopes, so requesting them unconditionally triggers Google's "hasn't verified this app"
+interstitial on every login, even when the router never touches Sheets/Drive on the user's own
+grant. Must include `'openid'` — the callback exchanges the code for an `id_token` to build
+`GoogleProfile`, and Google only issues one when `openid` was requested; omitting it throws
+`ValidationError` when `createAuthRouter()` is called, not later inside the callback.
+
+### `AuthRouter`
+
+```typescript
+interface AuthRouter {
+  handler: (req: Req, res: Res, next: () => void) => Promise<void>; // app.use(router.handler)
+  loginPath: string;    // e.g. '/auth/google'
+  callbackPath: string; // e.g. '/auth/callback'
+}
+```
+
+### `GoogleProfile`
+
+```typescript
+interface GoogleProfile {
+  sub: string;
+  email: string;
+  name: string;
+  picture?: string;
+  email_verified?: boolean;
+}
+```
+
+### `RegistrationPolicy`
+
+```typescript
+type RegistrationPolicy = 'open' | 'login-only';
+```
+
+- `'open'` (default) — any authenticated Google user gets in; `onUser` returning `null` falls through to a JWT built from the bare profile.
+- `'login-only'` — `onUser` returning `null` sends `401`; no self-registration.
 
 ### `OAuthTokens`
 

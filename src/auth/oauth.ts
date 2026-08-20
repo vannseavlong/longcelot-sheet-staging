@@ -11,7 +11,10 @@ const SHEETS_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
 ];
 
-const LOGIN_SCOPES = [
+/** Default scopes for `createLoginOAuthManager()` / `createAuthRouter()`. Exported so a
+ *  caller overriding `AuthRouterOptions.scopes` can extend rather than fully replace it,
+ *  e.g. `[...LOGIN_SCOPES, 'https://www.googleapis.com/auth/calendar.readonly']`. */
+export const LOGIN_SCOPES = [
   'openid',
   'email',
   'profile',

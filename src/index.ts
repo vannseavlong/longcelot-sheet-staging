@@ -7,7 +7,7 @@ export { defineTable } from './schema/defineTable';
 export { string, number, boolean, date, json, ColumnBuilder } from './schema/columnBuilder';
 export { createSheetAdapter, SheetAdapter } from './adapter/sheetAdapter';
 export { DriveStorageAdapter } from './adapter/driveStorageAdapter';
-export { createOAuthManager, createLoginOAuthManager, OAuthManager } from './auth/oauth';
+export { createOAuthManager, createLoginOAuthManager, OAuthManager, LOGIN_SCOPES } from './auth/oauth';
 export { createAuthRouter, verifyJwt } from './auth/router';
 export { hashPassword, comparePassword, validatePasswordStrength } from './auth/password';
 

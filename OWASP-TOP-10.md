@@ -83,11 +83,17 @@ fetches a user-supplied URL server-side is your own SSRF risk.
 
 **We implement**: `lsdb init` scaffolds/updates the consumer project's `.gitignore` to cover `.env`
 and `.lsdb-tokens.json`; both files are written with `0o600` permissions; Postgres connections
-auto-enable SSL for any non-localhost connection string.
+auto-enable SSL for any non-localhost connection string; `AuthRouterOptions.scopes` lets a
+`createAuthRouter` instance request only the OAuth scopes it actually needs on the end user's own
+grant, instead of always requesting the Sheets/Drive scopes by default.
 
 **Developers need to know**: never commit `.env`/`.lsdb-tokens.json` even with the scaffold (it can
 be deleted/edited); restrict Sheets sharing; run `lsdb doctor` before deploys; use a real secret
-manager in production, not checked-in config.
+manager in production, not checked-in config; if a `createAuthRouter` instance is used purely for
+sign-in with Sheets/Drive access happening server-side under a separate admin-owned token, pass
+`scopes: ['openid', 'email', 'profile']` — the default `LOGIN_SCOPES` requests `spreadsheets`/
+`drive.file` on every user's own grant even when the app never uses them there, which is both an
+unnecessary over-broad grant and what triggers Google's "unverified app" consent screen.
 
 ---
 

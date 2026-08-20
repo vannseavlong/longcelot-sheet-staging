@@ -93,6 +93,7 @@ Each skill must be independently useful. An agent reading only one skill must be
 - `basePath` for multiple role endpoints
 - JWT format and backend verification
 - `createLoginOAuthManager` for manual wiring
+- `scopes` option — overriding the default `LOGIN_SCOPES`, must include `openid`, throws `ValidationError` at creation time otherwise
 - Common mistakes: using wrong OAuth manager, onUser throwing vs returning null, missing frontendUrl protocol
 
 ### permissions
