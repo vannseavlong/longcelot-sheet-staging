@@ -18,6 +18,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+
+## [0.1.45] — 2026-08-21
+
+### Changed
+
+- **Redesigned the `lsdb auth` browser success/error pages** — replaced the plain emoji-based confirmation page with a terminal-chrome card (matching the project landing page's `Terminal.tsx` macOS-window look and cyan→blue brand gradient): traffic-light title bar, monospace `$ lsdb auth` prompt line, SVG check/X status icon instead of an emoji, and a "View Quick Start docs" link on success. No logo or navbar — kept to just the confirmation card. Purely cosmetic; `tryCaptureViaLoopback()`'s behavior (what it captures, when it falls back) is unchanged.
+- The error page's `message` (Google's `?error=` param) is now HTML-escaped before being rendered — it was previously interpolated into the response unescaped, which was a narrow reflected-XSS opening for as long as the local loopback server stayed alive (any page loaded in a browser on the same machine can reach `localhost`, and a top-level navigation to a crafted `?error=` isn't blocked by CORS).
+
+---
+
 ## [0.1.44] — 2026-08-21
 
 ### Added

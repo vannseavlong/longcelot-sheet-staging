@@ -31,6 +31,21 @@ describe('tryCaptureViaLoopback', () => {
     await expect(capture).resolves.toBeNull();
   });
 
+  it('HTML-escapes the ?error= param instead of interpolating it raw', async () => {
+    const port = BASE_PORT + 4;
+    const redirectUri = `http://127.0.0.1:${port}/cb`;
+    const capture = tryCaptureViaLoopback(redirectUri);
+    const payload = '<img src=x onerror=alert(1)>';
+
+    await waitForServer(port);
+    const res = await fetch(`${redirectUri}?error=${encodeURIComponent(payload)}`);
+    const body = await res.text();
+
+    expect(body).not.toContain(payload);
+    expect(body).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    await expect(capture).resolves.toBeNull();
+  });
+
   it('ignores requests to unrelated paths (e.g. favicon) and keeps waiting', async () => {
     const port = BASE_PORT + 2;
     const redirectUri = `http://127.0.0.1:${port}/cb`;

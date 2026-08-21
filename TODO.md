@@ -594,6 +594,23 @@
 
 ---
 
+## Phase 21: Bug Fix / Feature (developer-reported, 2026-08-21)
+
+### 21.1 `lsdb auth` browser page redesign, brand-consistent with sheet-db-landing
+
+> Goal: the browser page `lsdb auth` shows on success/failure was a generic dark card with emoji icons (✅/❌) — didn't match the project's own landing page (`sheet-db-landing`), which has an established dark gray-950 + cyan-400→blue-500 gradient brand with a distinctive macOS-style terminal-chrome motif (`Terminal.tsx`).
+
+- [x] Reused the landing page's terminal-chrome window (traffic-light title bar, monospace prompt line) and cyan→blue gradient heading instead of a plain card — plain inline CSS, no external stylesheet/font request from the local `http` server
+- [x] Replaced the ✅/❌ emoji status indicators with inline SVG check/X icons
+- [x] Deliberately excluded the landing page's navbar logo/wordmark (the site's logo is the maintainer's personal mark, not a generic product logo) and any nav — kept to just the confirmation card, per explicit developer decision after being asked
+- [x] Success page links to the docs Quick Start (`https://longcelot-sheet-db.web.app/docs/quick-start`), per explicit developer decision after being asked; error page has no CTA
+- [x] Security fix along the way: the error page's `message` (Google's `?error=` query param, untrusted input round-tripped through the redirect) is now HTML-escaped before interpolation — it was previously a narrow reflected-XSS opening for the lifetime of the local loopback server
+- [x] Verified visually: rendered both pages with headless Chrome (`--headless --screenshot`) and reviewed the output images rather than only reading the HTML/CSS
+- [x] Tests: existing `tests/unit/oauthCallbackServer.test.ts` cases still pass unchanged (assert on `'lsdb authorized'` text and HTTP status, not exact markup); added a new case asserting the escaping — a crafted `?error=<img src=x onerror=alert(1)>` comes back HTML-entity-escaped, not raw
+- [x] Docs: CHANGELOG.md `[Unreleased]`
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables
