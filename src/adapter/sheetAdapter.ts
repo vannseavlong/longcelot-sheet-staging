@@ -2,6 +2,7 @@ import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
 import type { DatabaseAdapter } from './types';
 import { hasPermission as accessControlHasPermission, resolveNonAdminTenantKey } from './accessControl';
+import { resolveActorClient, resolveRoleFolder, type DriveTenancyInjection } from './driveTenancy';
 import {
   TableSchema,
   UserContext,
@@ -12,6 +13,7 @@ import {
   TokenStore,
   StorageAdapter,
   UploadOptions,
+  UploadActorContext,
   CreateUserSheetOptions,
   SheetStyleConfig,
   SheetReadCacheConfig,
@@ -113,10 +115,21 @@ export class SheetAdapter implements DatabaseAdapter {
       booleanFormat: config.sheetStyle?.booleanFormat ?? 'TRUE_FALSE',
     };
 
-    // Inject the admin SheetClient into DriveStorageAdapter so callers don't repeat credentials
+    // Inject the admin SheetClient + tenancy config into DriveStorageAdapter so callers don't
+    // repeat credentials, and so file uploads can follow the same per-actor Drive/subfolder
+    // placement as createUserSheet() (see driveTenancy.ts).
     const storageAsAny = this.storage as unknown as Record<string, unknown>;
     if (storageAsAny && typeof storageAsAny['_setClient'] === 'function') {
-      (storageAsAny['_setClient'] as (c: SheetClient) => void)(this.client);
+      (storageAsAny['_setClient'] as (c: SheetClient, tenancy?: DriveTenancyInjection) => void)(
+        this.client,
+        {
+          credentials: this.credentials,
+          cacheConfig: this.cacheConfig,
+          tokenStore: this.tokenStore,
+          sharedDriveId: this.sharedDriveId,
+          driveFolder: this.driveFolder,
+        }
+      );
     }
   }
 
@@ -220,16 +233,17 @@ export class SheetAdapter implements DatabaseAdapter {
     email: string,
     options?: CreateUserSheetOptions
   ): Promise<string> {
-    // Resolve actor tokens: explicit > tokenStore > none (fall back to admin client)
-    let actorTokens = options?.actorTokens;
-    if (!actorTokens && this.tokenStore) {
-      actorTokens = (await this.tokenStore.get(userId)) ?? undefined;
-    }
-
-    // Choose which client to use for spreadsheet creation
-    const clientForCreate = actorTokens
-      ? new SheetClient(this.credentials, actorTokens as unknown, this.cacheConfig)
-      : this.client;
+    // Resolve which client to use for spreadsheet creation: explicit actorTokens > tokenStore >
+    // admin client (see driveTenancy.ts — DriveStorageAdapter uses the identical resolution so a
+    // file uploaded for this actor lands in the same Drive as their sheet).
+    const { client: clientForCreate, actorOwned } = await resolveActorClient(
+      userId,
+      this.client,
+      this.credentials,
+      this.cacheConfig,
+      this.tokenStore,
+      options?.actorTokens
+    );
 
     // Resolve Drive folder for this role (respects driveFolder config + sharedDriveId)
     const folderId = await this.resolveFolderForRole(role, clientForCreate);
@@ -240,7 +254,7 @@ export class SheetAdapter implements DatabaseAdapter {
       sharedDriveId: this.sharedDriveId,
     });
 
-    if (actorTokens) {
+    if (actorOwned) {
       // Sheet lives in actor's Drive — share with admin so admin can manage it
       if (process.env.SUPER_ADMIN_EMAIL) {
         await clientForCreate.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL, 'writer');
@@ -275,13 +289,28 @@ export class SheetAdapter implements DatabaseAdapter {
     return sheetId;
   }
 
+  /**
+   * The current withContext() actor, forwarded to the storage adapter so a file upload/delete can
+   * follow the same per-actor Drive placement as that actor's sheet (see driveTenancy.ts). undefined
+   * when called without withContext() — the storage adapter falls back to its pre-Phase-23 flat,
+   * single-Drive behavior in that case.
+   */
+  private currentActorContext(): UploadActorContext | undefined {
+    if (!this.context) return undefined;
+    return {
+      userId: this.context.userId,
+      actor: this.context.actor,
+      actorSheetId: this.context.actorSheetId,
+    };
+  }
+
   async upload(file: Buffer, options: UploadOptions): Promise<string> {
     if (!this.storage) {
       throw new SchemaError(
         'No storage adapter configured. Pass storage: new DriveStorageAdapter() to createSheetAdapter().'
       );
     }
-    return this.storage.upload(file, options);
+    return this.storage.upload(file, { ...options, actorContext: options.actorContext ?? this.currentActorContext() });
   }
 
   async deleteFile(url: string): Promise<void> {
@@ -290,7 +319,7 @@ export class SheetAdapter implements DatabaseAdapter {
         'No storage adapter configured. Pass storage: new DriveStorageAdapter() to createSheetAdapter().'
       );
     }
-    return this.storage.delete(url);
+    return this.storage.delete(url, this.currentActorContext());
   }
 
   async syncSchema(schema: TableSchema): Promise<void> {
@@ -439,21 +468,7 @@ export class SheetAdapter implements DatabaseAdapter {
   }
 
   private async resolveFolderForRole(role: string, client: SheetClient): Promise<string | undefined> {
-    if (!this.driveFolder) return undefined;
-
-    if (this._folderCache.has(role)) return this._folderCache.get(role)!;
-
-    const rootId = await client.findOrCreateFolder(
-      this.driveFolder.root,
-      undefined,
-      this.sharedDriveId
-    );
-
-    const subfolderName = this.driveFolder.subfolders?.[role] ?? role;
-    const folderId = await client.findOrCreateFolder(subfolderName, rootId, this.sharedDriveId);
-
-    this._folderCache.set(role, folderId);
-    return folderId;
+    return resolveRoleFolder(client, this.driveFolder, role, this.sharedDriveId, this._folderCache, role);
   }
 
   private createFKResolver(): FKResolver {

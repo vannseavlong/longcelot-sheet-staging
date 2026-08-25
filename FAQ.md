@@ -20,6 +20,7 @@ Answers to architectural, design, and integration questions collected during dev
 12. [Dropping & Renaming Schema Elements](#12-dropping--renaming-schema-elements)
 13. [SQL Backend Portability & Tenancy](#13-sql-backend-portability--tenancy)
 14. [File Upload — Rendering Drive Links](#14-file-upload--rendering-drive-links)
+15. [Per-Actor File Upload Placement](#15-per-actor-file-upload-placement-design-decision)
 
 ---
 
@@ -809,3 +810,29 @@ Yes to both. `DriveStorageAdapter.delete()` extracts the file ID with the same s
 ### Why doesn't `upload()` return an object with the file ID, MIME type, etc. instead of just a URL string?
 
 Kept as a plain `string` deliberately, for backward compatibility — every existing caller does `const url = await adapter.upload(...)` and stores that string directly in a sheet cell; changing the return type would break every one of them at the type level, not just the runtime behavior. If you need the kind classification for your own rendering logic (choosing `<img>` vs `<iframe>` client-side), `classifyDriveMediaKind(mimeType)` is exported standalone — call it with the same `mimeType` you passed into `upload()`, at the point you already have it.
+
+## 15. Per-Actor File Upload Placement (design decision)
+
+### `adapter.upload()` always wrote to one Drive/folder no matter which actor was in context — why, and what changed?
+
+Before this, `DriveStorageAdapter` was wired to a single `SheetClient` once, at `createSheetAdapter()` construction time, and its folder resolution never consulted `driveFolder`/`sharedDriveId`/`tokenStore` at all — every upload landed in the same flat, Drive-root-relative location regardless of `withContext()`. Two concrete gaps this caused, reported together:
+
+1. **`driveFolder` (root/subfolders) configured, but uploads ignored it.** A project with `driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } }` got that placement for actor *sheets* (`createUserSheet()`), but every uploaded *file* still landed at Drive root regardless of actor — no per-actor subfolder, no shared organizational root.
+2. **No way to give an actor-owned Drive its own uploads.** `createUserSheet({ actorTokens })`/`TokenStore` already support creating a user's *sheet* inside their own Google Drive (Phase 8.1/8.4) — real per-tenant data isolation, one Drive per user. `adapter.upload()` had no equivalent: every file, for every actor, always went through the one admin-level client, even when that actor's sheet itself lived somewhere else entirely.
+
+The fix makes `adapter.upload()`/`deleteFile()` — when called on a `withContext()`-scoped adapter — resolve the exact same placement `createUserSheet()` would use for that actor, by sharing the actual resolution logic instead of reimplementing it:
+
+- `src/adapter/driveTenancy.ts` extracts `resolveActorClient()` (actorTokens > `tokenStore.get(userId)` > admin client) and `resolveRoleFolder()` (`driveFolder.root/subfolders[role]`, scoped to `sharedDriveId`) out of what used to be private, `createUserSheet()`-only logic in `SheetAdapter`. `createUserSheet()` now calls these functions too — a refactor, not a parallel implementation — so sheet placement and upload placement can never drift apart.
+- `SheetAdapter.upload()`/`deleteFile()` attach the current `withContext()` actor (`userId`, `actor`, `actorSheetId`) onto `UploadOptions.actorContext`/a `delete()` parameter, both new, additive fields on the public `StorageAdapter` interface.
+- `DriveStorageAdapter` uses `actorContext` (when present) to pick, per actor: the shared admin client + role subfolder (dev/shared model), or a separate client built from that actor's own tokens (actor-owned model) — caching the resolved actor client per `userId` so repeated uploads don't re-hit `tokenStore` every call.
+- Calling `adapter.upload()` **without** `withContext()` is unaffected — no `actorContext` means the pre-existing flat, Drive-root-relative behavior, unchanged.
+
+See [Per-actor upload placement mirrors `createUserSheet()`](./API.md#per-actor-upload-placement-mirrors-createusersheet) in API.md for the resolution rules and an example.
+
+### Does a custom (non-`DriveStorageAdapter`) `StorageAdapter` need to do anything to keep working?
+
+No. `actorContext` is optional on both `UploadOptions` and `StorageAdapter.delete()` — a custom adapter that ignores it entirely keeps compiling and behaving exactly as before. It's there to opt into if you want the same per-actor routing for a non-Drive storage backend (e.g. S3 with per-tenant buckets/prefixes).
+
+### Why not fix the pre-existing `DriveStorageAdapter.resolveFolder()` gap that ignored `sharedDriveId`?
+
+Out of scope for this change — it's a real, separate gap (folder search/creation for uploads wasn't scoped to a configured Shared Drive, and `SheetClient.uploadFile()`/`deleteFile()` don't set `supportsAllDrives` either), but it only matters for a project that *also* configures `sharedDriveId`, which wasn't the reported use case (root-based per-category and per-actor-Drive placement, no Shared Drive involved). Flagged here so it isn't mistaken for fixed; happy to take it on as a follow-up if a project actually combines `sharedDriveId` with `adapter.upload()`.

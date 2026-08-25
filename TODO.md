@@ -611,6 +611,44 @@
 
 ---
 
+## Phase 22: Bug Fix / Feature (developer-reported, 2026-08-25)
+
+### 22.1 `lsdb sync --table <names>` — sync specific tables only
+
+> Goal: `lsdb sync` always synchronized every registered schema, with no way to scope it down. Projects with a large number of tables could hit Google's per-user Sheets API quota just from a routine sync, with no way to sync only the table(s) that actually changed.
+
+- [x] `--table <names>` option on `lsdb sync`, matching `migrate-data --table`'s existing convention: a single name or a comma-separated list (`--table bookings,payments`), applied to both the per-actor pass and `--all-users`
+- [x] `filterSchemasByTable()` extracted from `migrate-data.ts` into shared `src/cli/lib/filterSchemasByTable.ts`; `migrate-data.ts` re-exports it for backward compatibility (existing `tests/unit/migrate-data.test.ts` import/tests verified to pass unmodified, proving the extraction is behavior-preserving, same convention as the Phase 16.3 `accessControl.ts` extraction)
+- [x] All schemas are still registered on the adapter regardless of `--table` (`adapter.registerSchemas(allSchemas)` unchanged) — only which tables get *synced* is restricted, so `--all-users`' admin `users` table lookup keeps working even when `users` itself is excluded from the requested `--table` scope
+- [x] Unknown table name fails fast and lists exactly which name(s) weren't found, instead of silently skipping them
+- [x] Tests: `tests/unit/filterSchemasByTable.test.ts` — canonical-location coverage of the shared helper (all-schemas-when-omitted, single/multi table, whitespace-trimmed list, actor preserved per filtered schema, unmatched-name error listing)
+- [x] Docs: README.md (Sync Schemas section), API.md (`lsdb sync` CLI reference), CLAUDE.md (Common Commands), CHANGELOG.md `[Unreleased]`
+
+---
+
+## Phase 23: Bug Fix / Feature (developer-reported, 2026-08-25)
+
+### 23.1 Per-actor `adapter.upload()` placement, mirroring `createUserSheet()`
+
+> Goal: `driveFolder`/`sharedDriveId`/`tokenStore` all shape where an actor's *sheet* is created, but `adapter.upload()` never consulted any of them — every upload always went through one admin-level `DriveStorageAdapter` client, flat and Drive-root-relative, regardless of `withContext()`. Two gaps this caused: (1) `driveFolder` subfolders configured for sheets were silently ignored for uploads; (2) actors on the actor-owned-sheet model (separate personal Drive per user, via `actorTokens`/`TokenStore`) had no equivalent for uploads — files always landed in the admin's Drive even when that actor's own sheet didn't.
+
+- [x] `src/adapter/driveTenancy.ts` — `resolveActorClient()` (actorTokens > `tokenStore.get(userId)` > admin client) and `resolveRoleFolder()` (`driveFolder.root/subfolders[role]`, scoped to `sharedDriveId`) extracted out of what was private, `createUserSheet()`-only logic in `SheetAdapter`
+- [x] `SheetAdapter.createUserSheet()` refactored to call the extracted functions instead of its own inline copy — behavior-preserving (existing `driveFeatures.test.ts` cases for 8.1/8.2/8.4/8.5 pass unmodified), guarantees sheet placement and upload placement can't drift apart
+- [x] `UploadOptions.actorContext?: UploadActorContext` (`{ userId, actor, actorSheetId? }`) and `StorageAdapter.delete()` gained an optional `actorContext` parameter — both additive/optional, existing custom `StorageAdapter` implementations keep compiling and behaving unmodified
+- [x] `SheetAdapter.upload()`/`deleteFile()` attach the current `withContext()` actor onto `actorContext` automatically; an explicit `options.actorContext` passed by the caller takes priority
+- [x] `DriveStorageAdapter._setClient(client, tenancy?)` — widened to also receive `{ credentials, cacheConfig, tokenStore, sharedDriveId, driveFolder }`, injected by `SheetAdapter`'s constructor alongside the client it already injected
+- [x] `DriveStorageAdapter.resolveClient()` — per-actor client resolution: admin client when there's no `actorContext`, `actor === 'admin'`, or no tenancy config injected at all; otherwise the actor-owned client (cached per `userId` so repeated uploads/deletes don't re-hit `tokenStore`) with admin-client fallback when the actor has no stored tokens
+- [x] `DriveStorageAdapter.resolveFolder()` — reworked to accept a base folder ID (from `resolveRoleFolder()`) plus a scope-namespaced cache key, so an actor-owned client's folder IDs never collide with the shared admin client's folders of the same name; nested `folder` paths (`'invoices/2026'`) still supported exactly as before
+- [x] Calling `adapter.upload()`/`deleteFile()` **without** `withContext()` is unaffected — no `actorContext` means the pre-existing flat, Drive-root-relative behavior
+- [x] Tests: `tests/unit/driveFeatures.test.ts` new "Phase 23 — actor-aware upload/delete placement" suite (8 cases) — shared/dev model role-subfolder placement, nested-path + cross-call caching, no-`withContext()` flat fallback, `actor: 'admin'` still resolves a subfolder but never triggers actor-client lookup, actor-owned model calls `tokenStore.get(userId)` and caches the resolved client across upload+delete, explicit `options.actorContext` override; all pre-existing `driveFeatures.test.ts` cases (32) still pass unmodified
+- [x] Docs: README.md (new "Organizing uploads into (sub)folders" + "Per-actor upload placement" subsections), API.md (`adapter.upload()`/`deleteFile()`, `UploadOptions`/`UploadActorContext`/`StorageAdapter`/`DriveStorageAdapter` type defs), FAQ.md new §15 (design decision + scoped-out `sharedDriveId`-in-uploads follow-up), CLAUDE.md (architecture note), CHANGELOG.md `[Unreleased]`
+
+### Follow-ups not yet done
+
+- [ ] `DriveStorageAdapter`'s Drive calls (`findOrCreateFolder` inside `resolveFolder()`, `uploadFile()`, `deleteFile()`) don't pass `sharedDriveId`/`supportsAllDrives` — fine for the reported use case (root-based categories, actor-owned Drives, no Shared Drive), but a project combining `sharedDriveId` with `adapter.upload()` would hit the same class of gap `resolveRoleFolder()` already fixed for the *role-subfolder* portion. Scoped out of 23.1; pick up if a real use case needs it.
+
+---
+
 ## Documentation Updates
 
 - [x] README.md: OAuth requirement, integration workflow, `user_id` vs `sheet_id`, migration section, dev/prod parity, actors vs roles, decision tables

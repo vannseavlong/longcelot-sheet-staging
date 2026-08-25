@@ -70,6 +70,7 @@ program
 program
   .command('sync')
   .description('Sync schemas to Google Sheets')
+  .option('--table <names>', 'Restrict sync to one or more tables (comma-separated, e.g. "bookings,payments") — helps avoid Google Sheets API quota limits on large schemas')
   .option('--all-users', 'Sync schema changes to all registered user sheets')
   .option('--dry-run', 'Preview --all-users changes without applying them')
   .option('--token-file <path>', 'Path to existing tokens JSON file (for CI/CD — skips interactive OAuth prompt)')

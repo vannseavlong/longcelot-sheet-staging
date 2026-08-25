@@ -341,9 +341,10 @@ Uploads a file using the configured `StorageAdapter`. Throws `SchemaError` if no
 - `options: UploadOptions`
   - `filename: string`
   - `mimeType: string`
-  - `folder?: string` — subfolder path; created if missing (e.g. `'uploads/products'`)
+  - `folder?: string` — subfolder path; created if missing. Nesting is supported (e.g. `'invoices/2026'`) — each segment is created (or reused) as a real Drive folder, so a handful of upload categories become a handful of real subfolders
   - `public?: boolean` — make the file publicly readable (Drive: sets `anyone / reader` permission)
   - `linkFormat?: 'auto' | 'download'` — `'auto'` (default) returns a renderable URL chosen from `mimeType`; `'download'` returns the raw download-endpoint URL
+  - `actorContext?: UploadActorContext` — populated automatically from the current `withContext()`; not meant to be set directly (see below)
 
 **Returns:** `Promise<string>` - A URL that renders directly (see [`DriveStorageAdapter`](#drivestorageadapter) for the per-`mimeType` format table)
 
@@ -365,6 +366,43 @@ const url = await adapter.upload(imageBuffer, {
 // 'https://drive.google.com/thumbnail?id=FILE_ID&sz=w1000' — drop straight into <img src>
 ```
 
+#### Per-actor upload placement mirrors `createUserSheet()`
+
+`adapter.upload()`/`deleteFile()` called on a `withContext()`-scoped adapter forward the current
+actor to the built-in `DriveStorageAdapter`, which places the file exactly where that actor's sheet
+would live:
+
+- **Shared/dev model** (no `tokenStore`/`actorTokens` for this actor) — the file goes to the shared
+  admin Drive, under `driveFolder.root/subfolders[actor]/<folder>` when `driveFolder` is configured
+  (same folder `createUserSheet()` places that actor's sheet in), or Drive root when it isn't.
+- **Actor-owned model** (`tokenStore` returns tokens for this `userId`, or `createUserSheet()` was
+  given `actorTokens`) — the file goes to that actor's own Drive instead of the admin's, same as
+  their sheet. The resolved actor `SheetClient` is cached per `userId` so repeated uploads/deletes
+  don't re-hit `tokenStore` each time.
+- Calling `adapter.upload()` **without** `withContext()` skips per-actor placement entirely — flat,
+  Drive-root-relative `folder` behavior, unchanged from before this feature existed.
+
+```typescript
+const adapter = createSheetAdapter({
+  adminSheetId,
+  credentials,
+  tokens,
+  driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } },
+  tokenStore, // optional — only actors with stored tokens get their own Drive
+  storage: new DriveStorageAdapter({ folder: 'uploads' }),
+});
+
+const sellerCtx = adapter.withContext({ userId: 'seller_1', actor: 'seller', actorSheetId: sellerSheetId });
+
+// Shared model: lands at My App/Sellers/uploads/... in the admin's Drive.
+// Actor-owned model (tokenStore has tokens for 'seller_1'): lands at
+// My App/Sellers/uploads/... in seller_1's own Drive instead.
+await sellerCtx.upload(fileBuffer, { filename: 'listing.jpg', mimeType: 'image/jpeg' });
+```
+
+A custom `StorageAdapter` can read `options.actorContext`/the `delete()` `actorContext` param the
+same way, or ignore it entirely — it's additive and optional.
+
 ### `adapter.deleteFile(url)`
 
 Deletes a file via the configured `StorageAdapter`. Throws `SchemaError` if no storage adapter is configured.
@@ -374,6 +412,10 @@ Deletes a file via the configured `StorageAdapter`. Throws `SchemaError` if no s
 - `url: string` - URL previously returned by `adapter.upload()`, in any `linkFormat`
 
 **Returns:** `Promise<void>`
+
+Called on a `withContext()`-scoped adapter, forwards the current actor the same way `upload()` does
+(see above) — a file uploaded via an actor-owned Drive must be deleted through that same actor's
+context, since the admin client generally can't delete a file it doesn't own.
 
 ### `adapter.syncSchema(schema)`
 
@@ -837,15 +879,19 @@ Interactively generates a new table schema file.
 npx lsdb generate bookings
 ```
 
-### `lsdb sync [--all-users] [--dry-run]`
+### `lsdb sync [--table <names>] [--all-users] [--dry-run] [--token-file <path>]`
 
 Syncs all schemas to Google Sheets. Iterates every configured actor and prints a per-actor status table: Actor | Sheet ID | Tables | Status.
 
+- `--table <names>` — restrict the sync to one or more tables instead of every registered schema; pass a single name or a comma-separated list (e.g. `--table bookings,payments`). Useful to stay under Google's per-user Sheets API read/write quota when a project has a large number of tables — sync only the table(s) that actually changed instead of re-syncing everything. Applies to both the per-actor pass and `--all-users`; an unknown table name fails fast and lists exactly which name(s) weren't found. All schemas still get *registered* on the adapter regardless of `--table` (so e.g. the admin `users` table lookup `--all-users` depends on keeps working), only which tables get *synced* is restricted.
 - `--all-users` — also pushes schema changes to every registered user sheet (reads `actor_sheet_id` values from admin `users` table, skips sheets that are already up-to-date via schema hash comparison)
 - `--dry-run` — preview `--all-users` changes without applying them (requires `--all-users`)
+- `--token-file <path>` — pre-stored OAuth tokens file, skips interactive login (CI-friendly)
 
 ```bash
 npx lsdb sync
+npx lsdb sync --table bookings
+npx lsdb sync --table bookings,payments --all-users
 npx lsdb sync --all-users
 npx lsdb sync --all-users --dry-run
 ```
@@ -1367,18 +1413,31 @@ interface DriveFolderConfig {
 interface UploadOptions {
   filename: string;
   mimeType: string;
-  folder?: string;                    // subfolder path relative to driveFolder.root; created if missing
+  folder?: string;                    // subfolder path (nesting OK, e.g. 'invoices/2026'); created if missing
   public?: boolean;                   // when true, sets Drive permission: anyone / reader
   linkFormat?: 'auto' | 'download';   // 'auto' (default): renderable URL chosen from mimeType; 'download': raw uc?id= link
+  actorContext?: UploadActorContext;  // set automatically from withContext() — not meant to be passed directly
 }
 ```
+
+### `UploadActorContext`
+
+```typescript
+interface UploadActorContext {
+  userId: string;
+  actor: string;
+  actorSheetId?: string;
+}
+```
+
+Populated automatically onto `UploadOptions.actorContext` (and passed to `StorageAdapter.delete()`) by `SheetAdapter.upload()`/`deleteFile()` from the adapter's current `withContext()`. Lets `DriveStorageAdapter` place a file in the same per-actor Drive/subfolder as that actor's sheet — see [Per-actor upload placement](#per-actor-upload-placement-mirrors-createusersheet) above.
 
 ### `StorageAdapter`
 
 ```typescript
 interface StorageAdapter {
   upload(file: Buffer, options: UploadOptions): Promise<string>; // returns public URL
-  delete(url: string): Promise<void>;
+  delete(url: string, actorContext?: UploadActorContext): Promise<void>;
 }
 ```
 
@@ -1397,11 +1456,11 @@ interface CreateUserSheetOptions {
 class DriveStorageAdapter implements StorageAdapter {
   constructor(options?: { folder?: string }); // default folder: 'uploads'
   upload(file: Buffer, options: UploadOptions): Promise<string>;
-  delete(url: string): Promise<void>;
+  delete(url: string, actorContext?: UploadActorContext): Promise<void>;
 }
 ```
 
-Built-in `StorageAdapter` implementation that uploads to Google Drive. The adapter's `SheetClient` is injected automatically at `createSheetAdapter()` time — no credential repetition needed.
+Built-in `StorageAdapter` implementation that uploads to Google Drive. The adapter's `SheetClient` and tenancy config (`driveFolder`, `sharedDriveId`, `tokenStore`) are injected automatically at `createSheetAdapter()` time — no credential repetition needed, and no separate Drive-folder setup from what `createUserSheet()` already uses.
 
 By default (`linkFormat: 'auto'`, or omitted) the returned URL renders directly, chosen from `mimeType`:
 

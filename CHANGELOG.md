@@ -18,6 +18,17 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.46] — 2026-08-25
+
+### Added
+
+- **`lsdb sync --table <names>`** — restrict schema sync to one or more tables instead of always syncing every registered schema (comma-separated list, e.g. `--table bookings,payments`). Large schemas can hit Google's per-user Sheets API quota when every table syncs on every run; `--table` lets a caller sync just the table(s) that actually changed. Applies to both the per-actor pass and `--all-users`; an unknown table name fails fast and lists exactly which name(s) weren't found, mirroring `migrate-data --table`'s existing behavior. All schemas are still registered on the adapter regardless of `--table` (so `--all-users`' admin `users` table lookup keeps working), only which tables get synced is restricted.
+- `filterSchemasByTable()` extracted to `src/cli/lib/filterSchemasByTable.ts` (was private to `migrate-data.ts`) so it can be shared by both `migrate-data --table` and the new `sync --table`; `migrate-data.ts` re-exports it for backward compatibility.
+- **Nested Drive subfolders for `adapter.upload()`** — `UploadOptions.folder`/`DriveStorageAdapterOptions.folder` already accepted `/`-separated paths; this is now documented (README/API.md) with the `my-app/category1`, `my-app/category2` pattern for organizing uploads into per-category subfolders.
+- **Per-actor file upload placement, mirroring `createUserSheet()`** — `adapter.upload()`/`adapter.deleteFile()` called on a `withContext()`-scoped adapter now route to the same per-actor Drive/folder as that actor's sheet: the shared admin Drive under `driveFolder.root/subfolders[actor]` for actors on the shared/dev sheet model, or that actor's *own* Drive for actors on the actor-owned sheet model (`tokenStore`/`actorTokens`, Phase 8.1/8.4) — previously every upload always went through one admin-level client regardless of actor. `src/adapter/driveTenancy.ts` extracts the actor-client/folder resolution logic out of `createUserSheet()` so both code paths share one implementation instead of two independently-maintained ones. Calling `adapter.upload()` without `withContext()` is unchanged. New optional `UploadOptions.actorContext`/`UploadActorContext` type, and `StorageAdapter.delete()` gained an optional `actorContext` parameter — both additive, so existing custom `StorageAdapter` implementations keep working unmodified. See FAQ.md §15.
+
+---
+
 
 ## [0.1.45] — 2026-08-21
 

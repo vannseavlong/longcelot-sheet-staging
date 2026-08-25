@@ -31,6 +31,7 @@ export type {
   TokenStore,
   DriveFolderConfig,
   UploadOptions,
+  UploadActorContext,
   StorageAdapter,
   CreateUserSheetOptions,
 } from './schema/types';

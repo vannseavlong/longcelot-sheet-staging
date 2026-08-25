@@ -561,6 +561,16 @@ teacher    │ (not set)                  │ 4        │ ⚠ skipped
 
 Actors whose sheet ID env var is not set are skipped with a warning (non-fatal).
 
+**`--table <names>`** — restrict the sync to specific table(s) instead of every registered schema. Pass a single name or a comma-separated list. Large schemas can easily hit Google's per-user Sheets API quota when syncing everything at once — use `--table` to sync just the table(s) that actually changed:
+
+```bash
+npx lsdb sync --table bookings                    # sync one table
+npx lsdb sync --table bookings,payments            # sync a few tables
+npx lsdb sync --table bookings --all-users          # combine with --all-users
+```
+
+An unknown table name fails fast and lists exactly which name(s) weren't found, instead of silently skipping them. Every schema is still *registered* on the adapter regardless of `--table` — only which tables get synced is restricted, so cross-table lookups (e.g. `--all-users`' read of the admin `users` table) keep working.
+
 **`--all-users`** — after syncing dev actor sheets, reads all rows from the admin `users` table and pushes any missing columns/tables to every registered user sheet. Updates the `schema_versions` record for each one. Uses exponential backoff (1s → 32s) to handle Google Sheets API rate limits.
 
 **`--dry-run`** — combine with `--all-users` to preview which user sheets are outdated without writing any changes:
@@ -771,6 +781,44 @@ const embeddable = toDriveEmbedUrl(row.avatar_url, 'image');
 ```
 
 See [`UploadOptions`](./API.md#uploadoptions) and [`adapter.upload()`](./API.md#adapteruploadfile-options) in API.md for the full option/return reference, and FAQ.md §14 for why the raw `uc?id=` link never rendered reliably.
+
+### Organizing uploads into (sub)folders
+
+`folder` accepts a `/`-separated path — each segment is created (or reused) as a real nested Drive folder, so a handful of upload categories become a handful of real subfolders:
+
+```typescript
+await adapter.upload(contractBuffer, { filename: 'contract.pdf', mimeType: 'application/pdf', folder: 'my-app/contracts' });
+await adapter.upload(avatarBuffer, { filename: 'avatar.jpg', mimeType: 'image/jpeg', folder: 'my-app/avatars' });
+await adapter.upload(invoiceBuffer, { filename: 'invoice-042.pdf', mimeType: 'application/pdf', folder: 'my-app/invoices' });
+```
+
+### Per-actor upload placement — same Drive/isolation model as sheets
+
+When `adapter.upload()`/`deleteFile()` is called on a `withContext()`-scoped adapter, the file follows the exact same placement rule as that actor's sheet (`createUserSheet()`):
+
+- **Shared/dev model** (no `tokenStore`/`actorTokens` for that actor) — file goes to the shared admin Drive, under `driveFolder.root/subfolders[actor]/<folder>` if `driveFolder` is configured.
+- **Actor-owned model** (`tokenStore` has tokens for that `userId`, or `createUserSheet()` was given `actorTokens`) — file goes to that actor's *own* Drive, not the admin's, mirroring where their sheet lives.
+- No `withContext()`? Uploads behave exactly as before — flat, Drive-root-relative `folder`, no per-actor placement.
+
+```typescript
+const adapter = createSheetAdapter({
+  adminSheetId,
+  credentials,
+  tokens,
+  driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } },
+  tokenStore, // optional — actors with stored tokens get their own Drive; everyone else shares the admin's
+  storage: new DriveStorageAdapter({ folder: 'uploads' }),
+});
+
+const sellerCtx = adapter.withContext({ userId: 'seller_1', actor: 'seller', actorSheetId: sellerSheetId });
+
+// Shared model: My App/Sellers/uploads/... in the admin's Drive.
+// Actor-owned model (tokenStore has tokens for seller_1): My App/Sellers/uploads/... in
+// seller_1's own Drive instead — same place their sheet was created.
+await sellerCtx.upload(listingImage, { filename: 'listing.jpg', mimeType: 'image/jpeg' });
+```
+
+See [Per-actor upload placement mirrors createUserSheet()](./API.md#per-actor-upload-placement-mirrors-createusersheet) in API.md for the full resolution rules.
 
 ## 📋 Sheet Structure
 

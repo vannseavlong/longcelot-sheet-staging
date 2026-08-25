@@ -9,6 +9,7 @@ import { resolveActorName } from '../../utils/actorConfig';
 import { resolveConfigPath } from '../../utils/cliFiles';
 import { withBackoff } from '../lib/backoff';
 import { resolveTokens } from '../lib/oauthFlow';
+import { filterSchemasByTable } from '../lib/filterSchemasByTable';
 
 function loadSchemasForActor(role: string, schemasRoot: string): TableSchema[] {
   const schemas: TableSchema[] = [];
@@ -47,7 +48,13 @@ function printStatusTable(
   console.log();
 }
 
-export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolean; tokenFile?: string }) {
+export async function syncCommand(options: {
+  allUsers?: boolean;
+  dryRun?: boolean;
+  tokenFile?: string;
+  /** Comma-separated table names to restrict the sync to, e.g. `'bookings,payments'`. A single name also works. */
+  table?: string;
+}) {
   console.log(chalk.blue.bold('🔄 Syncing schemas to Google Sheets...\n'));
 
   require('dotenv').config();
@@ -91,7 +98,22 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
     return;
   }
 
-  console.log(chalk.cyan(`Found ${allSchemas.length} schema(s). Starting OAuth flow...\n`));
+  // --table restricts which tables actually get synced below, without affecting schema
+  // *registration* — the admin `users` table (needed for --all-users' user lookup, and for
+  // schema-mismatch/FK resolution generally) must stay registered even when it's excluded
+  // from this run's sync scope.
+  const schemasToSync = filterSchemasByTable(allSchemas, options.table);
+
+  if (options.table) {
+    console.log(
+      chalk.cyan(
+        `Found ${allSchemas.length} schema(s), restricting sync to ${schemasToSync.length}: ` +
+          `${schemasToSync.map((s) => s.name).join(', ')}\n`
+      )
+    );
+  } else {
+    console.log(chalk.cyan(`Found ${allSchemas.length} schema(s). Starting OAuth flow...\n`));
+  }
 
   const oauth = createOAuthManager({
     clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -138,7 +160,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
   for (const actorCfg of config.actors) {
     const actorName = resolveActorName(actorCfg);
     const sheetId = actorName === 'admin' ? adminSheetId : process.env[actorCfg.sheetIdEnv];
-    const actorSchemas = allSchemas.filter((s) => s.actor === actorName);
+    const actorSchemas = schemasToSync.filter((s) => s.actor === actorName);
 
     if (!sheetId) {
       console.log(chalk.yellow(`  ⚠ ${actorName}: ${actorCfg.sheetIdEnv} not set — skipping`));
@@ -177,7 +199,7 @@ export async function syncCommand(options: { allUsers?: boolean; dryRun?: boolea
 
   // --all-users: push user actor schemas to all registered user sheets
   if (options.allUsers) {
-    const userSchemas = allSchemas.filter((s) => s.actor !== 'admin');
+    const userSchemas = schemasToSync.filter((s) => s.actor !== 'admin');
     const dryRun = options.dryRun ?? false;
 
     if (dryRun) {

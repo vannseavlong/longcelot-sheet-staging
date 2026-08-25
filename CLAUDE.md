@@ -26,6 +26,7 @@ npx lsdb init       # Initialize project structure
 npx lsdb auth       # Authorize with Google, save .lsdb-tokens.json (run once, before sync)
 npx lsdb generate   # Interactive schema generator
 npx lsdb sync       # Sync schemas to Google Sheets
+npx lsdb sync --table bookings,payments  # Sync only specific table(s) — avoids Sheets API quota limits on large schemas
 npx lsdb validate   # Validate schema definitions
 npx lsdb seed       # Seed test data
 npx lsdb doctor     # Health check
@@ -52,6 +53,8 @@ src/
 ```
 
 **Every storage engine implements the same `DatabaseAdapter`/`TableOperations` contract** (`src/adapter/types.ts`) — `SheetAdapter`, and the Postgres/MySQL/Prisma adapters under `src/adapter/sql/`, so application CRUD code (`adapter.withContext({...}).table(name).create({...})`) is identical regardless of engine. `src/adapter/accessControl.ts` holds the cross-actor permission matrix and tenant-key resolution shared by every adapter (`SheetAdapter` delegates to it rather than reimplementing it) — a non-Sheets engine has no physical per-user sheet, so it uses an injected `tenant_id` column instead, with `context.actorSheetId`/`targetSheetId` reused as the opaque tenant value; see FAQ.md #13 for the full tenancy ADR and the real cross-engine bugs (DATETIME vs TIMESTAMP, MySQL's lack of `CREATE INDEX IF NOT EXISTS`, Prisma's leading-underscore field-name restriction, etc.) found by testing against real Postgres/MySQL/Prisma rather than only asserting on generated DDL strings. `createDatabaseAdapter({ driver })` (or `$DB_DRIVER`) picks the engine from one config value; `pg`/`mysql2` are optional peerDependencies, lazily required only inside `createPostgresAdapter()`/`createMySQLAdapter()` so importing this package never pulls either in for Sheets-only consumers.
+
+**`src/adapter/driveTenancy.ts`** holds the actor-vs-admin Drive client resolution (`resolveActorClient()`: `actorTokens` > `tokenStore.get(userId)` > admin client) and `driveFolder.root/subfolders[role]` folder resolution (`resolveRoleFolder()`) shared between `SheetAdapter.createUserSheet()` (sheet placement) and `DriveStorageAdapter` (file upload placement, injected via `_setClient(client, tenancy)`) — extracted so a file uploaded via `adapter.upload()` under `withContext()` always lands in the same Drive/folder as that actor's sheet, instead of always going through one admin-level client regardless of actor. See FAQ.md #15.
 
 **`SheetClient.getAllRows()` has a built-in read cache** (in-memory, 2s TTL by default, enabled by default) — every `findMany()`/`findOne()`/`count()`/`update()`/`delete()` call routes through it, and every write method (`appendRow`, `appendRows`, `updateRow`, `deleteRow`, `writeHeader`) invalidates the relevant tab's entry. This exists to stay under Google's per-user Sheets API read quota; see FAQ.md #11 for the incident and `SheetReadCacheConfig` in API.md for tuning. When touching `getAllRows()`, `getDataRows()` (in `crud.ts`), or any of the write methods in `sheetClient.ts`, keep the invalidate-on-write pairing intact — a read path added without going through `getAllRows()`, or a write added without calling `invalidateCache()`, will silently reintroduce stale-read or cache-never-clears bugs.
 

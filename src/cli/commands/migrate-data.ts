@@ -5,9 +5,13 @@ import { TableSchema } from '../../schema/types';
 import { resolveActorName } from '../../utils/actorConfig';
 import { resolveConfigPath, TOKENS_FILENAME } from '../../utils/cliFiles';
 import { loadCLIConfig, buildAdminAdapter } from '../lib/adminAdapter';
+import { filterSchemasByTable } from '../lib/filterSchemasByTable';
 import { createPostgresAdapter } from '../../adapter/sql/postgresAdapter';
 import { createMySQLAdapter } from '../../adapter/sql/mysqlAdapter';
 import { inferDriverFromConnectionString, sortSchemasByDependency } from './migrate';
+
+// Re-exported for backward compatibility — this used to be defined locally in this file.
+export { filterSchemasByTable } from '../lib/filterSchemasByTable';
 
 interface MigrateDataOptions {
   output?: string;
@@ -197,32 +201,6 @@ export function generateMigrateDataScript(schemas: TableSchema[], allUsers = fal
   lines.push('');
 
   return lines.join('\n');
-}
-
-/**
- * Restricts `schemas` to the tables named in `--table`. Accepts a comma-separated list
- * (`--table users,credentials,setup`) as well as a single name, so a caller who only needs a
- * handful of tables — e.g. user/credential/setup data for a partial cutover — isn't forced to
- * migrate every table just to reach the ones they want. Shared by both the script-generation path
- * and `--run`, which previously duplicated single-name-only filtering logic independently.
- * Exits with an actionable error listing exactly which requested names weren't found, rather than
- * silently dropping them or reporting only the first miss.
- */
-export function filterSchemasByTable(schemas: TableSchema[], table: string | undefined): TableSchema[] {
-  if (!table) return schemas;
-
-  const requested = table.split(',').map((t) => t.trim()).filter(Boolean);
-  const requestedSet = new Set(requested);
-  const filtered = schemas.filter((s) => requestedSet.has(s.name));
-
-  const found = new Set(filtered.map((s) => s.name));
-  const missing = requested.filter((t) => !found.has(t));
-  if (missing.length > 0) {
-    console.error(chalk.red(`❌ No schema found for table(s): ${missing.join(', ')}`));
-    process.exit(1);
-  }
-
-  return filtered;
 }
 
 /**

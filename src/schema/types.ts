@@ -160,10 +160,29 @@ export interface DriveFolderConfig {
   subfolders?: Record<string, string>;
 }
 
+/**
+ * The current withContext() actor, populated automatically by `SheetAdapter.upload()`/`deleteFile()`
+ * onto `UploadOptions.actorContext` — not meant to be set directly by callers. Lets a `StorageAdapter`
+ * (built-in `DriveStorageAdapter` or a custom one) route a file to the same per-actor location that
+ * `createUserSheet()` uses for that actor's sheet: a shared Drive/subfolder for actors on the
+ * shared/dev sheet model, or the actor's own Drive for actors on the actor-owned sheet model
+ * (`actorTokens`/`TokenStore`). See FAQ.md for the full per-tenant upload design.
+ */
+export interface UploadActorContext {
+  userId: string;
+  actor: string;
+  actorSheetId?: string;
+}
+
 export interface UploadOptions {
   filename: string;
   mimeType: string;
-  /** Subfolder path relative to driveFolder.root (or Drive root). Created if missing. */
+  /**
+   * Subfolder path, created if missing. Nesting is supported (`'invoices/2026'`). Relative to:
+   * the actor's role subfolder under `driveFolder.root` when `driveFolder` is configured and this
+   * upload has an actor context (mirrors `createUserSheet()`'s placement); otherwise Drive root
+   * (or the actor's own Drive root, for an actor-owned sheet).
+   */
   folder?: string;
   /** When true, sets a Drive permission of type 'anyone', role 'reader'. */
   public?: boolean;
@@ -174,11 +193,14 @@ export interface UploadOptions {
    * callers that need the actual bytes (e.g. re-fetching server-side) rather than a rendered preview.
    */
   linkFormat?: 'auto' | 'download';
+  /** Populated automatically by `SheetAdapter.upload()` from the current `withContext()`. Not meant to be set directly — see `UploadActorContext`. */
+  actorContext?: UploadActorContext;
 }
 
 export interface StorageAdapter {
   upload(file: Buffer, options: UploadOptions): Promise<string>;
-  delete(url: string): Promise<void>;
+  /** `actorContext` is populated automatically by `SheetAdapter.deleteFile()`, same as `UploadOptions.actorContext`. */
+  delete(url: string, actorContext?: UploadActorContext): Promise<void>;
 }
 
 export interface CreateUserSheetOptions {

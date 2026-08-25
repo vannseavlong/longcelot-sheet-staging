@@ -421,6 +421,153 @@ describe('Feature 8.3 — StorageAdapter and adapter.upload()', () => {
   });
 });
 
+// ── Phase 23 — actor-aware file upload placement mirrors createUserSheet ────
+
+describe('Phase 23 — actor-aware upload/delete placement', () => {
+  test('shared/dev model: upload with an actor context lands under driveFolder.root/subfolders[role]/<folder>', async () => {
+    const { mock, adapter } = makeAdapter({
+      driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } },
+      storage: new DriveStorageAdapter({ folder: 'uploads' }),
+    });
+
+    const sellerCtx = adapter.withContext({ userId: 'u1', actor: 'seller', actorSheetId: 'seller-sheet' });
+    await sellerCtx.upload(Buffer.from('data'), { filename: 'invoice.pdf', mimeType: 'application/pdf' });
+
+    const names = mock.findOrCreateFolderCalls.map((c) => c.name);
+    expect(names).toEqual(['My App', 'Sellers', 'uploads']);
+    expect(mock.findOrCreateFolderCalls[1].parentId).toBe('mock-folder-My App');
+    expect(mock.findOrCreateFolderCalls[2].parentId).toBe('mock-folder-Sellers');
+    expect(mock.uploadFileCalls[0].folderId).toBe('mock-folder-uploads');
+  });
+
+  test('shared/dev model: nested folder paths and repeat uploads for the same actor reuse the cache', async () => {
+    const { mock, adapter } = makeAdapter({
+      driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } },
+      storage: new DriveStorageAdapter(),
+    });
+
+    const sellerCtx = adapter.withContext({ userId: 'u1', actor: 'seller', actorSheetId: 'seller-sheet' });
+    await sellerCtx.upload(Buffer.from('a'), { filename: 'a.pdf', mimeType: 'application/pdf', folder: 'invoices/2026' });
+    const callsAfterFirst = mock.findOrCreateFolderCalls.length;
+
+    await sellerCtx.upload(Buffer.from('b'), { filename: 'b.pdf', mimeType: 'application/pdf', folder: 'invoices/2026' });
+    expect(mock.findOrCreateFolderCalls.length).toBe(callsAfterFirst); // fully cached, no new lookups
+
+    expect(mock.findOrCreateFolderCalls.map((c) => c.name)).toEqual(['My App', 'Sellers', 'invoices', '2026']);
+  });
+
+  test('no withContext(): uploads skip driveFolder role placement entirely (pre-Phase-23 flat behaviour)', async () => {
+    const { mock, adapter } = makeAdapter({
+      driveFolder: { root: 'My App', subfolders: { seller: 'Sellers' } },
+      storage: new DriveStorageAdapter({ folder: 'uploads' }),
+    });
+
+    await adapter.upload(Buffer.from('data'), { filename: 'f.jpg', mimeType: 'image/jpeg' });
+
+    expect(mock.findOrCreateFolderCalls.map((c) => c.name)).toEqual(['uploads']);
+  });
+
+  test('actor: "admin" context still resolves a driveFolder subfolder, but never triggers actor-owned client lookup', async () => {
+    let tokenStoreCalled = false;
+    const store: TokenStore = {
+      async get() { tokenStoreCalled = true; return null; },
+      async set() {},
+    };
+
+    const { mock, adminAdapter } = makeAdapter({
+      driveFolder: { root: 'My App' },
+      tokenStore: store,
+      storage: new DriveStorageAdapter(),
+    });
+
+    await adminAdapter.upload(Buffer.from('data'), { filename: 'f.jpg', mimeType: 'image/jpeg' });
+
+    expect(mock.findOrCreateFolderCalls.map((c) => c.name)).toEqual(['My App', 'admin', 'uploads']);
+    expect(tokenStoreCalled).toBe(false);
+  });
+
+  test('actor-owned model: uploading as a non-admin actor with a configured tokenStore checks tokenStore.get(userId), same as createUserSheet', async () => {
+    let calledWith: string | null = null;
+    const store: TokenStore = {
+      async get(id) { calledWith = id; return null; }, // no tokens on file — falls back to admin client
+      async set() {},
+    };
+
+    const { mock, adapter } = makeAdapter({ tokenStore: store, storage: new DriveStorageAdapter() });
+    const sellerCtx = adapter.withContext({ userId: 'seller-42', actor: 'seller', actorSheetId: 'seller-sheet' });
+
+    await sellerCtx.upload(Buffer.from('data'), { filename: 'f.jpg', mimeType: 'image/jpeg' });
+
+    expect(calledWith).toBe('seller-42');
+    expect(mock.uploadFileCalls.length).toBe(1); // no tokens found -> fell back to the shared admin client
+  });
+
+  test('actor-owned model: uploading as a non-admin actor whose tokenStore returns tokens attempts to build a separate actor client, and that client is cached for reuse (e.g. a later delete)', async () => {
+    let getCallCount = 0;
+    const store: TokenStore = {
+      async get() { getCallCount++; return { access_token: 'actor-token', refresh_token: 'r' }; },
+      async set() {},
+    };
+
+    const { adapter } = makeAdapter({ tokenStore: store, storage: new DriveStorageAdapter() });
+    const sellerCtx = adapter.withContext({ userId: 'seller-42', actor: 'seller', actorSheetId: 'seller-sheet' });
+
+    try {
+      // A real SheetClient gets constructed for the actor and hits the real Google API — expected
+      // to fail in this test environment. What matters is that tokenStore.get() was consulted and
+      // the resolution didn't silently stay on the shared admin client.
+      await sellerCtx.upload(Buffer.from('data'), { filename: 'f.jpg', mimeType: 'image/jpeg' });
+    } catch {
+      // expected
+    }
+    expect(getCallCount).toBe(1);
+
+    try {
+      await sellerCtx.deleteFile('https://drive.google.com/uc?id=abc123');
+    } catch {
+      // expected
+    }
+    // The actor client resolved above is cached by userId — deleteFile() for the same actor reuses
+    // it instead of round-tripping to tokenStore again.
+    expect(getCallCount).toBe(1);
+  });
+
+  test('deleteFile forwards the current withContext() actor to storage.delete()', async () => {
+    let deletedWith: { url: string; actorContext?: unknown } | null = null;
+    const fakeStorage: StorageAdapter = {
+      async upload() { return ''; },
+      async delete(url, actorContext) { deletedWith = { url, actorContext }; },
+    };
+
+    const { adapter } = makeAdapter({ storage: fakeStorage });
+    const sellerCtx = adapter.withContext({ userId: 'u1', actor: 'seller', actorSheetId: 'seller-sheet' });
+    await sellerCtx.deleteFile('https://drive.google.com/uc?id=abc');
+
+    expect(deletedWith).toEqual({
+      url: 'https://drive.google.com/uc?id=abc',
+      actorContext: { userId: 'u1', actor: 'seller', actorSheetId: 'seller-sheet' },
+    });
+  });
+
+  test('an explicit UploadOptions.actorContext passed by the caller overrides the adapter\'s own withContext() actor', async () => {
+    let uploadedWith: UploadOptions | null = null;
+    const fakeStorage: StorageAdapter = {
+      async upload(_file, opts) { uploadedWith = opts; return 'https://example.com/f.jpg'; },
+      async delete() {},
+    };
+
+    const { adapter } = makeAdapter({ storage: fakeStorage });
+    const sellerCtx = adapter.withContext({ userId: 'u1', actor: 'seller', actorSheetId: 'seller-sheet' });
+    await sellerCtx.upload(Buffer.from('x'), {
+      filename: 'f.jpg',
+      mimeType: 'image/jpeg',
+      actorContext: { userId: 'override-user', actor: 'buyer' },
+    });
+
+    expect(uploadedWith!.actorContext).toEqual({ userId: 'override-user', actor: 'buyer' });
+  });
+});
+
 // ── Phase 18 — Drive link rendering utilities ────────────────────────────────
 
 describe('Phase 18 — driveMedia utilities', () => {
