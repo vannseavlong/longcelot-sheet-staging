@@ -24,7 +24,8 @@ flowchart TB
         JWTR["App Sign-In\nAuth Router — Express-shaped routes, issues JWT"]
         Verify["Token Verification\nverifyJwt() — plain function, no framework dependency"]
         PWD["Password Storage\nbcrypt hash & compare"]
-        JWTR --> OA
+        OA --> JWTR
+        PWD --> JWTR
         JWTR -.->|"issues"| Verify
     end
 
