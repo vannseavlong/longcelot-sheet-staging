@@ -18,7 +18,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
-## [Unreleased]
+## [0.1.47] — 2026-09-03
 
 ### Fixed
 
