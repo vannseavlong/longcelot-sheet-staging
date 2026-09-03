@@ -151,6 +151,12 @@ export async function syncCommand(options: {
 
   adapter.registerSchemas(allSchemas);
 
+  // Admin-context clone — needed anywhere we read/write the admin `users` table (e.g.
+  // --all-users' user lookup below) through table(), since table() enforces permission
+  // checks via hasPermission()/canAccess(), which denies unconditionally when no context
+  // has been set (see accessControl.ts's canAccess()).
+  const adminCtx = adapter.withContext({ userId: 'sync-cli', actor: 'admin', actorSheetId: adminSheetId });
+
   const statusRows: Array<{ actor: string; sheetId: string; tables: number; status: string }> = [];
   let totalSynced = 0;
   let totalFailed = 0;
@@ -212,7 +218,7 @@ export async function syncCommand(options: {
       console.log(chalk.yellow('⚠️  No user schemas found — nothing to sync.'));
     } else {
       try {
-        const usersTable = adapter.table('users');
+        const usersTable = adminCtx.table('users');
         const allUsers = await usersTable.findMany({});
         const usersWithSheets = allUsers.filter((u) => u.actor_sheet_id);
 

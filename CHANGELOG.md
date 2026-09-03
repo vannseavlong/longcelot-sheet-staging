@@ -18,6 +18,15 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`lsdb sync --all-users`** — the admin `users` table lookup (used to find every registered user's `actor_sheet_id`) read through a context-less adapter instance. `table()` enforces the cross-actor permission matrix via `hasPermission()`/`canAccess()`, which denies unconditionally when no context has been set (`accessControl.ts`'s `canAccess()` returns `false` for `!context`) — so the lookup threw `PermissionError` and `--all-users` failed for every caller, unconditionally. Now reads through an admin-context (`actor: 'admin'`) clone of the adapter, the same pattern `src/cli/lib/adminAdapter.ts` already uses for `drop-table`/`drop-column`/`rename-column`.
+- **`upsertSchemaVersion()`/`getSchemaVersion()` silently swallowed all failures** — any error writing/reading a `schema_versions` row (a failed `create()`, a stale tab, an API error) resolved/returned `null` with zero visibility. Callers like `lsdb sync --all-users` only check whether the call *threw*, so they'd log `✓ synced` and report success even though the row was never persisted — and since the next run's hash comparison always saw no stored version, `onSchemaMismatch: 'warn'` kept reporting the same "outdated" warning at runtime indefinitely, with no error anywhere pointing at the real cause. Both now `console.warn` the underlying error before falling back (still non-throwing, so a version-tracking failure still can't break a CRUD/sync call) — this doesn't fix whatever the underlying write/read failure is, it makes it visible instead of invisible.
+
+---
+
 ## [0.1.46] — 2026-08-25
 
 ### Added

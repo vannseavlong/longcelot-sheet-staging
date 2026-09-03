@@ -374,8 +374,15 @@ export class SheetAdapter implements DatabaseAdapter {
           { skipFKValidation: true }
         );
       }
-    } catch {
-      // Silently ignore version tracking errors to not break CRUD operations
+    } catch (err) {
+      // Never break the caller's CRUD/sync flow over version-tracking failing — but a fully
+      // silent catch here means a real failure (bad scope, stale schema_versions tab, rate
+      // limit, ...) looks identical to success: the row never gets written, callers report
+      // "synced" anyway, and every later hash comparison sees no stored version and reports
+      // a false mismatch forever. Surface it instead of hiding it.
+      console.warn(
+        `[lsdb] Failed to record schema version for '${tableName}' on sheet '${actorSheetId}': ${err}`
+      );
     }
   }
 
@@ -393,7 +400,10 @@ export class SheetAdapter implements DatabaseAdapter {
         synced_at: record.synced_at as string,
         column_count: record.column_count as number,
       };
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[lsdb] Failed to read schema version for '${tableName}' on sheet '${actorSheetId}': ${err}`
+      );
       return null;
     }
   }

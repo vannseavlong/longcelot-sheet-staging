@@ -124,6 +124,52 @@ describe('SchemaAdapter schema version tracking', () => {
   });
 });
 
+// ── Failure visibility (regression: silent-catch masked failed writes) ────────
+
+describe('upsertSchemaVersion() / getSchemaVersion() failure visibility', () => {
+  it('warns instead of failing silently when the write fails, and does not throw', async () => {
+    const client = new MockSheetClient();
+    client.seed(ADMIN_SHEET, 'schema_versions', []);
+    const adapter = makeAdapter(client);
+
+    const appendSpy = jest.spyOn(client, 'appendRow').mockRejectedValue(new Error('quota exceeded'));
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(
+      adapter.upsertSchemaVersion(USER_SHEET, 'courses', computeSchemaHash(courseSchema), 2)
+    ).resolves.toBeUndefined(); // must not break the caller's sync/CRUD flow
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('courses'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('quota exceeded'));
+
+    // And the row genuinely never landed — this is the actual bug being guarded against:
+    // a caller that only checks "did upsertSchemaVersion throw?" would otherwise report
+    // success even though nothing was persisted.
+    const stored = await adapter.getSchemaVersion(USER_SHEET, 'courses');
+    expect(stored).toBeNull();
+
+    appendSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it('warns instead of failing silently when the read fails, and returns null', async () => {
+    const client = new MockSheetClient();
+    client.seed(ADMIN_SHEET, 'schema_versions', []);
+    const adapter = makeAdapter(client);
+
+    const getAllRowsSpy = jest.spyOn(client, 'getAllRows').mockRejectedValue(new Error('network error'));
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await adapter.getSchemaVersion(USER_SHEET, 'courses');
+
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('network error'));
+
+    getAllRowsSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
 // ── Mismatch detection ────────────────────────────────────────────────────────
 
 describe('onSchemaMismatch: warn', () => {
