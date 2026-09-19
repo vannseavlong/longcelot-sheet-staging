@@ -98,6 +98,8 @@ Five views, each isolating one part of the mechanism:
 
 Five more views below (§6–§10) cover angles the above don't: the end-user login flow, the permission matrix in full, the staging→production cutover, physical deployment, and how `lsdb erdiagram` itself works.
 
+Two final views (§11–§12) cover the write side that §3 (read-only `findMany()`) doesn't: the `create()`/`update()`/`delete()` pipeline, and `DriveStorageAdapter.upload()`/`delete()`.
+
 ---
 
 ## 1. Engine Selection & the Shared Contract
@@ -500,6 +502,254 @@ flowchart TD
 Two things worth knowing if you cite this as evidence of "schema-first" in the report: the ER diagram is derived *entirely* from your `defineTable()` calls — there's no separate diagramming step to keep in sync — and a foreign-key arrow only appears when `.ref('otherTable.column')` points at a table that's actually registered on the same adapter; a typo'd or not-yet-defined reference is dropped rather than crashing the command.
 
 `erdiagram` is also the one CLI command that never touches Google at all — no `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI`, no OAuth handshake, no network call. Every other command that reaches `Admin` in §5 (`sync`, `drop-table`, `drop-column`, `rename-column`, `doctor`, `status`) goes through `buildAdminAdapter()`, which requires those three env vars and opens a live connection; `erdiagram` reads only your local schema files and prints what it finds.
+
+---
+
+## 11. Write Path: `create()` / `update()` / `delete()`
+
+§3 covers the read side (`findMany()`) end-to-end; this is the write side, from `src/adapter/crud.ts`. All three methods share one validation pipeline before they diverge at the actual Sheets API call — shown here as one sequence diagram with `alt` branches rather than three separate diagrams, since the shared middle is the part worth seeing lined up.
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant SA as SheetAdapter
+    participant AC as accessControl
+    participant CRUD as CRUDOperations
+    participant FK as fkResolver
+    participant SC as SheetClient
+    participant Cache as read cache (2s TTL)
+    participant API as Google Sheets API
+
+    App->>SA: withContext(ctx).table(name).create(data) | update({where,data}) | delete({where})
+    SA->>AC: hasPermission(schema, context, permissions)
+    AC-->>SA: allow, or throw PermissionError
+    SA->>CRUD: create(data) | update(options) | delete(options)
+
+    alt create()
+        CRUD->>CRUD: assign _id (+ auto string PK if unset)
+        CRUD->>CRUD: validateAndApplyDefaults('create')<br/>required / enum / min / max / pattern
+    else update()
+        CRUD->>SC: getAllRows() → scan rows for options.where match
+        SC-->>CRUD: matching row(s) + rowNumber(s)
+        Note right of CRUD: everything below repeats once per matching row
+        CRUD->>CRUD: strip readonly pkColumn from payload
+        CRUD->>CRUD: validateAndApplyDefaults('update')<br/>— writing any other readonly column throws ValidationError
+    else delete(), schema.softDelete
+        CRUD->>CRUD: delegates to update()<br/>with data: { _deleted_at: now }, skipFKValidation: true
+    else delete(), hard delete
+        CRUD->>SC: getAllRows() → scan rows for options.where match
+        SC-->>CRUD: matching row(s), to be walked high→low rowNumber
+    end
+
+    opt schema has .ref() columns — create() / update() only
+        CRUD->>FK: fkResolver(refTable, refColumn, value)
+        FK-->>CRUD: exists? — else throw ValidationError('FK violation')
+    end
+    opt schema has .unique() columns — create() / update() only
+        CRUD->>CRUD: checkUniqueness() → findOne({ where: { col: value } })
+        Note right of CRUD: on update, excludes the row's own _id from the clash check
+    end
+    opt schema.timestamps — create() / update() only
+        CRUD->>CRUD: stamp _created_at (create only) / _updated_at (both)
+    end
+
+    alt create()
+        CRUD->>SC: appendRow(spreadsheetId, table, values)
+        SC->>API: spreadsheets.values.append
+    else update() (incl. soft delete)
+        CRUD->>SC: updateRow(spreadsheetId, table, rowNumber, mergedValues)
+        SC->>API: spreadsheets.values.update
+    else hard delete()
+        loop once per matching row, highest rowNumber first
+            CRUD->>SC: deleteRow(spreadsheetId, table, rowNumber)
+            SC->>API: spreadsheets.batchUpdate (deleteDimension)
+        end
+    end
+    API-->>SC: ok
+    SC->>Cache: invalidateCache(tab)
+    SC-->>CRUD: rowNumber (create) / rows updated (update) / rows deleted (delete)
+
+    opt create(), rowNumber % VALIDATION_CHECK_INTERVAL == 0
+        CRUD->>SC: extendValidation() — grows the checkbox/dropdown range to keep pace with new rows
+    end
+
+    CRUD-->>SA: validated record (create/upsert) | count (update/delete)
+    SA-->>App: result
+```
+
+Two things worth calling out that aren't obvious from the code alone:
+
+- **Hard deletes walk rows highest-`rowNumber`-first** (`for (let i = rows.length - 1; i >= 0; i--)`) specifically so that deleting row 5 doesn't shift what was row 6 down to become the new row 5 before it's been checked — a low-to-high loop would silently skip every other match once more than one row qualifies.
+- **`delete()` on a `softDelete` table never reaches `deleteRow()` at all** — it's a full delegation to `update()` with `skipFKValidation: true` (so a soft-deleted row's own now-dangling references don't block the delete) and `{ _deleted_at: now }`, which is why `findMany()`/`count()` filter on `_deleted_at` rather than row absence, and why `upsert()` has to pass `includeDeleted: true` to its own existence check (see the comment in `crud.ts` `upsert()` — otherwise a soft-deleted row is invisible to it and upsert wrongly re-`create()`s a duplicate over an already-existing, just-hidden row).
+
+**Mini version, for a slide.** All four operations, dropping permission checks, validation, FK/uniqueness checks, and cache invalidation/internals so just the shape of each call is left — one small diagram per operation rather than one tall combined one:
+
+**Create**
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant lsdb
+    participant Sheet
+
+    App->>lsdb: create(data)
+    lsdb->>lsdb: fill in defaults,<br/>assign a new ID
+    lsdb->>Sheet: append new row
+    Sheet-->>lsdb: row saved
+    lsdb-->>App: new record
+```
+
+**Read**
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant lsdb
+    participant Sheet
+
+    App->>lsdb: findMany(where)
+    lsdb->>Sheet: read all rows
+    Sheet-->>lsdb: rows
+    lsdb-->>App: matching records
+```
+
+**Update**
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant lsdb
+    participant Sheet
+
+    App->>lsdb: update(where, data)
+    lsdb->>Sheet: read rows, find the match
+    Sheet-->>lsdb: matching row
+    lsdb->>Sheet: overwrite that row
+    Sheet-->>lsdb: row saved
+    lsdb-->>App: updated
+```
+
+**Delete**
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant lsdb
+    participant Sheet
+
+    App->>lsdb: delete(where)
+    lsdb->>Sheet: read rows, find the match
+    Sheet-->>lsdb: matching row
+    lsdb->>Sheet: remove that row
+    Sheet-->>lsdb: confirmed
+    lsdb-->>App: deleted
+```
+
+Two shapes, really: `create` makes a new row; the other three all read the sheet first, then act on what they find — `findMany` just stops there and returns it, `update` overwrites the matched row, `delete` removes it. `findMany`'s read is the one place this mini version hides something real: §3 covers the 2-second read cache that call actually goes through — every write above invalidates that same cache on the way out, per §11's detailed diagram.
+
+---
+
+## 12. File Storage: `DriveStorageAdapter.upload()` / `.delete()`
+
+The main diagram's dashed `CRUD -.->|"file/image columns (opt-in)"| Upload` edge is a simplification worth being precise about here: `upload()`/`deleteFile()` are **top-level `SheetAdapter` methods, not part of `table(name)`/`CRUDOperations` at all** — there's no column type that triggers a Drive call automatically. The actual pattern is app-orchestrated in two steps: call `.upload()` to get a URL back, then pass that URL as a plain string into a normal `.create()`/`.update()` call on whichever table has the file/image column. `src/adapter/driveStorageAdapter.ts` and `driveTenancy.ts` are the source for this diagram.
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant SA as SheetAdapter
+    participant Store as DriveStorageAdapter
+    participant Ten as driveTenancy<br/>(resolveActorClient / resolveRoleFolder)
+    participant SC as SheetClient
+    participant API as Google Drive API
+
+    App->>SA: withContext(ctx).upload(fileBuffer, { filename, mimeType, folder?, public?, linkFormat? })
+    SA->>SA: currentActorContext() — { userId, actor, actorSheetId } from withContext(), not re-verified
+    SA->>Store: upload(file, { ...options, actorContext })
+
+    alt actorContext missing, or actor === 'admin', or no driveFolder/tenancy configured
+        Store->>Store: use the shared admin SheetClient (pre-Phase-23 behavior)
+    else actor-owned sheet model
+        Store->>Ten: resolveActorClient(userId, adminClient, credentials, tokenStore, ...)
+        Ten->>Ten: tokenStore.get(userId) — actor's own OAuth tokens, if any
+        alt actor has own tokens
+            Ten-->>Store: new actor-owned SheetClient (cached per userId in _actorClientCache)
+        else no actor tokens
+            Ten-->>Store: falls back to the shared admin SheetClient
+        end
+    end
+
+    opt driveFolder configured + actorContext present
+        Store->>Ten: resolveRoleFolder(client, driveFolder, actor, sharedDriveId, cache)
+        Ten->>SC: findOrCreateFolder(driveFolder.root) → findOrCreateFolder(subfolders[actor] ?? actor)
+        SC->>API: drive.files.list (lookup) / drive.files.create (folder mimeType, if missing)
+        API-->>SC: folder id
+        Ten-->>Store: role-scoped base folder id (cached by scope key)
+    end
+
+    opt options.folder path has segments (e.g. 'invoices/2026')
+        loop once per path segment
+            Store->>SC: findOrCreateFolder(segment, parentId) — result cached by path
+            SC->>API: drive.files.list / drive.files.create
+            API-->>SC: nested folder id
+        end
+    end
+
+    Store->>SC: uploadFile(buffer, filename, mimeType, folderId, options.public)
+    SC->>API: drive.files.create (media upload)
+    API-->>SC: fileId
+    opt options.public
+        SC->>API: drive.permissions.create({ type: 'anyone', role: 'reader' })
+    end
+    SC-->>Store: fileId
+    Store-->>SA: buildDriveViewUrl(fileId, mimeKind) — default,<br/>or buildDriveDownloadUrl(fileId) if linkFormat: 'download'
+    SA-->>App: url (string)
+
+    Note over App,SA: upload() never writes a sheet row. The caller is responsible for<br/>storing the returned URL itself via a follow-up .table(name).create()/.update() call.
+
+    App->>SA: withContext(ctx).deleteFile(url)
+    SA->>Store: delete(url, actorContext)
+    Store->>Store: extractDriveFileId(url) — returns silently, no-op, if url isn't a recognisable Drive link
+    Store->>Ten: resolveActorClient(...) — identical resolution to upload(), same cache
+    Ten-->>Store: actor-owned or shared admin SheetClient
+    Store->>SC: deleteFile(fileId)
+    SC->>API: drive.files.delete({ fileId })
+    API-->>SC: ok
+    SC-->>Store: void
+    Store-->>SA: void
+    SA-->>App: void
+```
+
+Two more things worth stating plainly:
+
+- **`deleteFile()` only removes the Drive object — it never touches the sheet row that references it.** If a table has an `imageUrl` column pointing at that file, clearing/overwriting that cell is a separate `.table(name).update()` call the application must make itself; nothing in this path does it automatically.
+- **Per-actor Drive placement is deliberate, not incidental.** `resolveActorClient()`/`resolveRoleFolder()` are the exact same two functions `SheetAdapter.createUserSheet()` uses to place a new actor's spreadsheet (§4) — extracted into `driveTenancy.ts` specifically so a file uploaded under a given actor's context always lands in that same actor's Drive/folder as their sheet, rather than the two drifting apart as two independently-maintained copies of the same logic.
+
+**Mini version, for a slide.** Drops the actor/tenancy branching (who owns which Drive client) and the folder-cache internals down to one representative path — first upload to a given folder path, then a delete:
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant Drive
+    participant Cache
+    participant GDrive
+
+    App->>Drive: upload(file, options)
+    Drive->>Cache: look up resolved folder ID for this path
+    Cache-->>Drive: cache miss, first upload to this path
+    Drive->>GDrive: walk folder segments,<br/>using the shared SheetClient credentials
+    GDrive-->>Drive: folder ID
+    Drive->>Cache: store folder ID for next time
+    Drive->>GDrive: upload file bytes into resolved folder
+    GDrive-->>Drive: file ID and mimeType
+    Drive-->>App: URL built from mimeType,<br/>thumbnail, preview, or view link
+
+    App->>Drive: delete(url)
+    Drive->>GDrive: extract file ID from any of the 3 URL shapes, delete file
+    GDrive-->>Drive: confirmed
+    Drive-->>App: deleted
+```
+
+This is the same diagram as `slide/diagrams/drive-upload-delete-flow.png` — kept here as text so it's easy to copy or re-render without opening the image.
 
 ---
 
