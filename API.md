@@ -183,6 +183,8 @@ Creates a new sheet adapter instance.
   storage?: StorageAdapter;                               // file upload provider
   sheetStyle?: SheetStyleConfig;                          // header color, frozen rows/columns (see Type Definitions)
   cache?: SheetReadCacheConfig;                           // read cache tuning — see Type Definitions and FAQ.md #11
+  sheetSharing?: SheetSharingConfig;                       // adapter-wide default for createUserSheet() sharing — see Type Definitions and FAQ.md #17
+  actorClientForCrud?: boolean | ActorCrudClientConfig;    // opt-in: route CRUD through the actor's own OAuth client — see Type Definitions and FAQ.md #16
 }
 ```
 
@@ -301,7 +303,36 @@ Gets CRUD operations for a table.
 const bookings = adapter.table('bookings');
 ```
 
-### `adapter.createUserSheet(userId, role, email, options?)`
+### `ctx.prefetch(tableNames)`
+
+Warms the read cache for several tables in as few Sheets API requests as possible — one `spreadsheets.values.batchGet` per spreadsheet instead of one `values.get` per table. Each table is resolved to its spreadsheet and permission-checked exactly like `table()`. Only fills the cache — reads still go through `table()` afterward; tables already cached and unexpired are skipped. See [`SheetReadCacheConfig`](#sheetreadcacheconfig) and FAQ.md §11/§16 for why this matters and the request/quota math.
+
+**Parameters:**
+
+- `tableNames: string[]`
+
+**Returns:** `Promise<void>`
+
+Optional on the [`DatabaseAdapter`](#databaseadapter) contract — implemented as a no-op on the SQL adapters, so application code can call it unconditionally and stay backend-portable. A no-op on `SheetAdapter` too when `cache.enabled: false`.
+
+**Example:**
+
+```typescript
+const adminCtx = adapter.withContext({ userId: 'system', actor: 'admin', actorSheetId: ADMIN_SHEET_ID });
+const teamCtx = adapter.withContext({ userId: user.id, actor: 'team', actorSheetId: team.actor_sheet_id });
+
+await Promise.all([
+  adminCtx.prefetch(['users', 'teams', 'team_members']),
+  teamCtx.prefetch(['projects', 'project_members', 'tasks', 'task_assignees', 'task_statuses']),
+]);
+// Every table() call below this point, across both contexts, is now a cache hit.
+const [projects, tasks] = await Promise.all([
+  teamCtx.table('projects').findMany(),
+  teamCtx.table('tasks').findMany(),
+]);
+```
+
+### `adapter.createUserSheet(userId, role, email?, options?)`
 
 Creates a new sheet for a user and registers them in the admin `users` table.
 
@@ -311,23 +342,38 @@ When `actorTokens` are provided (or resolved via `tokenStore`), the sheet is cre
 
 - `userId: string`
 - `role: string`
-- `email: string`
+- `email?: string` — required only when the sheet ends up shared with the actor (`shareWithActor` resolves to `true`, the default); throws `ValidationError` up front if omitted while sharing is still on
 - `options?: CreateUserSheetOptions`
   - `actorTokens?: OAuthTokens` — actor's own Google OAuth tokens; sheet is created in their Drive
   - `extraFields?: Record<string, unknown>` — extra columns spread into the `users` table `create()` call
+  - `shareWithActor?: boolean` — default `true`. Set `false` to skip sharing the created sheet with the actor's own email — see [`SheetSharingConfig`](#sheetsharingconfig) and FAQ.md §17 for why
+  - `shareRole?: 'reader' | 'commenter' | 'writer'` — default `'writer'`. Role granted to the actor when `shareWithActor` is on
 
 **Returns:** `Promise<string>` - Sheet ID
+
+**Throws:** [`SheetSharingError`](#sheetsharingerror) if the spreadsheet was created but sharing it (with the admin or the actor) failed — carries the orphaned `sheetId` so the caller can clean up or retry; no `admin.users` row is written yet at that point.
 
 **Example:**
 
 ```typescript
-// Basic (sheet in admin's Drive)
+// Basic (sheet in admin's Drive, shared with the actor as writer — default behaviour)
 const sheetId = await adapter.createUserSheet('user_123', 'student', 'student@school.com');
 
 // Actor-owned (sheet in student's Drive)
 const sheetId = await adapter.createUserSheet('user_123', 'student', 'student@school.com', {
   actorTokens: { access_token: '...', refresh_token: '...' },
   extraFields: { display_name: 'Alice' },
+});
+
+// Pure storage backend — only the app writes to it; the sheet is never shared with the actor,
+// so email isn't needed (e.g. a synthetic per-team address instead of a real Google account)
+const teamSheetId = await adapter.createUserSheet('team_42', 'team', undefined, {
+  shareWithActor: false,
+});
+
+// Actor can view their own data in Sheets, but only the app can edit it
+const readOnlySheetId = await adapter.createUserSheet('user_123', 'student', 'student@school.com', {
+  shareRole: 'reader',
 });
 ```
 
@@ -1137,6 +1183,8 @@ interface DatabaseAdapter {
   withContext(context: UserContext): DatabaseAdapter;
   asActor(targetActor: string, targetSheetId: string): DatabaseAdapter;
   table(tableName: string): TableOperations;
+  /** Optional — see ctx.prefetch() above. No-op on the SQL adapters. */
+  prefetch?(tableNames: string[]): Promise<void>;
 }
 ```
 
@@ -1164,6 +1212,8 @@ The subset of `SheetClient` that `CRUDOperations` actually depends on — decoup
 ```typescript
 interface StorageClient {
   getAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]>;
+  /** Optional — see SheetClient.getAllRowsBatch() / ctx.prefetch(). Sheets-only. */
+  getAllRowsBatch?(spreadsheetId: string, sheetNames: string[]): Promise<Map<string, string[][]>>;
   appendRow(spreadsheetId: string, sheetName: string, values: string[]): Promise<number>;
   appendRows(spreadsheetId: string, sheetName: string, rows: string[][]): Promise<void>;
   updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: string[]): Promise<void>;
@@ -1292,7 +1342,7 @@ interface SheetReadCacheConfig {
 }
 ```
 
-Passed as `cache` on `createSheetAdapter()`. Bounds and de-duplicates `values.get` calls made through `SheetClient.getAllRows()` — see the read caching note under [CRUD Operations](#crud-operations) and FAQ.md #11.
+Passed as `cache` on `createSheetAdapter()`. Bounds and de-duplicates `values.get` calls made through `SheetClient.getAllRows()` — see the read caching note under [CRUD Operations](#crud-operations) and FAQ.md #11. `ctx.prefetch(tableNames)` (see [Sheet Adapter](#adapterprefetchtablenames)) warms this same cache for several tables at once via `values.batchGet`, for a handler that reads more than one table per request — see FAQ.md §16 for the request/quota math. A write through any client (admin or, with `actorClientForCrud`, a per-actor client) always invalidates the cache entry the next read of that tab needs, including for reads that were already in flight when the write landed.
 
 ```typescript
 const adapter = createSheetAdapter({
@@ -1441,14 +1491,78 @@ interface StorageAdapter {
 }
 ```
 
+### `SheetSharingConfig`
+
+```typescript
+interface SheetSharingConfig {
+  /**
+   * Share a newly created admin-owned actor sheet with the actor's email. Default: true. Set
+   * false when the sheet is purely a storage backend — only the app writes to it, or the actor
+   * isn't a real Google account. Sharing with SUPER_ADMIN_EMAIL is unaffected either way.
+   */
+  shareWithActor?: boolean;
+  /** Role granted to the actor when shared. Default: 'writer'. */
+  shareRole?: 'reader' | 'commenter' | 'writer';
+}
+```
+
+Passed as `sheetSharing` on `createSheetAdapter()` for an adapter-wide default, and/or as part of `CreateUserSheetOptions` to override it per `createUserSheet()` call. See FAQ.md §17.
+
 ### `CreateUserSheetOptions`
 
 ```typescript
-interface CreateUserSheetOptions {
+interface CreateUserSheetOptions extends SheetSharingConfig {
   actorTokens?: OAuthTokens;             // create sheet in actor's Drive when provided
   extraFields?: Record<string, unknown>; // extra columns merged into the users table row
 }
 ```
+
+### `ActorCrudClientConfig`
+
+```typescript
+interface ActorCrudClientConfig {
+  /**
+   * What to do when an actor's own grant is rejected (invalid_grant) during a CRUD call:
+   * 'throw' (default) raises ActorAuthError; 'fallback-admin' retries the call on the admin client.
+   */
+  onAuthError?: 'throw' | 'fallback-admin';
+  /** Max actor clients kept in memory (least recently used evicted first). Default: 100. */
+  maxCachedClients?: number;
+}
+```
+
+Passed as `actorClientForCrud` on `createSheetAdapter()` (or just `true` for the defaults) — see FAQ.md §16.
+
+### `ShareRole`
+
+```typescript
+type ShareRole = 'reader' | 'commenter' | 'writer';
+```
+
+The role parameter accepted by `SheetClient.shareWithUser()`; same union as `SheetSharingConfig.shareRole`.
+
+### `SheetSharingError`
+
+```typescript
+class SheetSharingError extends Error {
+  readonly sheetId: string;
+  readonly email: string;
+  readonly cause: unknown;
+}
+```
+
+Thrown by `createUserSheet()` when the spreadsheet was created but sharing it (with the admin or the actor) failed. Carries `sheetId` so the caller can clean up the orphaned spreadsheet or retry the share — no `admin.users` row has been written at this point. See FAQ.md §17.
+
+### `ActorAuthError`
+
+```typescript
+class ActorAuthError extends Error {
+  readonly userId: string;
+  readonly cause: unknown;
+}
+```
+
+Thrown by a table operation routed through `actorClientForCrud` when the actor's own OAuth grant is rejected (`invalid_grant`) — the actor's cached client is evicted so a re-authorization is picked up cleanly on the next call. Not thrown when `actorClientForCrud: { onAuthError: 'fallback-admin' }` is set — the call is retried on the admin client instead. See FAQ.md §16.
 
 ### `DriveStorageAdapter`
 

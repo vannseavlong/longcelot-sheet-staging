@@ -116,8 +116,11 @@ export class MockSheetClient {
     rows.splice(rowIndex - 1, 1); // rowIndex is 1-based
   }
 
-  async shareWithUser(_spreadsheetId: string, _email: string, _role: string): Promise<void> {
-    // no-op in tests
+  /** Tracks calls to shareWithUser */
+  shareWithUserCalls: Array<{ spreadsheetId: string; email: string; role: string }> = [];
+
+  async shareWithUser(spreadsheetId: string, email: string, role: string): Promise<void> {
+    this.shareWithUserCalls.push({ spreadsheetId, email, role });
   }
 
   async formatSheet(spreadsheetId: string, sheetName: string, options: any): Promise<void> {

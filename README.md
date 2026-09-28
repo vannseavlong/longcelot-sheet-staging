@@ -30,6 +30,9 @@ Instead of running MySQL, PostgreSQL, or MongoDB for staging:
 - 🔒 **Schema Integrity**: Hash-based version tracking detects stale user sheets at runtime
 - ♻️ **Safe Migrations**: `sync --all-users` pushes schema changes to every user sheet with rate-limit backoff
 - 🚀 **CI-Friendly**: `sync --token-file` skips interactive OAuth prompt in CI/CD pipelines
+- 📡 **Batched Reads**: `ctx.prefetch(tables)` collapses a multi-table page load into one `values.batchGet` per spreadsheet instead of one API call per table
+- 🎫 **Per-Actor Quota**: opt-in `actorClientForCrud` runs each actor's own CRUD calls through their own OAuth grant instead of one shared admin quota
+- 🚪 **Opt-Out Sheet Sharing**: `shareWithActor: false` keeps an actor's sheet app-only — no direct-edit bypass of app rules, safe for a long read-cache TTL
 
 ## 🚀 Quick Start
 
@@ -876,6 +879,69 @@ const adapter = createSheetAdapter({
   cache: { ttlMs: 5000 }, // default: 2000ms; set enabled: false to disable
 });
 ```
+
+### Batched Reads Across Tables (`ctx.prefetch()`)
+
+The cache above only collapses *repeated* reads of the *same* tab — a request handler that reads N different tables still makes N `values.get` calls on a cold cache. `ctx.prefetch(tableNames)` closes that gap: it groups the requested tables by spreadsheet and issues one `spreadsheets.values.batchGet` per spreadsheet, filling the same read cache `getAllRows()` already checks — so the `table().findMany()` calls that follow are cache hits.
+
+```typescript
+const adminCtx = adapter.withContext({ userId: 'system', actor: 'admin', actorSheetId: ADMIN_SHEET_ID });
+const teamCtx = adapter.withContext({ userId: user.id, actor: 'team', actorSheetId: team.actor_sheet_id });
+
+// 8 tables across 2 spreadsheets → 2 API calls total, before any table() call runs
+await Promise.all([
+  adminCtx.prefetch(['users', 'teams', 'team_members']),
+  teamCtx.prefetch(['projects', 'project_members', 'tasks', 'task_assignees', 'task_statuses']),
+]);
+
+const [projects, tasks] = await Promise.all([
+  teamCtx.table('projects').findMany(),
+  teamCtx.table('tasks').findMany(),
+]); // served from cache — zero further API calls
+```
+
+Call it once near the top of a request handler (a Next.js layout/page, an Express route) with every table that handler is about to read. It's on the `DatabaseAdapter` contract as an optional method, implemented as a no-op on the SQL adapters — safe to call unconditionally in code that has to stay portable across engines. If one requested tab doesn't exist, Google rejects the whole `batchGet` with a 400; `prefetch()` falls back to individual reads for that batch so a typo'd table name doesn't take the others down with it. See [`ctx.prefetch()`](./API.md#ctxprefetchtablenames) in API.md and FAQ.md §11/§16 for the full request/quota math.
+
+### Per-Actor CRUD Quota (`actorClientForCrud`)
+
+Google's Sheets quota (60 reads + 60 writes/minute by default) is counted **per OAuth identity**. Normally every `table()` call — even against an actor-owned sheet living in that actor's own Drive — runs under the shared admin grant, so an app authenticating every user through one admin token shares that one 60/min budget across its whole user base. Opt in to route CRUD through each actor's own grant instead:
+
+```typescript
+const adapter = createSheetAdapter({
+  adminSheetId: process.env.ADMIN_SHEET_ID,
+  credentials: { clientId, clientSecret, redirectUri },
+  tokens: adminTokens,
+  tokenStore: myTokenStore,   // required — actor tokens are resolved from here
+  actorClientForCrud: true,    // or: { onAuthError: 'fallback-admin', maxCachedClients: 200 }
+});
+```
+
+Only table operations on the context actor's *own* sheet route through their client — admin tables and cross-actor targets always keep using the admin client, since it's the one identity guaranteed access to every sheet. An actor with no stored tokens is unaffected (falls back to the admin client, as before). Resolved actor clients share the admin client's read cache (not a separate one each), so a write through any client still invalidates the tab for all of them, and a refreshed access token is persisted back to `tokenStore` automatically. A revoked/expired grant (`invalid_grant`) raises a typed `ActorAuthError` by default, or falls back to the admin client for that call with `onAuthError: 'fallback-admin'`.
+
+See [FAQ.md §16](./FAQ.md#16-actor-owned-crud-clients-per-actor-quota) for the full design write-up.
+
+> **Note**: implemented and passing lint/build, but doesn't have dedicated tests yet — see CHANGELOG.md `[Unreleased]` "Known gaps" if you're evaluating this for production use today.
+
+### Opting Out of Sharing Actor Sheets
+
+`createUserSheet()` shares a newly created admin-owned sheet with the actor's own email by default — right for apps where end users are meant to open their data directly in Sheets, wrong when the sheet is purely a storage backend: a direct edit can bypass app-level rules, invalidate the "only the app writes here" assumption a long cache TTL depends on, or (for a non-person actor with only a synthetic address) fail the share outright after the sheet's already been created.
+
+```typescript
+// Per call:
+await adapter.createUserSheet('team_42', 'team', undefined, { shareWithActor: false });
+
+// Or adapter-wide default, overridable per call:
+const adapter = createSheetAdapter({
+  // ...
+  sheetSharing: { shareWithActor: false },
+});
+```
+
+`shareWithActor: false` skips sharing with the actor entirely (sharing with `SUPER_ADMIN_EMAIL`, if configured, is unaffected) — `email` becomes optional in that case, so non-person actors without a real Google account don't need one. `shareRole: 'reader'`/`'commenter'` is a middle ground: the actor can see their own sheet but not edit it outside the app. A failed share raises a typed `SheetSharingError` carrying the orphaned `sheetId` so you can clean it up or retry, instead of a bare Drive error with no way to find the sheet it was created for. Defaults (`shareWithActor: true`, `shareRole: 'writer'`) are unchanged from before this option existed.
+
+See [FAQ.md §17](./FAQ.md#17-opting-out-of-sharing-actor-sheets) for the full design write-up.
+
+> **Note**: implemented and passing lint/build, but doesn't have dedicated tests yet — see CHANGELOG.md `[Unreleased]` "Known gaps" if you're evaluating this for production use today.
 
 ## 🎓 Complete Example
 

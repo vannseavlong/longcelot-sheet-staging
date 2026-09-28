@@ -18,6 +18,37 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) an
 
 ---
 
+## [0.1.48] — 2026-09-28
+
+> Three requests from TrackTask (`FEATURE_REQUESTS.md`, observed against 0.1.47) — all sharing one root cause: TrackTask authenticates to Sheets with a single admin OAuth grant, so every read/write from every user counts against one 60-requests/minute-per-user quota. See TODO.md Phase 24 and FAQ.md §11/§16/§17 for the full write-ups.
+
+### Added
+
+- **`adapter.prefetch(tableNames: string[])`** — warms the read cache for several tables in as few Sheets API requests as possible: one `spreadsheets.values.batchGet` per spreadsheet instead of one `values.get` per table. Only fills the cache; reads still go through `table()`. Optional on the `DatabaseAdapter` contract — implemented as a no-op on the SQL adapters so application code can call it unconditionally and stay engine-portable. `cache.enabled: false` makes it a no-op on `SheetAdapter` too.
+- **`SheetClient.getAllRowsBatch(spreadsheetId, sheetNames)`** — the underlying batched read: already-cached/in-flight tabs are skipped, a `getAllRows()` call for a tab inside an in-flight batch joins it rather than issuing its own request, a nonexistent tab falls back to per-tab reads for that batch (Google 400s the whole `batchGet` otherwise), and requests are chunked at 50 tabs to stay under URL length limits.
+- **Read-cache write/invalidate race fixed.** `SheetReadCache` (now its own class, shared across the admin client and any per-actor clients — see below) tracks a per-key generation counter bumped by `invalidateCache()`; a read only writes its result into the cache if the generation is unchanged since the read started. Previously a write landing while a read was still in flight could let that read's `.then` put stale pre-write data back into the cache after the invalidation. Applies to both `getAllRows()` and `getAllRowsBatch()`.
+- **`createSheetAdapter({ actorClientForCrud: true | ActorCrudClientConfig })`** — opt-in: table operations on a context actor's *own* sheet run through that actor's own Google OAuth client (resolved from `tokenStore`) instead of the shared admin client, so each actor's reads/writes count against their own per-user Sheets API quota rather than one shared admin budget. Admin tables and cross-actor targets always keep using the admin client. Requires `tokenStore`; warns (doesn't throw) if enabled without one. `ActorCrudClientConfig { onAuthError?: 'throw' | 'fallback-admin'; maxCachedClients?: number }`.
+- **`ActorAuthError`** — thrown when an actor's own OAuth grant is rejected (`invalid_grant`) during a CRUD call routed through `actorClientForCrud`; the actor's cached client is evicted so a subsequently-refreshed token is retried cleanly. Set `onAuthError: 'fallback-admin'` to retry such calls on the admin client instead of throwing.
+- **Resolved actor `SheetClient`s share the admin client's read cache**, keyed the same way (`spreadsheetId::sheetName`) — a write through any client, including an admin cross-actor write into a user's sheet, invalidates that tab for every client reading it, not just the one that wrote it.
+- **Actor token refresh is now persisted.** When `googleapis` silently refreshes an actor's access token in memory, `actorClientForCrud` now writes it back via `tokenStore.set()`, so a process restart doesn't fall back to a stale access token.
+- **`createUserSheet(userId, role, email?, options?)`** — `email` is now optional, and a new `shareWithActor`/`shareRole` option controls whether/how the created sheet is shared with the actor:
+  - `shareWithActor?: boolean` (default `true`, unchanged) — set `false` to skip sharing the sheet with the actor's own email entirely (sharing with `SUPER_ADMIN_EMAIL` is unaffected). For apps where the sheet is purely a storage backend — only the app should write to it, or the actor isn't a real Google account (a team/org with a synthetic address) — this closes a real gap: without it, a user could bypass app-level permission rules with a direct edit, invalidate the read-cache guarantee that "only the app writes" depends on, or fail sheet creation outright when sharing a synthetic non-Google address.
+  - `shareRole?: 'reader' | 'commenter' | 'writer'` (default `'writer'`, unchanged) — lets an actor see their own sheet without being able to edit it directly.
+  - `email` is required only when `shareWithActor` resolves to `true` — throws `ValidationError` up front (before creating anything) if it's missing with sharing still on.
+  - `createSheetAdapter({ sheetSharing: SheetSharingConfig })` sets the adapter-wide default for both options; `createUserSheet()`'s own `options` override it per call.
+- **`SheetSharingError`** — thrown by `createUserSheet()` when the spreadsheet was created but a share call fails (admin or actor); carries `sheetId`/`email`/`cause` so the caller can see the orphaned spreadsheet and delete or retry instead of losing track of it. No `admin.users` row is written before this point.
+- New exported types: `SheetSharingConfig`, `ActorCrudClientConfig`, `ShareRole`. `CreateUserSheetOptions` now extends `SheetSharingConfig`.
+
+### Fixed
+
+- **`SQLAdapterBase.prefetch()`/`PrismaAdapterBase.prefetch()` declared zero parameters** instead of accepting (and ignoring) `tableNames: string[]` — passed `tsc` at the package build (TypeScript structurally allows a narrower-arity method to satisfy a wider interface method) but broke calling `prefetch(tableNames)` directly against a concretely-typed adapter instance, which is exactly what the new SQL-adapter `prefetch()` test does. Both now declare `prefetch(_tableNames: string[])`.
+
+### Known gaps
+
+- **`actorClientForCrud` and `sheetSharing`/`shareWithActor` have no dedicated tests yet.** Both are implemented, build clean, and pass lint, but ship in this `[Unreleased]` state without the test coverage described in TrackTask's original request (see TODO.md Phase 24.2/24.3 for the exact cases still needed). `adapter.prefetch()`/`getAllRowsBatch()` (24.1) *is* fully covered — `tests/unit/prefetchBatch.test.ts`.
+
+---
+
 ## [0.1.47] — 2026-09-03
 
 ### Fixed

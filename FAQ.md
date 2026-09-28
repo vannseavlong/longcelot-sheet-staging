@@ -21,6 +21,8 @@ Answers to architectural, design, and integration questions collected during dev
 13. [SQL Backend Portability & Tenancy](#13-sql-backend-portability--tenancy)
 14. [File Upload — Rendering Drive Links](#14-file-upload--rendering-drive-links)
 15. [Per-Actor File Upload Placement](#15-per-actor-file-upload-placement-design-decision)
+16. [Actor-Owned CRUD Clients (Per-Actor Quota)](#16-actor-owned-crud-clients-per-actor-quota)
+17. [Opting Out of Sharing Actor Sheets](#17-opting-out-of-sharing-actor-sheets)
 
 ---
 
@@ -621,7 +623,35 @@ You can (`cache: { enabled: false }`), but there's no real reason to — the cac
 
 ### The cache smooths out bursts, but is Google Sheets the right backing store for a busier production admin panel?
 
-The cache buys real headroom (it can turn N reads within a burst into 1 API call), but it's still a per-process, best-effort layer, not a substitute for a real database's read scalability. If you're consistently near quota even with caching — many concurrent staff users, or dashboards that poll frequently — that's a signal you're past the intended use case for lsdb (staging/MVP/internal tools) and it's time to look at [migrating to a production database](#8-migration-to-production). In the meantime, also consider: requesting a Sheets API quota increase in Google Cloud Console, reducing frontend polling/refetch frequency (e.g. React Query `staleTime`), and batching multiple table reads behind a single request handler rather than issuing them from several separate endpoints.
+The cache buys real headroom (it can turn N reads within a burst into 1 API call), but it's still a per-process, best-effort layer, not a substitute for a real database's read scalability. If you're consistently near quota even with caching — many concurrent staff users, or dashboards that poll frequently — that's a signal you're past the intended use case for lsdb (staging/MVP/internal tools) and it's time to look at [migrating to a production database](#8-migration-to-production). In the meantime, also consider: requesting a Sheets API quota increase in Google Cloud Console, reducing frontend polling/refetch frequency (e.g. React Query `staleTime`), and prefetching multiple table reads behind a single request handler (below) rather than issuing them one table at a time.
+
+### A page that reads several different tables still costs one API call per table, even with caching on — how do I collapse those too?
+
+The cache (§11 above) only collapses *repeated* reads of the *same* tab — a handler that reads N different tables still makes N `values.get` calls on a cold cache, no matter how tight the TTL is. This was a known gap (see the Phase 12 follow-up in TODO.md) until `ctx.prefetch(tableNames)` closed it: it groups the requested tables by spreadsheet and issues one `spreadsheets.values.batchGet` per spreadsheet instead, then fills the same read cache `getAllRows()` already checks — so the `table().findMany()` calls that follow are cache hits, no application code changes needed beyond the `prefetch()` call itself.
+
+```typescript
+const adminCtx = adapter.withContext({ userId: 'system', actor: 'admin', actorSheetId: ADMIN_SHEET_ID });
+const teamCtx = adapter.withContext({ userId: user.id, actor: 'team', actorSheetId: team.actor_sheet_id });
+
+// 8 tables, 2 spreadsheets → 2 API calls total instead of 8, before any table() call runs
+await Promise.all([
+  adminCtx.prefetch(['users', 'teams', 'team_members']),
+  teamCtx.prefetch(['projects', 'project_members', 'tasks', 'task_assignees', 'task_statuses']),
+]);
+
+const [projects, tasks] = await Promise.all([
+  teamCtx.table('projects').findMany(),
+  teamCtx.table('tasks').findMany(),
+]); // both served from cache — zero further API calls
+```
+
+Call it once near the top of a request handler (a Next.js layout/page, an Express route) with every table that handler is about to read. It's additive to the existing cache, not a replacement: tables already cached and unexpired are skipped, and a table you forget to list is simply read the normal way (one `values.get`) the first time `table()` reaches it. `prefetch()` is on the `DatabaseAdapter` contract as an optional method implemented as a no-op on the SQL adapters, so it's safe to call unconditionally in code that has to stay portable across engines — see [`ctx.prefetch()`](./API.md#ctxprefetchtablenames) in API.md.
+
+If one of the requested tabs doesn't exist, Google rejects the *entire* `batchGet` with a 400 (it's an all-or-nothing request) — `getAllRowsBatch()` catches that and falls back to individual `getAllRows()` calls for that batch, so a typo'd or not-yet-synced table name doesn't take the other tables down with it; a non-400 error (e.g. a 429) still propagates normally. Batches are also chunked at 50 tabs per `batchGet` call to stay under Sheets' URL length limits — irrelevant for a typical page's table count, but means `prefetch()` scales to a request that genuinely reads dozens of tables without needing to be called in pieces.
+
+### Doesn't a `getAllRowsBatch()` racing against a concurrent write have the same stale-cache risk `getAllRows()` always had?
+
+It did in an earlier draft of this feature — a batch request holds its API call open for longer than a single-tab read, which made a write-lands-while-read-is-in-flight race more likely to actually matter, not just theoretically possible. Fixed with a per-key generation counter: `invalidateCache()` bumps the generation for a key, and a read (whether from `getAllRows()` or a tab inside a `getAllRowsBatch()`) only writes its result into the cache if the generation is still what it was when the read started. A write that lands mid-read no longer lets that read's `.then` put pre-write data back into the cache after the invalidation — the caller who triggered the read still gets whatever data was in flight (that's normal read-your-writes-adjacent behavior for a request that started before the write), but the *cache* itself ends up correctly holding the post-write state for the next reader.
 
 ---
 
@@ -836,3 +866,87 @@ No. `actorContext` is optional on both `UploadOptions` and `StorageAdapter.delet
 ### Why not fix the pre-existing `DriveStorageAdapter.resolveFolder()` gap that ignored `sharedDriveId`?
 
 Out of scope for this change — it's a real, separate gap (folder search/creation for uploads wasn't scoped to a configured Shared Drive, and `SheetClient.uploadFile()`/`deleteFile()` don't set `supportsAllDrives` either), but it only matters for a project that *also* configures `sharedDriveId`, which wasn't the reported use case (root-based per-category and per-actor-Drive placement, no Shared Drive involved). Flagged here so it isn't mistaken for fixed; happy to take it on as a follow-up if a project actually combines `sharedDriveId` with `adapter.upload()`.
+
+---
+
+## 16. Actor-Owned CRUD Clients (Per-Actor Quota)
+
+### Even with a per-actor sheet, every `findMany()`/`create()`/`update()` still shows up as an admin API call. Why?
+
+Because `table()` always built its `CRUDOperations` on the adapter's one admin `SheetClient`, regardless of which actor's sheet it was reading or writing. `tokenStore`/`actorTokens` (§8.1/§8.4 in TODO.md) were only ever consulted by `resolveActorClient()`, and only inside `createUserSheet()` (sheet placement) and `DriveStorageAdapter` (file placement) — never by `table()`. So even in the fully actor-owned model, where a user's spreadsheet genuinely lives in their own Google Drive, every CRUD call against it still went out under the *admin's* OAuth identity. Google's default Sheets quota (60 reads + 60 writes/minute) is counted per OAuth identity, so an app authenticating every user through one shared admin grant shares that one 60/min budget across its entire user base, no matter how many physically separate sheets exist.
+
+### How does `actorClientForCrud` fix this?
+
+```typescript
+const adapter = createSheetAdapter({
+  adminSheetId: process.env.ADMIN_SHEET_ID,
+  credentials: { clientId, clientSecret, redirectUri },
+  tokens: adminTokens,
+  tokenStore: myTokenStore,       // required — this is where actor tokens are resolved from
+  actorClientForCrud: true,        // or: { onAuthError: 'fallback-admin', maxCachedClients: 200 }
+});
+```
+
+When enabled, `SheetAdapter.clientFor(spreadsheetId)` routes a table operation to the current context actor's own `SheetClient` instead of the admin one, but **only** when all of these hold: there's an active `withContext()`, the actor isn't `admin`, and the table being read/written resolves to that actor's *own* sheet (`spreadsheetId === context.actorSheetId`). Admin tables and cross-actor targets (`targetActor`/`targetSheetId`) always keep using the admin client — it's the one identity guaranteed access to every sheet, which a same-actor client generally isn't. An actor with no stored tokens in `tokenStore` is unaffected: table operations for them keep going through the admin client exactly as before, so turning the flag on doesn't require every actor to have tokens up front.
+
+Enabling it with no `tokenStore` configured is a no-op (there'd be nothing to resolve actor clients from) — `SheetAdapter` logs a `console.warn` rather than silently doing nothing or throwing.
+
+### Doesn't creating a fresh `SheetClient` per actor lose the read cache and in-flight de-duplication that §11 depends on?
+
+It would, if each actor's client held its own private cache — two clients reading the same tab would each cache it separately, and a write through one wouldn't invalidate the other's copy. `ActorClientPool` avoids this by construction: every pooled actor `SheetClient` is built with the **admin client's own `SheetReadCache` instance** injected in, not a fresh one. One shared cache, several clients reading/writing through it — a write from any of them (including an admin doing a cross-actor write into a user's sheet) invalidates that tab for every client, the same guarantee §11 already provides for the single-admin-client case. What *is* new per actor is the client object itself (the thing that holds OAuth credentials and makes the actual `sheets.spreadsheets.values.*` calls) — that's the part this feature intentionally routes per-actor, to split the API quota; the cache underneath stays unified.
+
+Actor clients themselves are kept in a small LRU (`ActorClientPool`, default cap 100, `maxCachedClients` to change it) keyed by `userId`, resolved lazily from `tokenStore.get(userId)` the first time that actor's sheet is touched. An actor with no stored tokens yet isn't cached at all — they're re-checked on every call, so tokens stored later (e.g. right after that user completes an OAuth grant) are picked up without restarting the process.
+
+### What happens when an actor's stored token is revoked or expires past what the refresh token can fix?
+
+Google raises `invalid_grant` from the token refresh, which happens before the actual API request goes out. `ActorRoutedStorageClient` catches this specifically (not every error — only a real `invalid_grant`), evicts that actor's client from the pool so the *next* call re-resolves fresh tokens from `tokenStore` rather than retrying the same dead client, and then either:
+
+- **Throws `ActorAuthError`** (default, `onAuthError: 'throw'`) — a typed error carrying `userId` and the underlying `cause`, so the caller can catch it specifically and prompt that user to re-authorize, distinct from a generic 401 buried inside a CRUD call.
+- **Retries the call on the admin client** (`onAuthError: 'fallback-admin'`) — the operation still completes (under the admin's quota, for that one call), instead of failing the request outright for a user whose grant happens to be stale at that moment.
+
+Neither behavior silently swallows the problem — `'throw'` surfaces it immediately as a typed error the caller must handle, `'fallback-admin'` trades a quota-isolation guarantee for availability on exactly the calls that hit a bad grant, nothing more.
+
+### Does a refreshed access token actually get saved anywhere, or does it just live in memory until the next `invalid_grant`?
+
+It's persisted. `googleapis`' `OAuth2Client` refreshes an expired access token transparently and emits a `tokens` event with the new credentials — `ActorClientPool` listens for that (`SheetClient.onTokensRefreshed()`) and writes the refreshed token back through `tokenStore.set(userId, ...)`. Without this, a refreshed token would only ever exist in that one process's memory; a restart (deploy, crash, autoscale-down) would fall back to the stale access token stored in `tokenStore`, forcing an unnecessary refresh round-trip (harmless, just wasteful) or, in the worst case, a stale token that's already past what a silent refresh can recover from.
+
+### Is this the same mechanism as `createUserSheet({ actorTokens })` / per-actor uploads (§15)?
+
+Related, not identical. `resolveActorClient()` (`driveTenancy.ts`) — actorTokens > `tokenStore.get(userId)` > admin client — is the resolution *order* shared by `createUserSheet()`, `DriveStorageAdapter` uploads, and `actorClientForCrud`; all three answer "whose Google identity should this operation run under?" the same way. But they're three independent opt-ins with three independent effects: `createUserSheet({ actorTokens })` decides where a *sheet* physically lives (whose Drive), §15's per-actor upload placement decides where an *uploaded file* lands, and `actorClientForCrud` decides whose *API quota* a CRUD call counts against once that sheet already exists, regardless of which Drive it's actually sitting in. You can have an actor-owned sheet without `actorClientForCrud` (their sheet lives in their Drive, but CRUD against it still spends the admin's quota — the exact problem this section opens with) or `actorClientForCrud` without actor-owned sheets (an admin-owned sheet, but reads/writes to it still go out under that actor's own OAuth grant once they have one via `tokenStore`).
+
+---
+
+## 17. Opting Out of Sharing Actor Sheets
+
+### `createUserSheet()` always shared the new sheet with the actor's own email. What's wrong with that as a default?
+
+Nothing, for the case it was designed for — an app where end users are meant to be able to open their own data directly in Google Sheets. It's actively wrong for a different, equally common case: an app where the sheet is purely a storage backend and only the app itself should ever write to it. Three concrete problems show up in that second case:
+
+- **App-level rules can be bypassed.** Anything the app treats as read-only, computed, or otherwise not directly user-editable (a computed total, a status the app transitions through a state machine, a field only an admin endpoint should set) can just be typed over directly in the spreadsheet, with no validation, since Sheets itself enforces none of that.
+- **It breaks the read-cache staleness guarantee.** §11's cache is safe specifically because every write path the *adapter* knows about calls `invalidateCache()`. A direct edit made in the Sheets UI bypasses the adapter entirely, so nothing invalidates anything — the app keeps serving the pre-edit cached value until the TTL naturally expires. An app that deliberately runs a longer TTL (`cache: { ttlMs: 5000 }` or more) because it trusts "only the app writes here" loses exactly that guarantee the moment a human can edit the sheet directly.
+- **Not every actor is a person with a real Google account.** An actor representing a team, an organization, or any non-human entity might only have a synthetic placeholder address (e.g. `team-42@example.internal`) in the `users`/actor-equivalent table. Sharing a Drive file with an address that isn't a real Google account doesn't silently no-op — Drive's `permissions.create` call can outright reject or error on it, and previously that happened *after* the spreadsheet was already created, leaving an orphaned sheet with no corresponding `users` row.
+
+### How do I opt out?
+
+```typescript
+// Per call:
+await adapter.createUserSheet('team_42', 'team', undefined, { shareWithActor: false });
+
+// Or adapter-wide default, overridable per call:
+const adapter = createSheetAdapter({
+  // ...
+  sheetSharing: { shareWithActor: false },
+});
+```
+
+`shareWithActor: false` skips the `shareWithUser(sheetId, email, ...)` call to the actor entirely. Sharing with `SUPER_ADMIN_EMAIL` (if configured) is unaffected either way — that share is about the admin's own operational access, not the actor's, and has nothing to do with the problem this option addresses. Because `email` is only actually needed when the sheet *is* going to be shared with the actor, it's optional on `createUserSheet()` now — passing `shareWithActor: false` with no email (or `undefined`) is valid; passing neither an email nor `shareWithActor: false` throws `ValidationError` immediately, before anything is created, rather than failing later at the share step.
+
+There's a middle option too: `shareRole: 'reader'` (or `'commenter'`) still shares the sheet with the actor — so they can see their own data directly in Sheets if that's useful — without letting them edit it outside the app. This keeps the read-cache guarantee (nothing bypasses `invalidateCache()` if the actor literally cannot write) while dropping the "app-level rules can be bypassed" and "human can create stale reads" problems above; it doesn't help at all for a non-person actor with no real Google account, since sharing with any role still requires a real address.
+
+### What happens if the sheet gets created but the share call itself fails?
+
+Before this, a failed `shareWithUser()` call would just throw whatever raw Drive API error `googleapis` produced, with the spreadsheet already sitting there, created, with no `users` row pointing at it and no indication in the error of which sheet was left behind. Now it's wrapped in `SheetSharingError`, which carries the `sheetId` (so the caller can look it up, delete it, or retry sharing on it directly), the `email` the share was attempted for, and the original `cause`. This applies to both the admin share and the actor share — either one failing raises the same typed error with the same `sheetId`, since in both cases the fix is the same: go deal with that specific orphaned spreadsheet, the row was never written.
+
+### Does this change existing behavior for apps that don't touch either option?
+
+No. `shareWithActor` defaults to `true` and `shareRole` defaults to `'writer'` — identical to every `createUserSheet()` call before this option existed. The only user-visible change for an app that never sets `sheetSharing`/`shareWithActor`/`shareRole` is that a share failure now surfaces as `SheetSharingError` instead of a raw Drive error, which is additive (a `SheetSharingError` still `instanceof Error`, and carries strictly more information, not less).

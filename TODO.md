@@ -303,8 +303,8 @@
 - `'invite-only'` registration policy (future)
 - Service account alternative for sync (future)
 - Column encryption, audit logs, row-level permissions (lower priority)
-- `values.batchGet` batching across tables read within one request handler (medium priority — see Phase 12 follow-ups)
 - Optional write-side rate limiter for bulk `create()`/`update()` loops (lower priority)
+- **Test coverage for Phase 24.2/24.3** (`actorClientForCrud`, `sheetSharing`/`shareWithActor`) — both features are implemented and build/lint clean, but have no dedicated tests yet; see Phase 24 below
 
 ---
 
@@ -392,7 +392,7 @@
 
 ### Follow-ups not yet done
 
-- [ ] Batch multiple table reads within a single request handler into one `spreadsheets.values.batchGet` call instead of N separate `getAllRows()` calls (the cache collapses *repeated* reads of the *same* tab, but a handler reading 3 different tables, like `loadCatalog()` in a typical RBAC router, still makes 3 API calls)
+- [x] Batch multiple table reads within a single request handler into one `spreadsheets.values.batchGet` call instead of N separate `getAllRows()` calls — done via `adapter.prefetch()`, see Phase 24.1
 - [ ] Optional write-side rate limiter / token bucket for bulk `create()`/`update()` loops outside of `createMany()`, to smooth bursts the same way `sync --all-users`' exponential backoff does for schema syncing
 
 ---
@@ -646,6 +646,51 @@
 ### Follow-ups not yet done
 
 - [ ] `DriveStorageAdapter`'s Drive calls (`findOrCreateFolder` inside `resolveFolder()`, `uploadFile()`, `deleteFile()`) don't pass `sharedDriveId`/`supportsAllDrives` — fine for the reported use case (root-based categories, actor-owned Drives, no Shared Drive), but a project combining `sharedDriveId` with `adapter.upload()` would hit the same class of gap `resolveRoleFolder()` already fixed for the *role-subfolder* portion. Scoped out of 23.1; pick up if a real use case needs it.
+
+---
+
+## Phase 24: TrackTask Feature Requests — Sheets API Quota (2026-09-28)
+
+> Goal: three requests from TrackTask (running on a single admin OAuth grant shared by every user, against Google's default 60 reads + 60 writes/min/user quota), tracked in their `FEATURE_REQUESTS.md` against `longcelot-sheet-db@0.1.47`. Implemented directly on top of 0.1.47 (not yet released to npm — see `[Unreleased]` in CHANGELOG.md).
+
+### 24.1 Batched tab reads (`values.batchGet`) — Done, fully tested
+
+- [x] `SheetClient.getAllRowsBatch(spreadsheetId, sheetNames)` — one `spreadsheets.values.batchGet` per spreadsheet instead of one `values.get` per tab; results are written into the same read cache `getAllRows()` reads from, keyed identically (`spreadsheetId::sheetName`)
+- [x] Already-cached and already-in-flight tabs are excluded from the batch — a batch only ever requests tabs it doesn't already have an answer for; a concurrent `getAllRows()` on a tab inside an in-flight batch joins it instead of issuing its own `values.get`
+- [x] One nonexistent tab in the batch falls back to per-tab `getAllRows()` for every tab in that batch (Google 400s the whole `batchGet` if any range names a missing tab) — non-400 errors (e.g. 429) propagate without a per-tab fallback
+- [x] Chunked at `BATCH_GET_CHUNK_SIZE = 50` tabs per `batchGet` call, to stay well under Sheets API URL length limits
+- [x] **Read/write race fixed for both `getAllRows()` and `getAllRowsBatch()`**: `SheetReadCache` (extracted to its own class, shared across the admin client and any per-actor clients from 24.2) now tracks a per-key generation counter, bumped by `invalidateCache()`. A read only writes its result into the cache if the key's generation is unchanged since the read started — closes the pre-existing race described in the original request (a write landing mid-read no longer lets the read's `.then` put stale pre-write data back into the cache)
+- [x] `SheetAdapter.prefetch(tableNames: string[]): Promise<void>` — resolves each table to its spreadsheet via the same rules as `table()` (including the permission check via `hasPermission()`), groups by spreadsheet, and issues one `getAllRowsBatch()` per group; only warms the cache, reads still go through `table()`
+- [x] `prefetch()` added to the `DatabaseAdapter` contract (`src/adapter/types.ts`) as optional; `getAllRowsBatch` added to `StorageClient` as optional (Sheets-only, like `extendValidation`)
+- [x] No-op `prefetch()` implemented on `SQLAdapterBase` and `PrismaAdapterBase` so application code can call it unconditionally across engines
+- [x] `cache.enabled: false` → `prefetch()` makes no API calls at all
+- [x] Tests: `tests/unit/prefetchBatch.test.ts` — cold-cache batch + 0 follow-up calls, partial-cache batch requests only the uncached tabs, concurrent `getAllRows()` joins an in-flight batch (and vice versa), missing-tab fallback (existing tabs still load), non-400 errors propagate without falling back, >50-tab chunking, write-during-in-flight-batch race guard (and the same guard for plain `getAllRows()`), multi-spreadsheet `prefetch()` issuing one batch per spreadsheet, permission enforcement, `cache.enabled: false` no-op, SQL adapter no-op — 15 cases, all passing
+- **Fixed along the way**: `SQLAdapterBase.prefetch()`/`PrismaAdapterBase.prefetch()` originally declared zero parameters (`async prefetch(): Promise<void>`) instead of accepting (and ignoring) `tableNames: string[]` — passed `tsc` because TS structurally allows a narrower-arity method to satisfy a wider interface, but broke calling `prefetch(tableNames)` directly on a concretely-typed instance, which is exactly what the SQL-adapter test case in `prefetchBatch.test.ts` does. Fixed by widening both to `prefetch(_tableNames: string[])` — this was the only thing blocking `pnpm test` from passing on this phase's branch
+
+### 24.2 Actor-owned CRUD client (per-actor quota) — Implemented, **no tests yet**
+
+- [x] `ActorClientPool` (`src/adapter/actorCrudClient.ts`) — small LRU of `SheetClient`s keyed by `userId` (default cap 100, configurable), resolved lazily from `tokenStore.get(userId)`; actors with no stored tokens aren't cached, so tokens stored later are picked up without a restart
+- [x] Every pooled actor client shares the **admin client's `SheetReadCache` instance** (not a separate cache per client) — a write through any client (including an admin cross-actor write into a user's sheet) invalidates that tab for every client reading it, closing the cross-client staleness gap called out in the original request
+- [x] Token refresh persistence — `SheetClient.onTokensRefreshed()` hook wired so a refreshed access token is written back via `tokenStore.set()`, not left in memory only
+- [x] `ActorRoutedStorageClient implements StorageClient` — runs each table operation on the actor's own client when the pool has one for the current `userId`, admin client otherwise; on `invalid_grant` it evicts the actor's cached client and either throws a typed `ActorAuthError` (default) or retries the call on the admin client (`onAuthError: 'fallback-admin'`)
+- [x] `SheetAdapter.clientFor(spreadsheetId)` — routes to the actor client only when there's a context, the actor isn't `admin`, and the target spreadsheet is that actor's *own* sheet (`spreadsheetId === ctx.actorSheetId`); admin tables and cross-actor targets always use the admin client, matching the original request's scoping
+- [x] Opt-in via `createSheetAdapter({ actorClientForCrud: true | ActorCrudClientConfig })`; a `console.warn` fires (no crash) if enabled without a `tokenStore`, since there'd be nothing to resolve actor tokens from
+- [x] `ActorCrudClientConfig { onAuthError?: 'throw' | 'fallback-admin'; maxCachedClients?: number }` and `ActorAuthError` (carries `userId` + `cause`) exported from the package
+- [ ] **Tests** — none written yet. Needed per the original request: actor-with-tokens routes table reads through their own client (admin tables still through admin client); actor-without-tokens is unchanged; an admin cross-actor write clears the actor client's cached read of that tab; flag off → zero behavior change; `invalid_grant` → `ActorAuthError` by default, falls back to admin client with `onAuthError: 'fallback-admin'`
+
+### 24.3 Opt out of sharing actor sheets with the actor — Implemented, **no tests yet**
+
+- [x] `SheetSharingConfig { shareWithActor?: boolean; shareRole?: 'reader' | 'commenter' | 'writer' }` — `CreateUserSheetOptions` now extends it (per-call override); `createSheetAdapter({ sheetSharing })` sets the adapter-wide default. Default unchanged: `shareWithActor: true`, `shareRole: 'writer'`
+- [x] `shareWithActor: false` skips the `shareWithUser(sheetId, email, ...)` call entirely; sharing with `SUPER_ADMIN_EMAIL` is unaffected either way
+- [x] `email` is optional on `createUserSheet()` — required only when `shareWithActor` resolves to `true` (throws `ValidationError` up front if omitted with sharing still on), so non-person actors (teams, synthetic addresses) don't need one when opted out
+- [x] `SheetSharingError` (carries `sheetId`, `email`, `cause`) — thrown when the spreadsheet was created but the share call itself fails, for either the admin or the actor share, so the caller can see the orphaned `sheetId` and clean up or retry instead of losing track of it; no `admin.users` row is written before this point
+- [x] `SheetSharingError`/`ActorAuthError` exported from `src/index.ts`; `ShareRole` type also newly exported
+- [ ] **Tests** — none written yet, though `MockSheetClient` was already extended with a `shareWithUserCalls` tracker in anticipation of them. Needed per the original request: `shareWithActor: false` → `shareWithUser` called only for `SUPER_ADMIN_EMAIL`; `shareRole: 'reader'` → actor's share call uses role `reader`; default options → identical calls to before this phase; a failing share throws `SheetSharingError` carrying `sheetId`, with no `users` row written
+
+### Documentation
+
+- [x] TODO.md (this section), CHANGELOG.md `[Unreleased]`, API.md (`ctx.prefetch()`, `actorClientForCrud`/`ActorCrudClientConfig`, `sheetSharing`/`SheetSharingConfig`/`shareWithActor`/`shareRole`, `SheetSharingError`/`ActorAuthError`), FAQ.md (new Q&A under §11, new §16/§17), CLAUDE.md (architecture notes)
+- [x] README.md — Features list, new "Batched Reads Across Tables", "Per-Actor CRUD Quota", and "Opting Out of Sharing Actor Sheets" subsections (with an explicit "no dedicated tests yet" note on the latter two, pointing at CHANGELOG.md)
 
 ---
 

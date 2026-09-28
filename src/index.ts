@@ -2,6 +2,8 @@ export { ValidationError } from './errors/ValidationError';
 export { PermissionError } from './errors/PermissionError';
 export { SchemaError } from './errors/SchemaError';
 export { SchemaMismatchError } from './errors/SchemaMismatchError';
+export { SheetSharingError } from './errors/SheetSharingError';
+export { ActorAuthError } from './errors/ActorAuthError';
 
 export { defineTable } from './schema/defineTable';
 export { string, number, boolean, date, json, ColumnBuilder } from './schema/columnBuilder';
@@ -34,6 +36,8 @@ export type {
   UploadActorContext,
   StorageAdapter,
   CreateUserSheetOptions,
+  SheetSharingConfig,
+  ActorCrudClientConfig,
 } from './schema/types';
 
 export { computeSchemaHash } from './utils/schemaHash';
@@ -62,7 +66,7 @@ export type {
 // Phase 16: formal adapter contract — implement these to back `adapter.table(name)` with a
 // non-Sheets storage engine (e.g. Postgres/MySQL) without reaching into internals.
 export type { DatabaseAdapter, TableOperations, StorageClient } from './adapter/types';
-export type { ColumnValidationRule } from './adapter/sheetClient';
+export type { ColumnValidationRule, ShareRole } from './adapter/sheetClient';
 
 // Phase 16.2: SQL backends — Postgres/MySQL (pg/mysql2 are optional peerDependencies, lazily
 // required only inside these factories) and Prisma (wraps a consumer-provided PrismaClient; see

@@ -6,6 +6,45 @@ import type { StorageClient } from './types';
 
 const DEFAULT_CACHE_TTL_MS = 2000;
 
+/** Max tabs per values.batchGet request — keeps the `ranges=` query string well under URL length limits. */
+export const BATCH_GET_CHUNK_SIZE = 50;
+
+export type ShareRole = 'reader' | 'commenter' | 'writer';
+
+/**
+ * getAllRows()'s read cache + in-flight de-duplication, held outside SheetClient so several
+ * clients (the admin client and per-actor clients, see `actorClientForCrud`) can share one:
+ * a write through any client then invalidates the tab for all of them.
+ */
+export class SheetReadCache {
+  /** Cached rows keyed by `${spreadsheetId}::${sheetName}`, valid until expiresAt. */
+  readonly entries = new Map<string, { data: string[][]; expiresAt: number }>();
+  /** Collapses concurrent reads of the same key into a single API request. */
+  readonly inFlight = new Map<string, Promise<string[][]>>();
+  /**
+   * Bumped by invalidate(). A read only stores its result if the key's generation is unchanged
+   * since the read started — otherwise a read that was in flight when a write landed would put
+   * pre-write data back into the cache after the write's invalidation.
+   */
+  private readonly generations = new Map<string, number>();
+
+  generation(key: string): number {
+    return this.generations.get(key) ?? 0;
+  }
+
+  invalidate(key: string): void {
+    this.entries.delete(key);
+    this.inFlight.delete(key);
+    this.generations.set(key, this.generation(key) + 1);
+  }
+}
+
+function isBadRequest(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: unknown; status?: unknown; response?: { status?: unknown } };
+  return e.code === 400 || e.code === '400' || e.status === 400 || e.response?.status === 400;
+}
+
 export interface CreateSpreadsheetOptions {
   /** Place the spreadsheet inside this Drive folder ID. */
   folderId?: string;
@@ -84,15 +123,14 @@ export class SheetClient implements StorageClient {
   private auth: OAuth2Client;
   private cacheEnabled: boolean;
   private cacheTtlMs: number;
-  /** getAllRows() results keyed by `${spreadsheetId}::${sheetName}`, valid until expiresAt. */
-  private _readCache = new Map<string, { data: string[][]; expiresAt: number }>();
-  /** Collapses concurrent getAllRows() calls for the same key into a single API request. */
-  private _inFlightReads = new Map<string, Promise<string[][]>>();
+  private readCache: SheetReadCache;
 
   constructor(
     credentials: { clientId: string; clientSecret: string; redirectUri: string },
     tokens: unknown,
-    cacheConfig?: SheetReadCacheConfig
+    cacheConfig?: SheetReadCacheConfig,
+    /** Share one read cache between several clients — see SheetReadCache. Defaults to a private one. */
+    readCache?: SheetReadCache
   ) {
     this.auth = new google.auth.OAuth2(
       credentials.clientId,
@@ -104,6 +142,19 @@ export class SheetClient implements StorageClient {
     this.drive = google.drive({ version: 'v3', auth: this.auth });
     this.cacheEnabled = cacheConfig?.enabled ?? true;
     this.cacheTtlMs = cacheConfig?.ttlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.readCache = readCache ?? new SheetReadCache();
+  }
+
+  getReadCache(): SheetReadCache {
+    return this.readCache;
+  }
+
+  /**
+   * Called with the new credentials whenever googleapis refreshes this client's access token
+   * (only the changed fields — e.g. no refresh_token), so callers can persist them.
+   */
+  onTokensRefreshed(listener: (tokens: Credentials) => void): void {
+    this.auth.on('tokens', listener);
   }
 
   async createSpreadsheet(title: string, options?: CreateSpreadsheetOptions): Promise<string> {
@@ -395,25 +446,107 @@ export class SheetClient implements StorageClient {
     if (!this.cacheEnabled) return this._fetchAllRows(spreadsheetId, sheetName);
 
     const key = this._cacheKey(spreadsheetId, sheetName);
-    const cached = this._readCache.get(key);
+    const cached = this.readCache.entries.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-    const inFlight = this._inFlightReads.get(key);
+    const inFlight = this.readCache.inFlight.get(key);
     if (inFlight) return inFlight;
 
-    const promise = this._fetchAllRows(spreadsheetId, sheetName)
-      .then((data) => {
-        this._readCache.set(key, { data, expiresAt: Date.now() + this.cacheTtlMs });
-        this._inFlightReads.delete(key);
-        return data;
-      })
-      .catch((err) => {
-        this._inFlightReads.delete(key);
-        throw err;
-      });
+    return this._trackRead(key, this._fetchAllRows(spreadsheetId, sheetName));
+  }
 
-    this._inFlightReads.set(key, promise);
+  /**
+   * Reads several tabs of one spreadsheet with a single `values.batchGet` request (one request
+   * against the per-user read quota instead of one per tab) and caches each tab under the same key
+   * getAllRows() uses, so later findMany()/findOne() calls on those tabs are cache hits. Tabs that
+   * are already cached are skipped; tabs already being fetched are awaited rather than re-requested,
+   * and a getAllRows() issued while the batch is in flight joins it.
+   *
+   * If any requested tab doesn't exist Google rejects the whole batch with a 400 — the batch then
+   * falls back to one values.get per tab, so the existing tabs still load. Rejects with the first
+   * per-tab error (after every other tab has settled and been cached).
+   */
+  async getAllRowsBatch(spreadsheetId: string, sheetNames: string[]): Promise<Map<string, string[][]>> {
+    const names = Array.from(new Set(sheetNames));
+    const pending = new Map<string, Promise<string[][]>>();
+    const missing: string[] = [];
+
+    for (const name of names) {
+      const key = this._cacheKey(spreadsheetId, name);
+      const cached = this.cacheEnabled ? this.readCache.entries.get(key) : undefined;
+      const inFlight = this.cacheEnabled ? this.readCache.inFlight.get(key) : undefined;
+      if (cached && cached.expiresAt > Date.now()) pending.set(name, Promise.resolve(cached.data));
+      else if (inFlight) pending.set(name, inFlight);
+      else missing.push(name);
+    }
+
+    for (let i = 0; i < missing.length; i += BATCH_GET_CHUNK_SIZE) {
+      const chunk = missing.slice(i, i + BATCH_GET_CHUNK_SIZE);
+      const batch = this._batchGetRows(spreadsheetId, chunk);
+      chunk.forEach((name, index) => {
+        const perTab = batch.then(
+          (all) => all[index],
+          (err: unknown) => {
+            if (isBadRequest(err)) return this._fetchAllRows(spreadsheetId, name);
+            throw err;
+          }
+        );
+        pending.set(
+          name,
+          this.cacheEnabled ? this._trackRead(this._cacheKey(spreadsheetId, name), perTab) : perTab
+        );
+      });
+    }
+
+    const settled = await Promise.allSettled(names.map((name) => pending.get(name)!));
+    const result = new Map<string, string[][]>();
+    for (let i = 0; i < names.length; i++) {
+      const outcome = settled[i];
+      if (outcome.status === 'rejected') throw outcome.reason;
+      result.set(names[i], outcome.value);
+    }
+    return result;
+  }
+
+  /** Whether getAllRows() results are cached — prefetching is pointless when they aren't. */
+  isCacheEnabled(): boolean {
+    return this.cacheEnabled;
+  }
+
+  /**
+   * Registers `fetch` as the in-flight read for `key` and caches its result when it settles —
+   * unless the tab was invalidated (written to) while the read was in flight, in which case the
+   * possibly pre-write data is returned to this caller but not cached.
+   */
+  private _trackRead(key: string, fetch: Promise<string[][]>): Promise<string[][]> {
+    const generation = this.readCache.generation(key);
+    const clearInFlight = () => {
+      if (this.readCache.inFlight.get(key) === promise) this.readCache.inFlight.delete(key);
+    };
+    const promise: Promise<string[][]> = fetch.then(
+      (data) => {
+        clearInFlight();
+        if (this.readCache.generation(key) === generation) {
+          this.readCache.entries.set(key, { data, expiresAt: Date.now() + this.cacheTtlMs });
+        }
+        return data;
+      },
+      (err: unknown) => {
+        clearInFlight();
+        throw err;
+      }
+    );
+    this.readCache.inFlight.set(key, promise);
     return promise;
+  }
+
+  private async _batchGetRows(spreadsheetId: string, sheetNames: string[]): Promise<string[][][]> {
+    const response = await this.sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges: sheetNames.map((name) => `${name}!A:ZZ`),
+    });
+    const valueRanges = response.data.valueRanges ?? [];
+    return sheetNames.map((_name, index) => (valueRanges[index]?.values as string[][] | undefined) ?? []);
   }
 
   private async _fetchAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]> {
@@ -430,9 +563,7 @@ export class SheetClient implements StorageClient {
 
   /** Drops the cached read (if any) for a tab. Called automatically after every write; also exposed for callers that write to a sheet outside this client (e.g. a human editing it directly) and need to force the next read to be fresh. */
   invalidateCache(spreadsheetId: string, sheetName: string): void {
-    const key = this._cacheKey(spreadsheetId, sheetName);
-    this._readCache.delete(key);
-    this._inFlightReads.delete(key);
+    this.readCache.invalidate(this._cacheKey(spreadsheetId, sheetName));
   }
 
   async updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: string[]): Promise<void> {
@@ -469,7 +600,7 @@ export class SheetClient implements StorageClient {
     this.invalidateCache(spreadsheetId, sheetName);
   }
 
-  async shareWithUser(spreadsheetId: string, email: string, role: 'reader' | 'writer' = 'writer'): Promise<void> {
+  async shareWithUser(spreadsheetId: string, email: string, role: ShareRole = 'writer'): Promise<void> {
     await this.drive.permissions.create({
       fileId: spreadsheetId,
       requestBody: {

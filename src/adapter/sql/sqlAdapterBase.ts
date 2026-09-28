@@ -101,6 +101,12 @@ export class SQLAdapterBase implements DatabaseAdapter {
     });
   }
 
+  /** No-op: there's no read cache to warm — exists so callers can prefetch() unconditionally across engines. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async prefetch(_tableNames: string[]): Promise<void> {
+    // Intentionally empty — see DatabaseAdapter.prefetch().
+  }
+
   table(tableName: string): SQLTableOperations {
     const schema = this.schemas.get(tableName);
     if (!schema) {

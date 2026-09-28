@@ -203,11 +203,33 @@ export interface StorageAdapter {
   delete(url: string, actorContext?: UploadActorContext): Promise<void>;
 }
 
-export interface CreateUserSheetOptions {
+export interface SheetSharingConfig {
+  /**
+   * Share a newly created admin-owned actor sheet with the actor's email. Default: true. Set false
+   * when the sheet is purely a storage backend: only the app writes to it (so app-level rules and
+   * the read cache can't be bypassed by direct edits), or the actor isn't a person (a team/org
+   * with no Google account). Sharing with SUPER_ADMIN_EMAIL is unaffected.
+   */
+  shareWithActor?: boolean;
+  /** Role granted to the actor when shared. Default: 'writer'. */
+  shareRole?: 'reader' | 'commenter' | 'writer';
+}
+
+export interface CreateUserSheetOptions extends SheetSharingConfig {
   /** OAuth tokens from the actor's own Google login. When provided, the sheet is created in the actor's Drive. */
   actorTokens?: OAuthTokens;
   /** Extra fields spread into the users table create() call. */
   extraFields?: Record<string, unknown>;
+}
+
+export interface ActorCrudClientConfig {
+  /**
+   * What to do when an actor's own grant is rejected (`invalid_grant`) during a CRUD call:
+   * 'throw' (default) raises ActorAuthError; 'fallback-admin' retries the call on the admin client.
+   */
+  onAuthError?: 'throw' | 'fallback-admin';
+  /** Max actor clients kept in memory (least recently used evicted first). Default: 100. */
+  maxCachedClients?: number;
 }
 
 export interface SheetReadCacheConfig {

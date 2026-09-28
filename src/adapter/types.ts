@@ -33,6 +33,14 @@ export interface DatabaseAdapter {
   withContext(context: UserContext): DatabaseAdapter;
   asActor(targetActor: string, targetSheetId: string): DatabaseAdapter;
   table(tableName: string): TableOperations;
+  /**
+   * Warms the read cache for several tables in as few storage requests as possible (Sheets: one
+   * `values.batchGet` per spreadsheet), so later `table(name).findMany()`/`findOne()` calls are
+   * cache hits. Validates each table exactly like `table()` does. Optional on the contract; every
+   * built-in adapter implements it, and the SQL adapters implement it as a no-op, so application
+   * code can call it unconditionally and stay engine-portable.
+   */
+  prefetch?(tableNames: string[]): Promise<void>;
 }
 
 /**
@@ -46,6 +54,8 @@ export interface DatabaseAdapter {
  */
 export interface StorageClient {
   getAllRows(spreadsheetId: string, sheetName: string): Promise<string[][]>;
+  /** Optional batched getAllRows() — see SheetClient.getAllRowsBatch(). */
+  getAllRowsBatch?(spreadsheetId: string, sheetNames: string[]): Promise<Map<string, string[][]>>;
   appendRow(spreadsheetId: string, sheetName: string, values: string[]): Promise<number>;
   appendRows(spreadsheetId: string, sheetName: string, rows: string[][]): Promise<void>;
   updateRow(spreadsheetId: string, sheetName: string, rowIndex: number, values: string[]): Promise<void>;

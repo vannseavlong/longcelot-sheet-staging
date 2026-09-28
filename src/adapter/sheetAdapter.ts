@@ -1,6 +1,7 @@
 import { SheetClient } from './sheetClient';
 import { CRUDOperations } from './crud';
-import type { DatabaseAdapter } from './types';
+import type { DatabaseAdapter, StorageClient } from './types';
+import { ActorClientPool, ActorRoutedStorageClient } from './actorCrudClient';
 import { hasPermission as accessControlHasPermission, resolveNonAdminTenantKey } from './accessControl';
 import { resolveActorClient, resolveRoleFolder, type DriveTenancyInjection } from './driveTenancy';
 import {
@@ -17,6 +18,8 @@ import {
   CreateUserSheetOptions,
   SheetStyleConfig,
   SheetReadCacheConfig,
+  SheetSharingConfig,
+  ActorCrudClientConfig,
 } from '../schema/types';
 
 const DEFAULT_HEADER_COLOR = '#E8F0FE';
@@ -33,6 +36,8 @@ interface NormalisedContext {
 import { PermissionError } from '../errors/PermissionError';
 import { SchemaError } from '../errors/SchemaError';
 import { SchemaMismatchError } from '../errors/SchemaMismatchError';
+import { SheetSharingError } from '../errors/SheetSharingError';
+import { ValidationError } from '../errors/ValidationError';
 import { computeSchemaHash } from '../utils/schemaHash';
 import { buildValidationRules } from '../utils/validationRules';
 import { defineTable } from '../schema/defineTable';
@@ -74,6 +79,16 @@ export interface SheetAdapterConfig {
   sheetStyle?: SheetStyleConfig;
   /** In-memory read cache for values.get() calls — smooths out Sheets API read-quota (429) errors. Enabled by default with a 2s TTL. */
   cache?: SheetReadCacheConfig;
+  /** Adapter-wide default for whether/how createUserSheet() shares an admin-owned sheet with the actor. Overridable per call. */
+  sheetSharing?: SheetSharingConfig;
+  /**
+   * Opt-in: run table operations on the context actor's own sheet through that actor's OAuth
+   * client (resolved from `tokenStore`) instead of the admin client, so each actor's reads/writes
+   * count against their own per-user Sheets API quota. Admin tables and cross-actor targets keep
+   * using the admin client. Actors with no stored tokens use the admin client, as before. Requires
+   * `tokenStore`. Default: off.
+   */
+  actorClientForCrud?: boolean | ActorCrudClientConfig;
 }
 
 export class SheetAdapter implements DatabaseAdapter {
@@ -90,6 +105,10 @@ export class SheetAdapter implements DatabaseAdapter {
   private storage?: StorageAdapter;
   private sheetStyle: Required<SheetStyleConfig>;
   private cacheConfig?: SheetReadCacheConfig;
+  private sheetSharing?: SheetSharingConfig;
+  /** Set when actorClientForCrud is enabled (and a tokenStore is configured). */
+  private actorClientPool?: ActorClientPool;
+  private actorAuthErrorMode: 'throw' | 'fallback-admin' = 'throw';
   /** Cached Drive folder IDs: role -> folderId */
   private _folderCache = new Map<string, string>();
   /** Pending schema version check promise set by withContext() */
@@ -108,6 +127,23 @@ export class SheetAdapter implements DatabaseAdapter {
     this.sharedDriveId = config.sharedDriveId;
     this.tokenStore = config.tokenStore;
     this.storage = config.storage;
+    this.sheetSharing = config.sheetSharing;
+    if (config.actorClientForCrud) {
+      const crudConfig = typeof config.actorClientForCrud === 'object' ? config.actorClientForCrud : {};
+      if (!this.tokenStore) {
+        console.warn('[lsdb] actorClientForCrud has no effect without a tokenStore — all table operations use the admin client.');
+      } else {
+        this.actorAuthErrorMode = crudConfig.onAuthError ?? 'throw';
+        this.actorClientPool = new ActorClientPool(
+          this.credentials,
+          this.cacheConfig,
+          this.tokenStore,
+          // Shared with the admin client so a write through either invalidates reads for both.
+          typeof this.client.getReadCache === 'function' ? this.client.getReadCache() : undefined,
+          crudConfig.maxCachedClients
+        );
+      }
+    }
     this.sheetStyle = {
       headerColor: config.sheetStyle?.headerColor ?? DEFAULT_HEADER_COLOR,
       freezeHeader: config.sheetStyle?.freezeHeader ?? true,
@@ -218,7 +254,7 @@ export class SheetAdapter implements DatabaseAdapter {
 
     const fkResolver = this.createFKResolver();
     return new CRUDOperations(
-      this.client,
+      this.clientFor(spreadsheetId),
       spreadsheetId,
       schema,
       fkResolver,
@@ -227,12 +263,53 @@ export class SheetAdapter implements DatabaseAdapter {
     );
   }
 
+  /**
+   * Loads every listed table into the read cache with one `values.batchGet` per spreadsheet,
+   * instead of one `values.get` per table on first read. Each table is resolved and
+   * permission-checked exactly like `table()`. Tables already cached are skipped. Only warms the
+   * cache — keep reading through `table()`. No-op when the read cache is disabled.
+   */
+  async prefetch(tableNames: string[]): Promise<void> {
+    if (this.cacheConfig?.enabled === false) return;
+
+    const groups = new Map<string, { client: StorageClient; spreadsheetId: string; names: string[] }>();
+    for (const tableName of tableNames) {
+      const schema = this.schemas.get(tableName);
+      if (!schema) {
+        throw new SchemaError(`Table ${tableName} is not registered`, tableName);
+      }
+      const spreadsheetId = this.resolveSpreadsheetId(schema);
+      if (!this.hasPermission(schema)) {
+        throw new PermissionError(`User does not have permission to access ${tableName}`, this.context?.role);
+      }
+      const group = groups.get(spreadsheetId) ?? { client: this.clientFor(spreadsheetId), spreadsheetId, names: [] };
+      group.names.push(schema.name);
+      groups.set(spreadsheetId, group);
+    }
+
+    await Promise.all(
+      Array.from(groups.values()).map(({ client, spreadsheetId, names }) =>
+        client.getAllRowsBatch
+          ? client.getAllRowsBatch(spreadsheetId, names)
+          : Promise.all(names.map((name) => client.getAllRows(spreadsheetId, name)))
+      )
+    );
+  }
+
   async createUserSheet(
     userId: string,
     role: string,
-    email: string,
+    email?: string | null,
     options?: CreateUserSheetOptions
   ): Promise<string> {
+    const shareWithActor = options?.shareWithActor ?? this.sheetSharing?.shareWithActor ?? true;
+    const shareRole = options?.shareRole ?? this.sheetSharing?.shareRole ?? 'writer';
+    if (shareWithActor && !email) {
+      throw new ValidationError(
+        'createUserSheet() needs an email to share the sheet with the actor — pass one, or set shareWithActor: false'
+      );
+    }
+
     // Resolve which client to use for spreadsheet creation: explicit actorTokens > tokenStore >
     // admin client (see driveTenancy.ts — DriveStorageAdapter uses the identical resolution so a
     // file uploaded for this actor lands in the same Drive as their sheet).
@@ -254,17 +331,29 @@ export class SheetAdapter implements DatabaseAdapter {
       sharedDriveId: this.sharedDriveId,
     });
 
+    // A failed share leaves an orphaned spreadsheet with no users row — surface its ID so the
+    // caller can delete it or retry, instead of a bare Drive error.
+    const share = async (client: SheetClient, shareEmail: string, shareAs: typeof shareRole) => {
+      try {
+        await client.shareWithUser(sheetId, shareEmail, shareAs);
+      } catch (err) {
+        throw new SheetSharingError(sheetId, shareEmail, err);
+      }
+    };
+
     if (actorOwned) {
       // Sheet lives in actor's Drive — share with admin so admin can manage it
       if (process.env.SUPER_ADMIN_EMAIL) {
-        await clientForCreate.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL, 'writer');
+        await share(clientForCreate, process.env.SUPER_ADMIN_EMAIL, 'writer');
       }
     } else {
-      // Sheet lives in admin's Drive — share with the actor and the admin email
+      // Sheet lives in admin's Drive — share with the admin email and (unless opted out) the actor
       if (process.env.SUPER_ADMIN_EMAIL) {
-        await this.client.shareWithUser(sheetId, process.env.SUPER_ADMIN_EMAIL, 'writer');
+        await share(this.client, process.env.SUPER_ADMIN_EMAIL, 'writer');
       }
-      await this.client.shareWithUser(sheetId, email, 'writer');
+      if (shareWithActor && email) {
+        await share(this.client, email, shareRole);
+      }
     }
 
     const userTables = Array.from(this.schemas.values()).filter((s) => s.actor === role);
@@ -280,7 +369,7 @@ export class SheetAdapter implements DatabaseAdapter {
     await adminTable.create({
       user_id: userId,
       role,
-      email,
+      email: email ?? undefined,
       actor_sheet_id: sheetId,
       created_at: new Date().toISOString(),
       ...options?.extraFields,
@@ -488,7 +577,7 @@ export class SheetAdapter implements DatabaseAdapter {
         throw new SchemaError(`Referenced table '${tableName}' is not registered`, tableName);
       }
       const refSpreadsheetId = this.resolveSpreadsheetId(refSchema);
-      const refCrud = new CRUDOperations(this.client, refSpreadsheetId, refSchema);
+      const refCrud = new CRUDOperations(this.clientFor(refSpreadsheetId), refSpreadsheetId, refSchema);
       const row = await refCrud.findOne({ where: { [columnName]: value } });
       return row !== null;
     };
@@ -541,6 +630,26 @@ export class SheetAdapter implements DatabaseAdapter {
       return this.adminSheetId;
     }
     return resolveNonAdminTenantKey(schema, this.context);
+  }
+
+  /**
+   * The client table operations on `spreadsheetId` should run through: the context actor's own
+   * client (actorClientForCrud) when it's that actor's own sheet, otherwise the admin client — the
+   * only identity guaranteed access to admin tables and to every other actor's sheet.
+   */
+  private clientFor(spreadsheetId: string): StorageClient {
+    const ctx = this.context;
+    if (
+      !this.actorClientPool ||
+      !ctx ||
+      ctx.actor === 'admin' ||
+      !ctx.actorSheetId ||
+      spreadsheetId !== ctx.actorSheetId ||
+      spreadsheetId === this.adminSheetId
+    ) {
+      return this.client;
+    }
+    return new ActorRoutedStorageClient(this.actorClientPool, ctx.userId, this.client, this.actorAuthErrorMode);
   }
 
   private hasPermission(schema: TableSchema): boolean {
