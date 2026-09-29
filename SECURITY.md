@@ -12,7 +12,7 @@ We take security issues seriously. Please **do not** open a public GitHub issue 
 
 Instead, report them privately by emailing:
 
-**security@longcelot.com** (or open a [GitHub Security Advisory](https://github.com/vannseavlong/longcelot-sheet-staging/security/advisories/new))
+**longcelot@proton.me** (or open a [GitHub Security Advisory](https://github.com/vannseavlong/longcelot-sheet-staging/security/advisories/new))
 
 ### What to include
 
